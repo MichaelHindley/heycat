@@ -1,6 +1,7 @@
 [test]
 coverage = true
-coverageThreshold = { lines = 0.8, functions = 0.8 }
+# 100% coverage required - use coveragePathIgnorePatterns for explicit exclusions
+coverageThreshold = { lines = 1.0, functions = 1.0 }
 coveragePathIgnorePatterns = [
   "**/*.test.ts",
   "**/*.spec.ts",
