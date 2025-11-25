@@ -54,20 +54,4 @@ fn command_name(arg1: &str, arg2: i32) -> String {
 
 ## Agile Workflow
 
-Project uses a Kanban-style issue tracking system in `/agile`:
-
-```
-1-backlog → 2-todo → 3-in-progress → 4-review → 5-done
-```
-
-### Creating Issues
-```bash
-cp agile/templates/feature.md agile/1-backlog/my-feature.md
-cp agile/templates/bug.md agile/1-backlog/fix-something.md
-cp agile/templates/task.md agile/1-backlog/some-task.md
-```
-
-### Moving Issues
-```bash
-git mv agile/1-backlog/my-feature.md agile/3-in-progress/
-```
+Project uses a Kanban-style issue tracking system in `/agile`. Use the `agile` skill to create, move, list, and archive issues.
