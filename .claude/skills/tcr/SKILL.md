@@ -3,9 +3,9 @@ name: tcr
 description: |
   Test-Commit-Refactor (TCR) workflow automation. Use this skill to enforce test discipline:
   - Automatically runs tests when todos are marked complete
-  - Blocks commits if tests are failing
   - Auto-commits WIP when tests pass
   - Tracks failures and prompts after threshold
+  - Pre-commit enforcement handled by Husky (requires 80% coverage)
 ---
 
 # TCR (Test-Commit-Refactor) Skill
@@ -48,13 +48,14 @@ Enforces the Test-Commit-Refactor workflow through Claude Code hooks.
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Pre-Commit Guardrail
+## Pre-Commit Guardrail (Husky)
 
-When you try to `git commit`, TCR intercepts and runs tests:
-- **Tests pass** → Commit proceeds
-- **Tests fail** → Commit blocked with error message
+Pre-commit enforcement is handled by Husky (`.husky/pre-commit`):
+- Runs `bun test --coverage` on all staged files
+- Requires 80% line and function coverage (configured in `bunfig.toml`)
+- Blocks commit if tests fail or coverage is insufficient
 
-This ensures you can't commit code that breaks tests.
+This is repository-level enforcement that applies to all contributors.
 
 ## Commands
 
@@ -148,7 +149,7 @@ After 5 consecutive failures on the same task, TCR prompts you to:
 
 ## Hook Configuration
 
-The skill requires hooks to be configured in `.claude/settings.json`:
+The skill requires a Claude Code hook in `.claude/settings.json`:
 
 ```json
 {
@@ -161,19 +162,12 @@ The skill requires hooks to be configured in `.claude/settings.json`:
           "command": "bun .claude/skills/tcr/tcr.ts hook-todo-complete"
         }]
       }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [{
-          "type": "command",
-          "command": "bun .claude/skills/tcr/tcr.ts hook-pre-commit"
-        }]
-      }
     ]
   }
 }
 ```
+
+Pre-commit enforcement is handled separately by Husky (see above).
 
 ## Prerequisites
 
