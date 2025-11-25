@@ -55,3 +55,6 @@ fn command_name(arg1: &str, arg2: i32) -> String {
 ## Agile Workflow
 
 Project uses a Kanban-style issue tracking system in `/agile`. Use the `agile` skill to create, move, list, and archive issues.
+
+- **Work through issues**: Use the `agile-workflow` agent or `work` command for stage-appropriate guidance
+- **Strict validation**: Transitions require complete content (description, owner, DoD items)

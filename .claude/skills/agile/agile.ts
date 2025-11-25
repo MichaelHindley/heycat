@@ -5,6 +5,7 @@ import { handleMove } from "./commands/move";
 import { handleList } from "./commands/list";
 import { handleArchive } from "./commands/archive";
 import { handleDelete } from "./commands/delete";
+import { handleWork } from "./commands/work";
 import { handleHelp } from "./commands/help";
 
 async function main(): Promise<void> {
@@ -28,6 +29,9 @@ async function main(): Promise<void> {
         break;
       case "delete":
         await handleDelete(commandArgs);
+        break;
+      case "work":
+        await handleWork(commandArgs);
         break;
       case "help":
       case "--help":

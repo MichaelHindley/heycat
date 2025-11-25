@@ -8,7 +8,8 @@ import {
   AGILE_DIR,
   type Stage,
 } from "../lib/types";
-import { isValidStage, findProjectRoot, findIssue } from "../lib/utils";
+import { isValidStage, findProjectRoot, findIssue, parseIssueMeta } from "../lib/utils";
+import { analyzeIssueFile, validateForTransition } from "../lib/analysis";
 
 export async function handleMove(args: string[]): Promise<void> {
   const { positionals } = parseArgs({
@@ -51,6 +52,21 @@ export async function handleMove(args: string[]): Promise<void> {
     console.error(
       `Allowed from ${STAGE_NAMES[issue.stage]}: ${allowedTransitions.map((s) => STAGE_NAMES[s]).join(", ")}`
     );
+    process.exit(1);
+  }
+
+  // Validate issue content is ready for the target stage
+  const meta = await parseIssueMeta(issue.path);
+  const analysis = await analyzeIssueFile(issue.path, meta.owner);
+  const validation = validateForTransition(toStage, analysis);
+
+  if (!validation.valid) {
+    console.error(`Cannot move to ${STAGE_NAMES[toStage]} - requirements not met:`);
+    for (const missing of validation.missing) {
+      console.error(`  - ${missing}`);
+    }
+    console.error();
+    console.error(`Run "bun .claude/skills/agile/agile.ts work ${name}" for guidance.`);
     process.exit(1);
   }
 

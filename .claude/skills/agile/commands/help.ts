@@ -85,6 +85,27 @@ Examples:
   agile.ts delete old-task
 `);
         break;
+      case "work":
+        console.log(`
+Usage: agile.ts work <name>
+
+Analyze an issue and get stage-appropriate guidance.
+
+Arguments:
+  name     Issue name to analyze
+
+Output includes:
+  - Issue metadata (type, stage, owner, created date)
+  - Incomplete sections that still have placeholder text
+  - Definition of Done progress
+  - Stage-specific guidance and suggested actions
+  - Readiness status for advancing to the next stage
+
+Examples:
+  agile.ts work user-auth
+  agile.ts work dark-mode
+`);
+        break;
       default:
         console.error(`Unknown command: ${command}`);
         process.exit(1);
@@ -101,6 +122,7 @@ Commands:
   create <type> <name>    Create a new issue (feature, bug, or task)
   move <name> <stage>     Move an issue to a different stage
   list                    List all issues
+  work <name>             Analyze an issue and get stage-appropriate guidance
   archive <name>          Archive an issue
   delete <name>           Permanently delete an issue
   help [command]          Show help for a command
