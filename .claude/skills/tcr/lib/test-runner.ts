@@ -1,4 +1,6 @@
 import type { TestTarget, TestRunResult } from "./types";
+import { runBackendCoverage, checkCargoLlvmCovInstalled } from "./coverage";
+import type { CoverageResult } from "./coverage";
 
 // ============================================================================
 // Frontend Test Runner (Bun)
@@ -39,32 +41,34 @@ export async function runFrontendTests(
 }
 
 // ============================================================================
-// Backend Test Runner (Cargo)
+// Backend Test Runner (Cargo with Coverage)
 // ============================================================================
 
-export async function runBackendTests(projectRoot: string): Promise<TestRunResult> {
-  const { $ } = await import("bun");
+export interface BackendTestResult extends TestRunResult {
+  coverage?: CoverageResult;
+}
 
-  try {
-    const tauriDir = `${projectRoot}/src-tauri`;
+export async function runBackendTests(projectRoot: string): Promise<BackendTestResult> {
+  // Check if cargo-llvm-cov is installed (required)
+  const hasLlvmCov = await checkCargoLlvmCovInstalled();
 
-    // Run cargo test
-    const result = await $`cargo test`.cwd(tauriDir).quiet().nothrow();
-
-    const output = result.stdout.toString() + result.stderr.toString();
-
-    return {
-      status: result.exitCode === 0 ? "pass" : "fail",
-      output,
-      exitCode: result.exitCode,
-    };
-  } catch (error) {
+  if (!hasLlvmCov) {
     return {
       status: "error",
-      output: error instanceof Error ? error.message : "Unknown error running backend tests",
+      output: "cargo-llvm-cov not installed. Install with: cargo install cargo-llvm-cov",
       exitCode: 1,
     };
   }
+
+  // Run coverage check (which also runs tests)
+  const coverageResult = await runBackendCoverage(projectRoot);
+
+  return {
+    status: coverageResult.passed ? "pass" : "fail",
+    output: coverageResult.raw || coverageResult.error || "",
+    exitCode: coverageResult.passed ? 0 : 1,
+    coverage: coverageResult,
+  };
 }
 
 // ============================================================================
