@@ -1,5 +1,8 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
+// Enable coverage attribute on nightly for explicit exclusions
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
+
 /// Greets the user with a personalized message.
 ///
 /// # Arguments
@@ -14,6 +17,7 @@ fn greet(name: &str) -> String {
 
 /// Application entry point - starts the Tauri event loop.
 /// Note: This function cannot be unit tested as it starts a GUI.
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
