@@ -19,8 +19,8 @@ export async function runFrontendTests(
       };
     }
 
-    // Run bun test with specific files
-    const result = await $`bun test ${testFiles}`.cwd(projectRoot).quiet().nothrow();
+    // Run bun test with coverage (bunfig.toml enforces 80% threshold)
+    const result = await $`bun test --coverage ${testFiles}`.cwd(projectRoot).quiet().nothrow();
 
     const output = result.stdout.toString() + result.stderr.toString();
 
