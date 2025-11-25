@@ -100,6 +100,7 @@ interface IssueMeta {
   title: string;
   type: Template | "unknown";
   created: string;
+  owner: string;
 }
 
 async function findIssue(
@@ -133,6 +134,7 @@ async function parseIssueMeta(filePath: string): Promise<IssueMeta> {
   let title = "";
   let type: Template | "unknown" = "unknown";
   let created = "";
+  let owner = "";
 
   // Parse first line for type and title
   const firstLine = lines[0] || "";
@@ -142,16 +144,19 @@ async function parseIssueMeta(filePath: string): Promise<IssueMeta> {
     title = titleMatch[2].trim();
   }
 
-  // Parse created date
+  // Parse created date and owner
   for (const line of lines) {
     const dateMatch = line.match(/\*\*Created:\*\*\s*(\d{4}-\d{2}-\d{2})/);
     if (dateMatch) {
       created = dateMatch[1];
-      break;
+    }
+    const ownerMatch = line.match(/\*\*Owner:\*\*\s*(.+)$/);
+    if (ownerMatch) {
+      owner = ownerMatch[1].trim();
     }
   }
 
-  return { title, type, created };
+  return { title, type, created, owner };
 }
 
 // ============================================================================
@@ -163,6 +168,7 @@ async function handleCreate(args: string[]): Promise<void> {
     args,
     options: {
       title: { type: "string", short: "t" },
+      owner: { type: "string", short: "o" },
       stage: { type: "string", short: "s", default: "1-backlog" },
     },
     allowPositionals: true,
@@ -171,7 +177,7 @@ async function handleCreate(args: string[]): Promise<void> {
   const [type, name] = positionals;
 
   if (!type || !name) {
-    console.error("Usage: agile.ts create <type> <name> [--title \"Title\"]");
+    console.error("Usage: agile.ts create <type> <name> [--title \"Title\"] [--owner \"Name\"]");
     console.error("Types: feature, bug, task");
     process.exit(1);
   }
@@ -211,8 +217,10 @@ async function handleCreate(args: string[]): Promise<void> {
 
   // Replace placeholders
   const title = values.title || toTitleCase(slug);
+  const owner = values.owner || "[Name]";
   content = content.replace("[Title]", title);
   content = content.replace("YYYY-MM-DD", getCurrentDate());
+  content = content.replace("[Name]", owner);
 
   // Write issue
   const targetDir = join(projectRoot, AGILE_DIR, stage);
@@ -308,6 +316,7 @@ async function handleList(args: string[]): Promise<void> {
     type: string;
     title: string;
     created: string;
+    owner: string;
     path: string;
   }
 
@@ -332,6 +341,7 @@ async function handleList(args: string[]): Promise<void> {
           type: meta.type,
           title: meta.title || basename(file, ".md"),
           created: meta.created,
+          owner: meta.owner,
           path: `${AGILE_DIR}/${stage}/${file}`,
         });
       }
@@ -354,7 +364,8 @@ async function handleList(args: string[]): Promise<void> {
     } else {
       for (const issue of stageIssues) {
         const typeTag = `[${issue.type}]`.padEnd(10);
-        console.log(`  ${typeTag} ${issue.name} - ${issue.title}`);
+        const ownerTag = issue.owner && issue.owner !== "[Name]" ? ` (${issue.owner})` : "";
+        console.log(`  ${typeTag} ${issue.name} - ${issue.title}${ownerTag}`);
       }
     }
   }
@@ -442,11 +453,12 @@ Arguments:
 
 Options:
   --title, -t    Human-readable title (defaults to name in Title Case)
+  --owner, -o    Issue owner/assignee name
   --stage, -s    Initial stage (default: 1-backlog)
 
 Examples:
-  agile.ts create feature user-auth --title "User Authentication"
-  agile.ts create bug fix-login --stage 2-todo
+  agile.ts create feature user-auth --title "User Authentication" --owner "Alice"
+  agile.ts create bug fix-login --stage 2-todo --owner "Bob"
 `);
         break;
       case "move":
@@ -535,7 +547,7 @@ Workflow Stages:
 Only sequential transitions are allowed (forward or back by one stage).
 
 Examples:
-  agile.ts create feature user-auth --title "User Authentication"
+  agile.ts create feature user-auth --title "User Authentication" --owner "Alice"
   agile.ts move user-auth 2-todo
   agile.ts list --stage 3-in-progress
   agile.ts archive completed-feature

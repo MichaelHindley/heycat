@@ -25,7 +25,7 @@ Manage issues in the project's Kanban board located in the `agile/` folder.
 ### Create an Issue
 
 ```bash
-bun .claude/skills/agile/agile.ts create <type> <name> [--title "Title"] [--stage <stage>]
+bun .claude/skills/agile/agile.ts create <type> <name> [--title "Title"] [--owner "Name"] [--stage <stage>]
 ```
 
 **Arguments:**
@@ -34,13 +34,14 @@ bun .claude/skills/agile/agile.ts create <type> <name> [--title "Title"] [--stag
 
 **Options:**
 - `--title, -t`: Human-readable title (defaults to name in Title Case)
+- `--owner, -o`: Issue owner/assignee name
 - `--stage, -s`: Initial stage (default: `1-backlog`)
 
 **Examples:**
 ```bash
-bun .claude/skills/agile/agile.ts create feature user-auth --title "User Authentication"
-bun .claude/skills/agile/agile.ts create bug fix-login --stage 2-todo
-bun .claude/skills/agile/agile.ts create task update-deps
+bun .claude/skills/agile/agile.ts create feature user-auth --title "User Authentication" --owner "Alice"
+bun .claude/skills/agile/agile.ts create bug fix-login --stage 2-todo --owner "Bob"
+bun .claude/skills/agile/agile.ts create task update-deps --owner "Charlie"
 ```
 
 ### Move an Issue
@@ -119,8 +120,8 @@ bun .claude/skills/agile/agile.ts help [command]
 ## Typical Workflow
 
 ```bash
-# 1. Create a new feature
-bun .claude/skills/agile/agile.ts create feature dark-mode --title "Dark Mode Toggle"
+# 1. Create a new feature with owner
+bun .claude/skills/agile/agile.ts create feature dark-mode --title "Dark Mode Toggle" --owner "Alice"
 
 # 2. Start working on it
 bun .claude/skills/agile/agile.ts move dark-mode 2-todo
