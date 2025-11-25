@@ -72,15 +72,27 @@ The TCR skill enforces test discipline through two layers for both frontend and 
 
 ### Pre-Commit Enforcement (Husky)
 - Husky runs both **frontend** and **backend** tests with coverage before every commit
-- **Frontend**: 80% line and function coverage (configured in `bunfig.toml`)
-- **Backend**: 65% line, 80% function coverage (lower line threshold accounts for untestable GUI code)
-- Backend enforced via `cargo llvm-cov --fail-under-lines 65 --fail-under-functions 80`
+- **100% coverage required** for both frontend and backend
+- Untestable code must be explicitly excluded using `#[coverage(off)]` attribute
+- Backend uses `cargo +nightly llvm-cov` for coverage attribute support
 - Commits blocked if tests fail or coverage is insufficient
+
+### Coverage Exclusions
+
+For Rust code that cannot be unit tested (e.g., GUI initialization), use:
+
+```rust
+#[cfg_attr(coverage_nightly, coverage(off))]
+pub fn untestable_function() {
+    // ...
+}
+```
 
 ### Prerequisites
 
 ```bash
 # Required for Rust coverage (commits will be blocked without it)
+rustup toolchain install nightly
 cargo install cargo-llvm-cov
 ```
 
