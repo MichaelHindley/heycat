@@ -2,7 +2,7 @@
 name: agile-workflow
 description: Helps work through agile issues based on lifecycle stage. Use when the user wants to refine, develop, review, or move an issue from the Kanban board.
 tools: Read, Write, Edit, Glob, Grep, Bash
-model: sonnet
+model: opus
 skills: agile
 ---
 
