@@ -87,16 +87,19 @@ Both frontend and backend require 100% coverage. Use inline exclusion comments f
 
 #### Frontend (TypeScript/React)
 
-Uses Vitest with `/* v8 ignore */` comments:
+Uses Vitest with `/* v8 ignore ... -- @preserve */` comments. The `-- @preserve` is required because esbuild strips comments during transpilation:
 
 ```typescript
-/* v8 ignore next */
+/* v8 ignore next -- @preserve */
 setGreetMsg(await invoke("greet", { name })); // Single line
 
-/* v8 ignore start */
+/* v8 ignore start -- @preserve */
 // Multiple lines excluded
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 /* v8 ignore stop */
+
+/* v8 ignore file -- @preserve */
+// At top of file to ignore entire file
 ```
 
 #### Backend (Rust)

@@ -46,7 +46,7 @@ Implement a custom React hook `useRecording` that manages recording state on the
 - Use `useEffect` for event listener setup/cleanup
 - Import `invoke` from `@tauri-apps/api/core`
 - Import `listen` from `@tauri-apps/api/event`
-- Mark Tauri calls with `/* v8 ignore next */` for coverage
+- Mark Tauri calls with `/* v8 ignore next -- @preserve */` for coverage
 
 ## Related Specs
 

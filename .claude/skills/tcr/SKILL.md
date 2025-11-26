@@ -58,13 +58,18 @@ Use inline comments to exclude untestable code:
 
 **Frontend (TypeScript):**
 ```typescript
-/* v8 ignore next */
+/* v8 ignore next -- @preserve */
 await invoke("greet", { name }); // Tauri runtime required
 
-/* v8 ignore start */
+/* v8 ignore start -- @preserve */
 // Block of untestable code
 /* v8 ignore stop */
+
+/* v8 ignore file -- @preserve */
+// At top of file to ignore entire file
 ```
+
+Note: `-- @preserve` is required because esbuild strips comments during transpilation.
 
 **Backend (Rust):**
 ```rust

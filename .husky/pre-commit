@@ -24,7 +24,7 @@ if [ $? -ne 0 ]; then
   echo ""
   echo "Pre-commit failed: frontend tests failed or coverage < 100%"
   echo "Fix failing tests and ensure 100% coverage before committing."
-  echo "Use /* v8 ignore */ to exclude untestable code."
+  echo "Use /* v8 ignore ... -- @preserve */ to exclude untestable code."
   exit 1
 fi
 
