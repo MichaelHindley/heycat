@@ -1,11 +1,11 @@
 ---
 name: tcr
-description: "TCR workflow automation enforcing test discipline. Auto-runs tests on todo completion, creates WIP commits on pass, tracks failures. Use for test-first development with 100% coverage enforcement."
+description: "TCR workflow automation enforcing test discipline. Run 'tcr check' to test and auto-commit on success. Use for test-first development with 100% coverage enforcement."
 ---
 
 # TCR (Test-Commit-Refactor) Skill
 
-Enforces the Test-Commit-Refactor workflow through Claude Code hooks.
+Enforces the Test-Commit-Refactor workflow with explicit test triggers and pre-commit enforcement.
 
 ## How It Works
 
@@ -14,17 +14,18 @@ Enforces the Test-Commit-Refactor workflow through Claude Code hooks.
 │                     TCR Workflow Loop                        │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
-│  1. Write a failing test (start with red)                   │
+│  1. Write a failing test (the test IS your scope)           │
 │                    ↓                                         │
-│  2. Write code to make the test pass                        │
+│  2. Iterate on production code to make it pass              │
 │                    ↓                                         │
-│  3. Mark todo as "completed"                                │
+│  3. Run "tcr check" when you think test should pass         │
 │                    ↓                                         │
 │  ┌──────────────────────────────────────┐                   │
-│  │  TCR Hook: PostToolUse on TodoWrite  │                   │
-│  │  - Get changed files (git diff)      │                   │
+│  │  TCR Check Command                   │                   │
+│  │  - Get changed files (git status)    │                   │
 │  │  - Find related tests                │                   │
-│  │  - Run tests                         │                   │
+│  │  - Run tests with coverage           │                   │
+│  │  - Output: condensed (or --verbose)  │                   │
 │  └──────────────────────────────────────┘                   │
 │                    ↓                                         │
 │         ┌─────────┴─────────┐                               │
@@ -35,8 +36,9 @@ Enforces the Test-Commit-Refactor workflow through Claude Code hooks.
 │    WIP commit          failure count                        │
 │         │                   │                               │
 │         ↓                   ↓                               │
-│    Next task         Agent BLOCKED                          │
-│                      (must fix tests)                       │
+│    Next task           Fix tests,                           │
+│                      run "tcr check"                        │
+│                           again                             │
 │                                                              │
 │  After 5 failures: Prompt to reconsider approach            │
 │                                                              │
@@ -77,15 +79,67 @@ Note: `-- @preserve` is required because esbuild strips comments during transpil
 pub fn untestable_function() { ... }
 ```
 
+**Backend Test Files (`*_test.rs`):**
+
+Separate test files (e.g., `mod_test.rs`) are automatically excluded from coverage measurement via `--ignore-filename-regex '_test\.rs$'`. No manual annotation needed for these files.
+
 ## Commands
 
-### Run Tests Manually
+### Check (Primary Command)
+
+```bash
+bun .claude/skills/tcr/tcr.ts check [step-name] [--verbose]
+```
+
+Run tests on changed files and auto-commit on success. This is the main command for the TCR workflow.
+
+**Options:**
+- `--verbose`, `-v`: Show full test output (default: condensed on success)
+
+**Examples:**
+```bash
+bun .claude/skills/tcr/tcr.ts check                    # Uses "manual check" as step name
+bun .claude/skills/tcr/tcr.ts check "Add user auth"    # Custom step name for WIP commit
+bun .claude/skills/tcr/tcr.ts check --verbose "Debug"  # Show full output for debugging
+```
+
+**Behavior:**
+1. Detects changed files via `git status -s`
+2. Determines target (frontend/backend/both) based on file paths
+3. Runs tests with coverage
+4. On success: shows condensed output, creates WIP commit
+5. On failure: saves full output to `.tcr-state.json`, shows condensed error details, increments failure counter, exits with code 2
+
+**Output (default condensed mode):**
+```
+TCR: Running check - "Add user auth"
+TCR: Found 2 changed file(s)
+TCR: Running frontend tests (1 file(s))...
+TCR: PASS: Frontend: PASS | Backend: PASS (100%)
+TCR: Committed (abc1234)
+```
+
+**Failure output:**
+```
+TCR: Running check - "Add user auth"
+TCR: Found 2 changed file(s)
+TCR: Running backend tests (1 file(s))...
+TCR: Tests failed (2/5) - details saved to .tcr-state.json
+=== Backend Failures ===
+(condensed error details)
+```
+
+When tests fail, full output is persisted to `.tcr-state.json` for debugging. If output exceeds 10KB, chunks are saved to `.tcr/output/` with paths in the state file.
+
+Use `--verbose` to see full vitest/cargo output inline instead of checking the state file.
+
+### Run Tests for Specific Files
 
 ```bash
 bun .claude/skills/tcr/tcr.ts run <files...>
 ```
 
-Run tests for specific source files.
+Run tests for specific source files (without auto-committing).
 
 **Examples:**
 ```bash
@@ -119,12 +173,13 @@ Use when you want to continue past the 5-failure threshold. Also clears the erro
 ### Coverage Commands
 
 ```bash
-bun .claude/skills/tcr/tcr.ts coverage          # Run both frontend and backend
-bun .claude/skills/tcr/tcr.ts coverage frontend # Frontend only
-bun .claude/skills/tcr/tcr.ts coverage backend  # Backend only
+bun .claude/skills/tcr/tcr.ts coverage              # Run coverage on changed files
+bun .claude/skills/tcr/tcr.ts coverage --debug      # Show detailed per-file output
 ```
 
-Run coverage checks and report metrics.
+Run coverage checks on changed files (same behavior as `tcr check`). Target (frontend/backend/both) is auto-detected from changed file paths.
+
+Use `--debug` or `-d` to see detailed per-file coverage output, which is helpful for identifying exactly which lines/functions are missing coverage.
 
 ### Verify Configuration Sync
 
@@ -149,17 +204,20 @@ bun .claude/skills/tcr/tcr.ts help [command]
 | `src/foo.ts` | `src/foo.test.ts` or `src/foo.spec.ts` |
 | `src/bar.tsx` | `src/bar.test.tsx` or `src/bar.spec.tsx` |
 
-**Backend:** Module-based filtering (tests are inline in source files)
+**Backend:** Module-based filtering (supports both inline tests and separate test files)
 
 | Source File | Test Filter |
 |-------------|-------------|
 | `src-tauri/src/lib.rs` | `tests::` (crate root) |
 | `src-tauri/src/main.rs` | `tests::` (crate root) |
-| `src-tauri/src/foo.rs` | `foo::tests::` |
+| `src-tauri/src/foo.rs` | `foo::foo_test` (if `foo_test.rs` exists) or `foo::tests::` |
 | `src-tauri/src/bar/mod.rs` | `bar::tests::` |
-| `src-tauri/src/bar/baz.rs` | `bar::baz::tests::` |
+| `src-tauri/src/bar/baz.rs` | `bar::baz_test` (if `baz_test.rs` exists) or `bar::baz::tests::` |
+| `src-tauri/src/bar/baz_test.rs` | `bar::baz_test` (tests directly in test module) |
 
-Backend tests must be in `#[cfg(test)] mod tests { }` blocks within each source file.
+Backend tests can be either:
+- **Inline tests:** `#[cfg(test)] mod tests { }` blocks within source files
+- **Separate test files:** `*_test.rs` files (e.g., `foo_test.rs` tests `foo.rs`)
 
 **Note:** If no test files are found for changed frontend files, the hook warns and exits without auto-committing. Write tests first, or commit manually.
 
@@ -172,7 +230,7 @@ The target is automatically detected based on which files changed.
 
 ## State Files
 
-TCR stores state in two files at project root:
+TCR stores state in files at project root:
 
 ### `.tcr-state.json` - Main State
 
@@ -183,12 +241,36 @@ TCR stores state in two files at project root:
   "lastTestResult": {
     "passed": false,
     "timestamp": "2025-11-25T10:15:00Z",
-    "error": "Expected true, got false",
+    "error": "Coverage below threshold",
     "filesRun": ["src/auth.test.ts"],
-    "target": "frontend"
+    "target": "frontend",
+    "output": {
+      "truncated": "First 5KB of test output...",
+      "fullChunks": [".tcr/output/chunk-1732...-0.txt"],
+      "totalSize": 15000
+    }
   }
 }
 ```
+
+The `output` field captures full test output for debugging:
+- `truncated`: First 5KB of output (always stored in state file)
+- `fullChunks`: Paths to chunk files if output > 10KB (null if under threshold)
+- `totalSize`: Total output size in bytes
+
+### `.tcr/` - Output Overflow Directory
+
+When test output exceeds 10KB, full output is split into 5KB chunks:
+
+```
+.tcr/
+  output/
+    chunk-{timestamp}-0.txt
+    chunk-{timestamp}-1.txt
+    ...
+```
+
+Chunk paths are stored in `.tcr-state.json` under `lastTestResult.output.fullChunks`.
 
 ### `.tcr-errors.log` - Error Log
 
@@ -198,6 +280,7 @@ Persists hook errors that would otherwise only appear in console. Shown by `tcr 
 ```
 .tcr-state.json
 .tcr-errors.log
+.tcr/
 ```
 
 ## Failure Threshold
@@ -209,9 +292,14 @@ After 5 consecutive failures on the same task, TCR prompts you to:
 3. Take a different approach
 4. Run `tcr reset` to continue
 
-## Hook Configuration
+## Hook Configuration (Optional)
 
-The skill requires a Claude Code hook in `.claude/settings.json`:
+The TodoWrite auto-trigger hook is **disabled by default**. This is intentional for TDD discipline:
+- Tests should run when you **expect them to pass**, not on arbitrary events
+- Todo completion doesn't mean "ready to test" - you run `tcr check` when you believe the failing test should now pass
+- Manual triggering gives control over the red-green-refactor loop
+
+To re-enable automatic testing on todo completion, add this to `.claude/settings.json`:
 
 ```json
 {
@@ -229,7 +317,7 @@ The skill requires a Claude Code hook in `.claude/settings.json`:
 }
 ```
 
-Pre-commit enforcement is handled separately by Husky (see above).
+Pre-commit enforcement is handled separately by Husky (see above) and always active.
 
 ## Prerequisites
 
@@ -244,10 +332,28 @@ Pre-commit enforcement is handled separately by Husky (see above).
 
 ## Tips
 
-1. **Start with a failing test** - Write the test first, watch it fail
-2. **Small steps** - Each todo should be a small, testable change
-3. **Trust the loop** - Let TCR handle commits; focus on making tests pass
-4. **Reset wisely** - If you hit 5 failures, consider if the approach needs rethinking
+1. **The test IS your scope** - The failing test defines what you're building. It guides development and tells you when you're done.
+2. **Smaller tests, not fewer files** - "Small increments" means writing focused tests for one behavior at a time, not limiting how many files you touch.
+3. **Run `tcr check` when you expect green** - Don't run tests arbitrarily. Run them when you believe the failing test should now pass.
+4. **Trust the loop** - Let TCR handle commits; focus on making tests pass
+5. **Reset wisely** - If you hit 5 failures, the test might be too big. Consider breaking it into smaller behaviors.
+
+## Mock Awareness
+
+When your tests use mocks (MockBackend, MockFileWriter, etc.), remember:
+
+- **Mocks prove the interface contract works** - They validate that your code correctly uses the interface
+- **Mocks do NOT prove production code uses the interface** - A passing mock test doesn't mean the real implementation is instantiated
+- **After completing a mocked component, verify it's instantiated** - Check lib.rs, main.tsx, or equivalent entry point
+- **Integration tests complement unit tests** - Unit tests with mocks verify behavior; integration tests verify wiring
+
+### Warning Signs
+
+If you see these patterns, pause and verify integration:
+- Multiple `MockXxx` implementations in test files
+- Comments like "handled separately" or "managed elsewhere"
+- Tests passing but no production instantiation of the tested component
+- Coverage at 100% but feature doesn't work
 
 ## Maintenance Notes
 

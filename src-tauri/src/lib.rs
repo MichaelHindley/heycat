@@ -3,6 +3,15 @@
 // Enable coverage attribute on nightly for explicit exclusions
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
+mod audio;
+mod commands;
+mod events;
+mod hotkey;
+mod recording;
+
+use std::sync::{Arc, Mutex};
+use tauri::Manager;
+
 /// Greets the user with a personalized message.
 ///
 /// # Arguments
@@ -22,7 +31,53 @@ fn greet(name: &str) -> String {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet])
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .setup(|app| {
+            eprintln!("[app] Setting up heycat...");
+
+            // Create shared state for recording manager
+            let recording_state = Arc::new(Mutex::new(recording::RecordingManager::new()));
+
+            // Manage the state for Tauri commands
+            app.manage(recording_state.clone());
+
+            // Create event emitter, audio thread, and hotkey integration
+            eprintln!("[app] Creating audio thread...");
+            let emitter = commands::TauriEventEmitter::new(app.handle().clone());
+            let audio_thread = audio::AudioThreadHandle::spawn();
+            eprintln!("[app] Audio thread spawned");
+
+            let integration = Arc::new(Mutex::new(
+                hotkey::HotkeyIntegration::new(emitter).with_audio_thread(audio_thread),
+            ));
+
+            // Clone for callback
+            let integration_clone = integration.clone();
+            let state_clone = recording_state.clone();
+
+            // Register hotkey
+            eprintln!("[app] Registering global hotkey (Cmd+Shift+R)...");
+            let backend = hotkey::TauriShortcutBackend::new(app.handle().clone());
+            let service = hotkey::HotkeyService::new(backend);
+
+            service
+                .register_recording_shortcut(Box::new(move || {
+                    eprintln!("[app] Hotkey pressed!");
+                    let mut integration_guard = integration_clone.lock().unwrap();
+                    integration_guard.handle_toggle(&state_clone);
+                }))
+                .expect("Failed to register recording hotkey");
+            eprintln!("[app] Setup complete! Ready to record.");
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            commands::start_recording,
+            commands::stop_recording,
+            commands::get_recording_state,
+            commands::get_last_recording_buffer,
+            commands::clear_last_recording_buffer
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -58,8 +58,13 @@ export async function handleCreate(args: string[]): Promise<void> {
     console.log(`  - ${issue.type}.md (main spec)`);
     console.log(`  - technical-guidance.md`);
     console.log(`\nNext steps:`);
-    console.log(`  1. Edit ${issue.mainFilePath} to fill in description`);
-    console.log(`  2. Run 'agile.ts spec suggest ${issue.name}' to generate specs`);
+    if (type === "feature") {
+      console.log(`  1. Run 'agile.ts discover ${issue.name}' for guided BDD scenario creation`);
+      console.log(`  2. Run 'agile.ts spec suggest ${issue.name}' to generate specs from scenarios`);
+    } else {
+      console.log(`  1. Edit ${issue.mainFilePath} to fill in description`);
+      console.log(`  2. Run 'agile.ts spec suggest ${issue.name}' to generate specs`);
+    }
   } catch (err) {
     console.error(`Error: ${(err as Error).message}`);
     process.exit(1);

@@ -96,24 +96,24 @@ export async function runBackendCoverage(
     // Uses nightly for #[coverage(off)] attribute support
     // Untestable code is excluded via #[coverage(off)] in source files
     //
-    // When testModules is provided, use `cargo llvm-cov test` with filters
-    // to run only tests from changed modules
-    let result;
-    if (testModules && testModules.length > 0) {
-      // Deduplicate modules
-      const uniqueModules = [...new Set(testModules)];
-      // Use test subcommand with filters - each filter runs tests matching that prefix
-      result = await $`cargo +nightly llvm-cov test --json -- ${uniqueModules}`
-        .cwd(tauriDir)
-        .quiet()
-        .nothrow();
-    } else {
-      // No filtering - run all tests
-      result = await $`cargo +nightly llvm-cov --json`.cwd(tauriDir).quiet().nothrow();
-    }
+    // NOTE: We always run ALL tests (no filtering) because:
+    // - Filtering tests breaks coverage measurement (only filtered tests' code paths are covered)
+    // - Backend test suite is small (<1 second) so filtering provides no meaningful speedup
+    // - The testModules parameter is kept for API compatibility but ignored
+    //
+    // Exclude *_test.rs files from coverage measurement (they are test code, not production code)
+    // Use variable interpolation for regex to ensure proper shell escaping
+    const testFileRegex = "_test\\.rs$";
+    const result = await $`cargo +nightly llvm-cov --json --ignore-filename-regex ${testFileRegex}`
+      .cwd(tauriDir)
+      .quiet()
+      .nothrow();
 
     const stdout = result.stdout.toString();
     const stderr = result.stderr.toString();
+    // Only include stderr in rawOutput - stdout is JSON for metrics parsing, not human-readable
+    // stderr contains the actual test output and error messages
+    const rawOutput = stderr;
 
     // Check for test failures (non-zero exit code from tests themselves)
     if (result.exitCode !== 0) {
@@ -125,8 +125,8 @@ export async function runBackendCoverage(
         passed: false,
         metrics,
         thresholds: config.thresholds,
-        raw: stdout + stderr,
-        error: `Tests failed with exit code ${result.exitCode}`,
+        error: stderr || `Tests failed with exit code ${result.exitCode}`,
+        rawOutput,
       };
     }
 
@@ -141,8 +141,8 @@ export async function runBackendCoverage(
       passed,
       metrics,
       thresholds: config.thresholds,
-      raw: stdout,
       error: passed ? undefined : "Coverage below threshold",
+      rawOutput,
     };
   } catch (error) {
     return {

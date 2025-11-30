@@ -1,15 +1,5 @@
 {
   "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "TodoWrite",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bun .claude/skills/tcr/tcr.ts hook-todo-complete"
-          }
-        ]
-      }
-    ]
+    "PostToolUse": []
   }
 }

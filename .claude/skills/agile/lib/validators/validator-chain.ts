@@ -4,6 +4,7 @@ import {
   type IssueAnalysis,
   type ValidationResult,
 } from "../types";
+import { BDDScenariosValidator } from "./bdd-scenarios-validator";
 
 // ============================================================================
 // Validator Interface
@@ -226,6 +227,42 @@ export class DoDValidator implements TransitionValidator {
   }
 }
 
+/**
+ * Validates integration readiness for multi-component features
+ * Applies to: 4-review
+ *
+ * Grandfathering: Specs without Integration Points/Integration Test sections
+ * are assumed to be pre-template and are skipped. Only specs WITH these sections
+ * must have them filled out (content or "N/A").
+ */
+export class IntegrationReadinessValidator implements TransitionValidator {
+  readonly name = "IntegrationReadinessValidator";
+  readonly appliesTo: Stage[] = ["4-review"];
+
+  validate(_issue: Issue, analysis: IssueAnalysis, _toStage: Stage): ValidationResult {
+    const { integration } = analysis;
+
+    // If all specs are grandfathered (pre-template), skip validation
+    if (integration.allGrandfathered) {
+      return { valid: true, missing: [] };
+    }
+
+    // Check for incomplete integration sections in non-grandfathered specs
+    if (integration.incompleteSpecs.length > 0) {
+      const specList = integration.incompleteSpecs.join(", ");
+      return {
+        valid: false,
+        missing: [
+          `Integration sections incomplete in specs: ${specList}. ` +
+            `Fill out "Integration Points" and "Integration Test" sections (use "N/A" for unit-only specs).`,
+        ],
+      };
+    }
+
+    return { valid: true, missing: [] };
+  }
+}
+
 // ============================================================================
 // Factory Function
 // ============================================================================
@@ -236,12 +273,14 @@ export class DoDValidator implements TransitionValidator {
 export function createValidatorChain(): ValidatorChain {
   const chain = new ValidatorChain();
 
+  chain.register(new BDDScenariosValidator());
   chain.register(new DescriptionValidator());
   chain.register(new OwnerValidator());
   chain.register(new TechnicalGuidanceExistsValidator());
   chain.register(new AllSpecsCompletedValidator());
   chain.register(new TechnicalGuidanceUpdatedValidator());
   chain.register(new DoDValidator());
+  chain.register(new IntegrationReadinessValidator());
 
   return chain;
 }

@@ -28,6 +28,14 @@
   flex-direction: column;
   justify-content: center;
   text-align: center;
+  position: relative;
+}
+
+.app-recording-indicator {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  z-index: 100;
 }
 
 .logo {

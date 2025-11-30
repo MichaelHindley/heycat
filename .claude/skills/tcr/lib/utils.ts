@@ -42,14 +42,25 @@ export async function fileExists(path: string): Promise<boolean> {
  * Derive the Rust test module filter pattern from a source file path.
  * Used for filtering which tests to run with cargo-llvm-cov.
  *
+ * Supports two test patterns:
+ * 1. Inline tests: `#[cfg(test)] mod tests { }` within source files
+ * 2. Separate test files: `foo_test.rs` alongside `foo.rs`
+ *
  * Examples:
- * - src-tauri/src/lib.rs → "tests::" (tests at crate root)
- * - src-tauri/src/main.rs → "tests::" (tests at crate root)
- * - src-tauri/src/foo.rs → "foo::tests::" (tests in foo module)
- * - src-tauri/src/bar/mod.rs → "bar::tests::" (tests in bar module)
- * - src-tauri/src/bar/baz.rs → "bar::baz::tests::" (tests in bar::baz module)
+ * - src-tauri/src/lib.rs → "tests::" (inline tests at crate root)
+ * - src-tauri/src/main.rs → "tests::" (inline tests at crate root)
+ * - src-tauri/src/foo.rs → "foo::foo_test" (if foo_test.rs exists) or "foo::tests::"
+ * - src-tauri/src/bar/mod.rs → "bar::tests::" (inline tests in bar module)
+ * - src-tauri/src/bar/baz.rs → "bar::baz_test" (if baz_test.rs exists) or "bar::baz::tests::"
+ * - src-tauri/src/bar/baz_test.rs → "bar::baz_test" (tests directly in test module)
+ *
+ * @param filePath - The source file path
+ * @param projectRoot - The project root directory (optional, for checking test file existence)
  */
-export function deriveRustTestModule(filePath: string): string | null {
+export async function deriveRustTestModule(
+  filePath: string,
+  projectRoot?: string
+): Promise<string | null> {
   // Only process .rs files in src-tauri/src/
   if (!filePath.endsWith(".rs") || !filePath.includes("src-tauri/src/")) {
     return null;
@@ -61,18 +72,39 @@ export function deriveRustTestModule(filePath: string): string | null {
 
   const relativePath = match[1];
 
-  // lib.rs and main.rs → tests at crate root
+  // lib.rs and main.rs → tests at crate root (inline only)
   if (relativePath === "lib" || relativePath === "main") {
     return "tests::";
   }
 
-  // mod.rs → parent directory is the module
+  // If this IS a test file (*_test.rs), return the test module path directly
+  // Tests in *_test.rs are at module level, not in a nested tests:: submodule
+  if (relativePath.endsWith("_test")) {
+    const modulePath = relativePath.replace(/\//g, "::");
+    return modulePath;
+  }
+
+  // mod.rs → parent directory is the module (inline tests only for now)
   if (relativePath.endsWith("/mod")) {
     const parent = relativePath.replace(/\/mod$/, "").replace(/\//g, "::");
     return `${parent}::tests::`;
   }
 
-  // foo.rs → foo module
+  // For regular source files (foo.rs), check if a corresponding test file exists
+  if (projectRoot) {
+    const dir = dirname(filePath);
+    const baseName = basename(filePath, ".rs");
+    const testFilePath = join(dir, `${baseName}_test.rs`);
+    const absoluteTestPath = join(projectRoot, testFilePath);
+
+    if (await fileExists(absoluteTestPath)) {
+      // Test file exists - return test module path (without ::tests::)
+      const testModulePath = relativePath.replace(/\//g, "::") + "_test";
+      return testModulePath;
+    }
+  }
+
+  // No test file found - assume inline tests
   const modulePath = relativePath.replace(/\//g, "::");
   return `${modulePath}::tests::`;
 }
@@ -137,28 +169,61 @@ export async function findTestFiles(
 // ============================================================================
 
 /**
- * Get list of changed files from git diff
+ * Get list of changed files using git status -s for compact output.
+ * Uses short format which is more context-efficient than git diff --name-only.
+ *
+ * Format: "XY filename" where X=staged status, Y=unstaged status
+ * Examples: "M  file.ts" (modified staged), " M file.ts" (modified unstaged)
+ *
+ * For untracked directories (shown as "?? dir/"), expands to list all files inside.
  */
 export async function getChangedFiles(staged: boolean = false): Promise<string[]> {
   const { $ } = await import("bun");
 
   try {
-    const args = staged
-      ? ["diff", "--cached", "--name-only"]
-      : ["diff", "--name-only", "HEAD"];
-
-    const result = await $`git ${args}`.quiet();
+    const result = await $`git status -s`.quiet();
 
     if (result.exitCode !== 0) {
-      // If HEAD doesn't exist (new repo), get all files
-      if (!staged) {
-        const allFiles = await $`git ls-files`.quiet();
-        return allFiles.text().trim().split("\n").filter(Boolean);
-      }
-      return [];
+      // If git status fails (unlikely), fall back to ls-files for new repos
+      const allFiles = await $`git ls-files`.quiet();
+      return allFiles.text().trim().split("\n").filter(Boolean);
     }
 
-    return result.text().trim().split("\n").filter(Boolean);
+    const output = result.text().trimEnd();
+    if (!output) return [];
+
+    const paths = output
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        // Parse "XY filename" or "XY orig -> renamed"
+        // First 2 chars are status, then space(s), then filename
+        const match = line.match(/^..\s+(.+?)(?:\s+->\s+(.+))?$/);
+        if (!match) return null;
+        // For renames, return the new filename (match[2]), otherwise original (match[1])
+        return match[2] || match[1];
+      })
+      .filter((f): f is string => f !== null);
+
+    // Expand directories to list all files inside
+    const expandedPaths: string[] = [];
+    for (const path of paths) {
+      if (path.endsWith("/")) {
+        // Untracked directory - list all files recursively
+        try {
+          const filesResult = await $`find ${path} -type f`.quiet();
+          const files = filesResult.text().trim().split("\n").filter(Boolean);
+          expandedPaths.push(...files);
+        } catch {
+          // If find fails, keep the directory path
+          expandedPaths.push(path);
+        }
+      } else {
+        expandedPaths.push(path);
+      }
+    }
+
+    return expandedPaths;
   } catch (error) {
     console.error(
       "TCR: Failed to get changed files:",

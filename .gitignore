@@ -23,9 +23,10 @@ dist-ssr
 *.sln
 *.sw?
 
-# TCR state file
+# TCR state and output
 .tcr-state.json
 .tcr-errors.log
+.tcr/
 
 # Coverage output
 coverage/

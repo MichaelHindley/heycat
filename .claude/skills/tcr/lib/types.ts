@@ -20,6 +20,12 @@ export const MAX_FAILURES = 5;
 export const WIP_PREFIX = "WIP: ";
 export const STATE_FILE = ".tcr-state.json";
 
+// Output storage constants
+export const OUTPUT_DIR = ".tcr/output";
+export const TRUNCATE_SIZE = 5120;    // 5KB - always stored in state file
+export const CHUNK_THRESHOLD = 10240; // 10KB - above this, write chunks
+export const CHUNK_SIZE = 5120;       // 5KB chunks
+
 // Frontend file extensions
 export const FRONTEND_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx"] as const;
 
@@ -35,12 +41,19 @@ export const FORMATTING = {
 // State Interfaces
 // ============================================================================
 
+export interface TestOutput {
+  truncated: string;           // First 5KB of combined output
+  fullChunks: string[] | null; // Paths to chunk files if output > 10KB
+  totalSize: number;           // Total output size in bytes
+}
+
 export interface TestResult {
   passed: boolean;
   timestamp: string;
   error: string | null;
   filesRun: string[];
   target: TestTarget;
+  output?: TestOutput;         // Captured test output for debugging
 }
 
 export interface TCRState {

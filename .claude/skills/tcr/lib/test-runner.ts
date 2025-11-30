@@ -79,9 +79,10 @@ export async function runBackendTests(
   // Derive test modules from changed files
   let testModules: string[] | undefined;
   if (changedFiles && changedFiles.length > 0) {
-    testModules = changedFiles
-      .map((f) => deriveRustTestModule(f))
-      .filter((m): m is string => m !== null);
+    const modules = await Promise.all(
+      changedFiles.map((f) => deriveRustTestModule(f, projectRoot))
+    );
+    testModules = modules.filter((m): m is string => m !== null);
 
     // Deduplicate
     testModules = [...new Set(testModules)];
@@ -92,7 +93,7 @@ export async function runBackendTests(
 
   return {
     status: coverageResult.passed ? "pass" : "fail",
-    output: coverageResult.raw || coverageResult.error || "",
+    output: coverageResult.rawOutput || coverageResult.error || "",
     exitCode: coverageResult.passed ? 0 : 1,
     coverage: coverageResult,
   };
@@ -109,6 +110,11 @@ export interface CombinedTestResult {
   error: string | null;
 }
 
+export interface RunOptions {
+  /** When true, condense output on success to save context window */
+  quiet?: boolean;
+}
+
 /**
  * Run tests for the specified target with file-based filtering.
  *
@@ -116,12 +122,14 @@ export interface CombinedTestResult {
  * @param testFiles - Frontend test files to run (filtered from changed files)
  * @param projectRoot - The project root directory
  * @param changedFiles - Optional array of all changed source files (used for backend filtering)
+ * @param options - Run options (quiet mode, etc.)
  */
 export async function runTests(
   target: TestTarget,
   testFiles: string[],
   projectRoot: string,
-  changedFiles?: string[]
+  changedFiles?: string[],
+  options: RunOptions = {}
 ): Promise<CombinedTestResult> {
   const result: CombinedTestResult = {
     passed: true,
@@ -186,4 +194,132 @@ export function formatTestOutput(result: CombinedTestResult): string {
   }
 
   return lines.join("\n");
+}
+
+// ============================================================================
+// Condensed Output Formatting (for quiet mode)
+// ============================================================================
+
+/**
+ * Format a condensed success message for the context window.
+ * Shows only essential info: pass status and coverage percentages.
+ */
+export function formatCondensedSuccess(result: CombinedTestResult): string {
+  const parts: string[] = [];
+
+  if (result.frontend) {
+    parts.push("Frontend: PASS");
+  }
+
+  if (result.backend) {
+    const backendResult = result.backend as BackendTestResult;
+    if (backendResult.coverage?.metrics) {
+      const pct = (backendResult.coverage.metrics.lines.percentage * 100).toFixed(0);
+      parts.push(`Backend: PASS (${pct}%)`);
+    } else {
+      parts.push("Backend: PASS");
+    }
+  }
+
+  return `PASS: ${parts.join(" | ")}`;
+}
+
+/**
+ * Extract actionable failure information from test output.
+ * Filters out noise (warnings, successful tests) and keeps only:
+ * - Failed test names
+ * - Assertion errors
+ * - File:line references
+ */
+export function formatCondensedFailure(result: CombinedTestResult): string {
+  const lines: string[] = [];
+
+  if (result.frontend && result.frontend.status !== "pass") {
+    lines.push("=== Frontend Failures ===");
+    const failures = extractVitestFailures(result.frontend.output);
+    lines.push(...failures);
+  }
+
+  if (result.backend && result.backend.status !== "pass") {
+    if (lines.length > 0) lines.push("");
+    lines.push("=== Backend Failures ===");
+    const failures = extractCargoFailures(result.backend.output);
+    lines.push(...failures);
+  }
+
+  // Cap at 50 lines to prevent context bloat
+  return lines.slice(0, 50).join("\n");
+}
+
+/**
+ * Extract failure information from Vitest output.
+ */
+function extractVitestFailures(output: string): string[] {
+  if (!output) return ["(no output)"];
+
+  const lines = output.split("\n");
+  const relevant: string[] = [];
+  let inFailBlock = false;
+
+  for (const line of lines) {
+    // Start capturing on FAIL markers
+    if (line.includes("FAIL") || line.includes("AssertionError") || line.includes("Error:")) {
+      inFailBlock = true;
+    }
+
+    if (inFailBlock) {
+      // Skip empty lines after we have content
+      if (line.trim() === "" && relevant.length > 3) {
+        inFailBlock = false;
+        continue;
+      }
+      // Skip stack trace lines (except first)
+      if (line.includes("at ") && relevant.filter((l) => l.includes("at ")).length > 1) {
+        continue;
+      }
+      relevant.push(line);
+    }
+
+    // Also capture Expected/Received for assertion failures
+    if (line.includes("Expected:") || line.includes("Received:") || line.includes("expected")) {
+      if (!relevant.includes(line)) {
+        relevant.push(line);
+      }
+    }
+  }
+
+  return relevant.length > 0 ? relevant.slice(0, 30) : ["(test failed - see .tcr-state.json for full output)"];
+}
+
+/**
+ * Extract failure information from Cargo test output.
+ */
+function extractCargoFailures(output: string): string[] {
+  if (!output) return ["(no output)"];
+
+  const lines = output.split("\n");
+  const relevant: string[] = [];
+
+  for (const line of lines) {
+    // Skip compilation warnings
+    if (line.trim().startsWith("warning:") && !line.includes("test")) continue;
+    if (line.includes("-->") && !line.includes("panicked")) continue;
+    if (line.includes("= note:")) continue;
+    if (line.includes("= help:")) continue;
+
+    // Keep test failures and panics
+    if (
+      line.includes("FAILED") ||
+      line.includes("panicked") ||
+      line.includes("assertion") ||
+      line.includes("test result:") ||
+      line.includes("error[") ||
+      line.includes("left:") ||
+      line.includes("right:")
+    ) {
+      relevant.push(line);
+    }
+  }
+
+  return relevant.length > 0 ? relevant.slice(0, 30) : ["(test failed - see .tcr-state.json for full output)"];
 }

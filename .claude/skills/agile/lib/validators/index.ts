@@ -9,3 +9,4 @@ export {
   DoDValidator,
   createValidatorChain,
 } from "./validator-chain";
+export { BDDScenariosValidator } from "./bdd-scenarios-validator";

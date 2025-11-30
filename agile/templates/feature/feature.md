@@ -7,6 +7,12 @@
 
 [What should be built and why - provide context for the team]
 
+## BDD Scenarios
+
+> Run `agile.ts discover <name>` for guided scenario creation, or write manually using Given/When/Then format.
+
+[No scenarios defined yet]
+
 ## Acceptance Criteria (High-Level)
 
 > Detailed acceptance criteria go in individual spec files

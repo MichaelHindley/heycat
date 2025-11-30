@@ -1,6 +1,18 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, mkdir, readdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { STATE_FILE, MAX_FAILURES, TEST_TARGETS, type TCRState, type TestResult, type TestTarget } from "./types";
+import {
+  STATE_FILE,
+  MAX_FAILURES,
+  TEST_TARGETS,
+  OUTPUT_DIR,
+  TRUNCATE_SIZE,
+  CHUNK_THRESHOLD,
+  CHUNK_SIZE,
+  type TCRState,
+  type TestResult,
+  type TestTarget,
+  type TestOutput,
+} from "./types";
 import { fileExists, getCurrentTimestamp } from "./utils";
 
 // ============================================================================
@@ -56,6 +68,18 @@ function isValidState(obj: unknown): obj is TCRState {
     if (!Array.isArray(result.filesRun)) return false;
     // error can be string or null
     if (result.error !== null && typeof result.error !== "string") return false;
+
+    // Validate output if present (optional field)
+    if (result.output !== undefined) {
+      const output = result.output as Record<string, unknown>;
+      if (typeof output.truncated !== "string") return false;
+      if (typeof output.totalSize !== "number") return false;
+      // fullChunks can be null or array of strings
+      if (output.fullChunks !== null) {
+        if (!Array.isArray(output.fullChunks)) return false;
+        if (!output.fullChunks.every((c) => typeof c === "string")) return false;
+      }
+    }
   }
 
   return true;
@@ -96,6 +120,92 @@ export async function saveState(projectRoot: string, state: TCRState): Promise<v
 }
 
 // ============================================================================
+// Output Persistence
+// ============================================================================
+
+/**
+ * Ensure the output directory exists for storing chunk files.
+ */
+async function ensureOutputDir(projectRoot: string): Promise<string> {
+  const outputPath = join(projectRoot, OUTPUT_DIR);
+  await mkdir(outputPath, { recursive: true });
+  return outputPath;
+}
+
+/**
+ * Remove all existing chunk files from the output directory.
+ */
+async function cleanupOldChunks(projectRoot: string): Promise<void> {
+  const outputPath = join(projectRoot, OUTPUT_DIR);
+
+  try {
+    if (!(await fileExists(outputPath))) return;
+
+    const files = await readdir(outputPath);
+    const chunkFiles = files.filter((f) => f.startsWith("chunk-"));
+
+    await Promise.all(
+      chunkFiles.map((f) => unlink(join(outputPath, f)))
+    );
+  } catch {
+    // Ignore cleanup errors - not critical
+  }
+}
+
+/**
+ * Save test output with truncation and chunking.
+ *
+ * Strategy:
+ * - Always store first 5KB in truncated field
+ * - If output > 10KB, split full output into 5KB chunks and save to .tcr/output/
+ * - Return TestOutput with paths to any chunk files
+ */
+export async function saveTestOutput(
+  projectRoot: string,
+  output: string
+): Promise<TestOutput> {
+  const totalSize = Buffer.byteLength(output, "utf-8");
+  const truncated = output.slice(0, TRUNCATE_SIZE);
+
+  // If output is small enough, no need for chunks
+  if (totalSize <= CHUNK_THRESHOLD) {
+    return {
+      truncated,
+      fullChunks: null,
+      totalSize,
+    };
+  }
+
+  // Output exceeds threshold - write chunks
+  const outputDir = await ensureOutputDir(projectRoot);
+  await cleanupOldChunks(projectRoot);
+
+  const timestamp = Date.now();
+  const chunks: string[] = [];
+
+  // Split output into chunks
+  let offset = 0;
+  let index = 0;
+  while (offset < output.length) {
+    const chunk = output.slice(offset, offset + CHUNK_SIZE);
+    const chunkName = `chunk-${timestamp}-${index}.txt`;
+    const chunkPath = join(outputDir, chunkName);
+
+    await writeFile(chunkPath, chunk, "utf-8");
+    chunks.push(join(OUTPUT_DIR, chunkName)); // Store relative path
+
+    offset += CHUNK_SIZE;
+    index++;
+  }
+
+  return {
+    truncated,
+    fullChunks: chunks,
+    totalSize,
+  };
+}
+
+// ============================================================================
 // State Mutations
 // ============================================================================
 
@@ -115,9 +225,16 @@ export async function incrementFailure(
   projectRoot: string,
   error: string,
   filesRun: string[] = [],
-  target: TestTarget = "frontend"
+  target: TestTarget = "frontend",
+  rawOutput?: string
 ): Promise<number> {
   const state = await loadState(projectRoot);
+
+  // Save output if provided
+  let output: TestOutput | undefined;
+  if (rawOutput) {
+    output = await saveTestOutput(projectRoot, rawOutput);
+  }
 
   state.failureCount += 1;
   state.lastTestResult = {
@@ -126,6 +243,7 @@ export async function incrementFailure(
     error,
     filesRun,
     target,
+    output,
   };
 
   await saveState(projectRoot, state);
@@ -140,9 +258,15 @@ export async function resetFailures(projectRoot: string): Promise<void> {
 
 export async function recordTestResult(
   projectRoot: string,
-  result: TestResult
+  result: TestResult,
+  rawOutput?: string
 ): Promise<void> {
   const state = await loadState(projectRoot);
+
+  // Save output if provided and not already in result
+  if (rawOutput && !result.output) {
+    result.output = await saveTestOutput(projectRoot, rawOutput);
+  }
 
   state.lastTestResult = result;
 

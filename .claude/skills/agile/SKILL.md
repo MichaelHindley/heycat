@@ -1,6 +1,6 @@
 ---
 name: agile
-description: "Manage agile workflow with folder-based issues. Use when user wants to: create features/bugs/tasks, move through kanban stages (backlog->todo->in-progress->review->done), break down into specs, list/archive/delete issues."
+description: "Manage agile workflow with folder-based issues. Use when user wants to: create features/bugs/tasks, move through kanban stages, break down into specs, list/archive/delete issues, continue with next spec, check issue status/progress, resume work on an issue, or see what's next."
 ---
 
 # Agile Workflow Management
@@ -110,10 +110,23 @@ bun .claude/skills/agile/agile.ts spec add <issue> <name> [--title "Title"]
 ### Update Spec Status
 
 ```bash
-bun .claude/skills/agile/agile.ts spec status <issue> <spec> <pending|in-progress|completed>
+bun .claude/skills/agile/agile.ts spec status <issue> <spec> <pending|in-progress|in-review|completed>
 ```
 
-**Note:** Completing a spec requires technical guidance to be updated first.
+**Spec Status Lifecycle:**
+```
+pending → in-progress → in-review → [APPROVED] → completed
+               ↑            ↓
+               └──── [NEEDS_WORK] (via /agile:fix)
+```
+
+**Transition Rules:**
+- `in-progress` → `in-review`: Always allowed (ready for review)
+- `in-review` → `completed`: Requires APPROVED verdict in review section
+- `in-review` → `in-progress`: Requires NEEDS_WORK verdict (via `/agile:fix`)
+- `completed` → `in-review`: Always allowed (re-review)
+
+**Note:** The `review_round` field in spec frontmatter tracks how many review cycles a spec has gone through.
 
 ### Delete a Spec
 
@@ -161,6 +174,63 @@ Checks if guidance needs update (completed specs since last update).
 bun .claude/skills/agile/agile.ts guidance status <issue> <draft|active|finalized>
 ```
 
+## Review Commands
+
+Review specs to verify implementation and code quality. Supports iterative review cycles.
+
+### Review Spec in In-Review Status
+
+```bash
+bun .claude/skills/agile/agile.ts review
+```
+
+Automatically finds and reviews a spec in `in-review` status:
+
+1. Finds the issue in `3-in-progress` (must be exactly one)
+2. Identifies specs with `in-review` status
+3. Uses git history to find the most recently modified in-review spec
+4. Outputs a review prompt for Claude to execute
+
+**Review covers:**
+- **Implementation Verification**: Checks each acceptance criterion against actual code
+- **Code Quality Audit**: Patterns, error handling, test coverage
+
+**Output:**
+Claude reads the prompt and:
+- Examines implementation files referenced in the spec
+- Verifies acceptance criteria are met
+- Checks test coverage matches test cases
+- Appends a `## Review` section to the spec file with verdict (APPROVED/NEEDS_WORK)
+
+**After Review:**
+- If APPROVED: Run `spec status <issue> <spec> completed`
+- If NEEDS_WORK: Run `/agile:fix` to address feedback
+
+### Fix Failed Review
+
+```bash
+bun .claude/skills/agile/agile.ts fix
+```
+
+Handles specs that received a NEEDS_WORK verdict:
+
+1. Finds spec in `in-review` status with NEEDS_WORK verdict
+2. Parses the review section to extract specific issues:
+   - Failed acceptance criteria with evidence
+   - Missing test coverage
+   - Code quality concerns
+3. Displays a structured fix guide
+4. Transitions spec back to `in-progress` for fixes
+5. Records review history in spec frontmatter
+
+**After Fixing:**
+Run `/agile:review` for another independent review round.
+
+**Review History:**
+Each review round is tracked in the spec's frontmatter:
+- `review_round`: Current review iteration number
+- `review_history`: Array of past review verdicts and issues
+
 ## SPS Pattern (Smallest Possible Spec)
 
 Each spec should be the **smallest deliverable unit** - roughly the size of one "todo" item. Specs contain:
@@ -193,7 +263,20 @@ bun .claude/skills/agile/agile.ts move dark-mode 3-in-progress
 bun .claude/skills/agile/agile.ts spec status dark-mode ui-toggle in-progress
 # ... implement ...
 bun .claude/skills/agile/agile.ts guidance update dark-mode
+bun .claude/skills/agile/agile.ts spec status dark-mode ui-toggle in-review
+
+# 5b. Review the spec (using independent subagent)
+bun .claude/skills/agile/agile.ts review
+# Subagent verifies implementation and appends review section
+
+# 5c. Handle review verdict
+# If APPROVED:
 bun .claude/skills/agile/agile.ts spec status dark-mode ui-toggle completed
+
+# If NEEDS_WORK:
+bun .claude/skills/agile/agile.ts fix
+# ... fix issues based on feedback ...
+# Run /agile:review again for re-review
 
 # 6. Complete all specs, move to review
 bun .claude/skills/agile/agile.ts move dark-mode 4-review

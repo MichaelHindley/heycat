@@ -8,6 +8,9 @@ import { handleDelete } from "./commands/delete";
 import { handleWork } from "./commands/work";
 import { handleSpec } from "./commands/spec";
 import { handleGuidance } from "./commands/guidance";
+import { handleReview } from "./commands/review";
+import { handleFix } from "./commands/fix";
+import { handleDiscover } from "./commands/discover";
 import { handleHelp } from "./commands/help";
 
 async function main(): Promise<void> {
@@ -40,6 +43,15 @@ async function main(): Promise<void> {
         break;
       case "guidance":
         await handleGuidance(commandArgs);
+        break;
+      case "review":
+        await handleReview(commandArgs);
+        break;
+      case "fix":
+        await handleFix(commandArgs);
+        break;
+      case "discover":
+        await handleDiscover(commandArgs);
         break;
       case "help":
       case "--help":

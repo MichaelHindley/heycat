@@ -86,7 +86,7 @@ export async function runFrontendCoverage(
         functions: { covered: 0, total: 0, percentage: 1 },
       },
       thresholds: config.thresholds,
-      raw: "No frontend test files to run",
+      rawOutput: "No frontend test files to run",
     };
   }
 
@@ -122,7 +122,7 @@ export async function runFrontendCoverage(
       passed,
       metrics: metrics ?? createEmptyMetrics(),
       thresholds: config.thresholds,
-      raw: output,
+      rawOutput: output,
       error,
     };
   } catch (error) {
@@ -177,7 +177,7 @@ export async function runFrontendCoverageAll(
       passed,
       metrics: metrics ?? createEmptyMetrics(),
       thresholds: config.thresholds,
-      raw: output,
+      rawOutput: output,
       error: parseError,
     };
   } catch (error) {

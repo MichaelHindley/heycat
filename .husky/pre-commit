@@ -39,7 +39,8 @@ echo "Running backend tests with coverage..."
 cd src-tauri
 # Uses +nightly toolchain for #[coverage(off)] attribute support
 # 100% coverage required - untestable code must be excluded via #[coverage(off)]
-cargo +nightly llvm-cov --fail-under-lines 100 --fail-under-functions 100
+# Exclude *_test.rs files from coverage measurement (they are test code, not production code)
+cargo +nightly llvm-cov --fail-under-lines 100 --fail-under-functions 100 --ignore-filename-regex '_test\.rs$'
 
 if [ $? -ne 0 ]; then
   echo ""

@@ -7,8 +7,11 @@ import {
   type SpecInfo,
   type SpecFrontmatter,
   type SpecStatus,
+  type ReviewHistoryEntry,
 } from "./types";
 import { validateSlug, toTitleCase, getCurrentDate } from "./utils";
+import { validateSpecTransition } from "./validators/spec-status-validator";
+import { hasReviewSection, getReviewVerdict, parseReviewSection, getFailedItems } from "./review-parser";
 
 // ============================================================================
 // Spec Manager Interface
@@ -21,12 +24,14 @@ export interface SpecManager {
   updateStatus(spec: SpecInfo, status: SpecStatus): Promise<SpecInfo>;
   deleteSpec(spec: SpecInfo): Promise<void>;
   getCompletionStatus(issue: Issue): Promise<SpecCompletionStatus>;
+  addReviewHistoryEntry(spec: SpecInfo, entry: ReviewHistoryEntry): Promise<SpecInfo>;
 }
 
 export interface SpecCompletionStatus {
   total: number;
   pending: number;
   inProgress: number;
+  inReview: number;
   completed: number;
   allCompleted: boolean;
   specs: SpecInfo[];
@@ -55,13 +60,17 @@ export class FolderSpecManager implements SpecManager {
           }
         }
       }
-    } catch {
+    } catch (err) {
+      // Re-throw validation errors, ignore folder access errors
+      if (err instanceof Error && err.message.includes("Invalid status")) {
+        throw err;
+      }
       // Issue folder might not exist or be accessible
     }
 
-    // Sort by status (in-progress first, then pending, then completed) and name
+    // Sort by status (in-progress first, then in-review, then pending, then completed) and name
     return specs.sort((a, b) => {
-      const statusOrder = { "in-progress": 0, pending: 1, completed: 2 };
+      const statusOrder: Record<SpecStatus, number> = { "in-progress": 0, "in-review": 1, pending: 2, completed: 3 };
       const statusDiff = statusOrder[a.frontmatter.status] - statusOrder[b.frontmatter.status];
       if (statusDiff !== 0) return statusDiff;
       return a.name.localeCompare(b.name);
@@ -134,7 +143,7 @@ export class FolderSpecManager implements SpecManager {
   }
 
   /**
-   * Update a spec's status
+   * Update a spec's status with validation
    */
   async updateStatus(spec: SpecInfo, status: SpecStatus): Promise<SpecInfo> {
     if (!SPEC_STATUSES.includes(status)) {
@@ -143,6 +152,21 @@ export class FolderSpecManager implements SpecManager {
 
     const content = await readFile(spec.path, "utf-8");
     const date = getCurrentDate();
+
+    // Validate the transition
+    const hasReview = hasReviewSection(content);
+    const verdict = hasReview ? getReviewVerdict(content) : null;
+
+    const validationResult = validateSpecTransition({
+      currentStatus: spec.frontmatter.status,
+      targetStatus: status,
+      hasReviewSection: hasReview,
+      reviewVerdict: verdict,
+    });
+
+    if (!validationResult.valid) {
+      throw new Error(validationResult.error);
+    }
 
     // Update frontmatter
     let updatedContent = content;
@@ -164,6 +188,23 @@ export class FolderSpecManager implements SpecManager {
         /^completed:\s*.+$/m,
         "completed: null"
       );
+    }
+
+    // Increment review_round when entering in-review
+    if (status === "in-review" && spec.frontmatter.status !== "in-review") {
+      const newRound = (spec.frontmatter.review_round || 0) + 1;
+      if (updatedContent.match(/^review_round:\s*\d+/m)) {
+        updatedContent = updatedContent.replace(
+          /^review_round:\s*\d+/m,
+          `review_round: ${newRound}`
+        );
+      } else {
+        // Add review_round after dependencies line
+        updatedContent = updatedContent.replace(
+          /^(dependencies:\s*\[.*\])$/m,
+          `$1\nreview_round: ${newRound}`
+        );
+      }
     }
 
     await Bun.write(spec.path, updatedContent);
@@ -192,16 +233,86 @@ export class FolderSpecManager implements SpecManager {
 
     const pending = specs.filter((s) => s.frontmatter.status === "pending").length;
     const inProgress = specs.filter((s) => s.frontmatter.status === "in-progress").length;
+    const inReview = specs.filter((s) => s.frontmatter.status === "in-review").length;
     const completed = specs.filter((s) => s.frontmatter.status === "completed").length;
 
     return {
       total: specs.length,
       pending,
       inProgress,
+      inReview,
       completed,
-      allCompleted: specs.length > 0 && pending === 0 && inProgress === 0,
+      allCompleted: specs.length > 0 && pending === 0 && inProgress === 0 && inReview === 0,
       specs,
     };
+  }
+
+  /**
+   * Add a review history entry to a spec
+   */
+  async addReviewHistoryEntry(spec: SpecInfo, entry: ReviewHistoryEntry): Promise<SpecInfo> {
+    const content = await readFile(spec.path, "utf-8");
+    let updatedContent = content;
+
+    const currentHistory = spec.frontmatter.review_history || [];
+    const newHistory = [...currentHistory, entry];
+
+    // Serialize review_history as YAML array
+    const historyYaml = this.serializeReviewHistory(newHistory);
+
+    if (updatedContent.match(/^review_history:/m)) {
+      // Replace existing review_history
+      updatedContent = updatedContent.replace(
+        /^review_history:[\s\S]*?(?=^[a-z_]+:|^---$)/m,
+        historyYaml
+      );
+    } else {
+      // Add review_history after review_round or dependencies
+      if (updatedContent.match(/^review_round:/m)) {
+        updatedContent = updatedContent.replace(
+          /^(review_round:\s*\d+)$/m,
+          `$1\n${historyYaml.trim()}`
+        );
+      } else {
+        updatedContent = updatedContent.replace(
+          /^(dependencies:\s*\[.*\])$/m,
+          `$1\n${historyYaml.trim()}`
+        );
+      }
+    }
+
+    await Bun.write(spec.path, updatedContent);
+
+    const updatedSpec = await this.parseSpec(spec.path);
+    if (!updatedSpec) {
+      throw new Error("Failed to parse updated spec");
+    }
+
+    return updatedSpec;
+  }
+
+  /**
+   * Serialize review history to YAML format
+   */
+  private serializeReviewHistory(history: ReviewHistoryEntry[]): string {
+    if (history.length === 0) return "review_history: []\n";
+
+    const entries = history.map((entry) => {
+      const failedCriteria = entry.failedCriteria.length > 0
+        ? `[${entry.failedCriteria.map(c => `"${c.replace(/"/g, '\\"')}"`).join(", ")}]`
+        : "[]";
+      const concerns = entry.concerns.length > 0
+        ? `[${entry.concerns.map(c => `"${c.replace(/"/g, '\\"')}"`).join(", ")}]`
+        : "[]";
+
+      return `  - round: ${entry.round}
+    date: ${entry.date}
+    verdict: ${entry.verdict}
+    failedCriteria: ${failedCriteria}
+    concerns: ${concerns}`;
+    });
+
+    return `review_history:\n${entries.join("\n")}\n`;
   }
 
   // ============================================================================
@@ -216,7 +327,7 @@ export class FolderSpecManager implements SpecManager {
       const content = await readFile(specPath, "utf-8");
       const name = basename(specPath).replace(/\.spec\.md$/, "");
 
-      // Parse YAML frontmatter
+      // Parse YAML frontmatter - may throw on invalid values
       const frontmatter = this.parseFrontmatter(content);
 
       // Parse title from content
@@ -229,7 +340,12 @@ export class FolderSpecManager implements SpecManager {
         frontmatter,
         title,
       };
-    } catch {
+    } catch (err) {
+      // Re-throw validation errors with file context
+      if (err instanceof Error && err.message.includes("Invalid status")) {
+        throw new Error(`${specPath}: ${err.message}`);
+      }
+      // Other errors (file not found, etc.) return null
       return null;
     }
   }
@@ -254,9 +370,13 @@ export class FolderSpecManager implements SpecManager {
     // Parse status
     const statusMatch = fmContent.match(/^status:\s*(.+)$/m);
     if (statusMatch) {
-      const status = statusMatch[1].trim() as SpecStatus;
-      if (SPEC_STATUSES.includes(status)) {
-        defaults.status = status;
+      const status = statusMatch[1].trim();
+      if (SPEC_STATUSES.includes(status as SpecStatus)) {
+        defaults.status = status as SpecStatus;
+      } else {
+        throw new Error(
+          `Invalid status "${status}". Valid statuses: ${SPEC_STATUSES.join(", ")}`
+        );
       }
     }
 
@@ -280,6 +400,15 @@ export class FolderSpecManager implements SpecManager {
         .map((d) => d.trim().replace(/['"]/g, ""))
         .filter(Boolean);
     }
+
+    // Parse review_round (optional)
+    const reviewRoundMatch = fmContent.match(/^review_round:\s*(\d+)/m);
+    if (reviewRoundMatch) {
+      defaults.review_round = parseInt(reviewRoundMatch[1], 10);
+    }
+
+    // Note: review_history is complex YAML and would require a full parser
+    // For now, we parse it only when explicitly needed via the review-parser module
 
     return defaults;
   }

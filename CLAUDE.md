@@ -64,16 +64,46 @@ Project uses a Kanban-style issue tracking system in `/agile`.
 
 The skill provides full documentation and CLI commands. Transitions require complete content (description, owner, DoD items).
 
+### Agile Skill Triggers
+
+**ALWAYS invoke the `agile` skill** when the user says any of these (or similar):
+- "continue with the next spec" / "next spec" / "what's next"
+- "work on the issue" / "resume work" / "pick up where I left off"
+- "issue status" / "current progress" / "where are we"
+- "create a feature/bug/task"
+- "move the issue" / "advance to next stage"
+- "list issues" / "show backlog"
+
+The skill's `work <name>` command provides stage-appropriate guidance including spec status.
+
+**Shortcut commands:**
+- `/agile:next` - Auto-find and implement the next spec in the in-progress issue
+- `/agile:status` - Show current issue status and progress
+- `/agile:review` - Run independent code review using a fresh subagent
+
+### Review Independence
+
+**NEVER self-review your own implementation.** When you implement a spec:
+- DO NOT add a "## Review" section
+- DO NOT mark acceptance criteria as verified
+- DO NOT update spec status to "completed"
+
+Reviews must be performed by a **fresh subagent** with no implementation context. Use `/agile:review` which launches an independent code-reviewer agent.
+
 ## TCR (Test-Commit-Refactor) Workflow
 
-The TCR skill enforces test discipline through two layers for both frontend and backend:
+The TCR skill enforces test discipline through explicit triggers and pre-commit enforcement:
 
-### Development Feedback (Claude Code Hook)
-1. **Write a failing test first** (red)
-2. **Write code to make the test pass** (green)
-3. **Mark todo as completed** → tests run automatically
-4. **Tests pass** → WIP commit created automatically
-5. **Tests fail** → continue refactoring (after 5 failures, reconsider approach)
+### Development Workflow (True TDD)
+1. **Write a failing test first** (red) - the test defines what you're building
+2. **Iterate on production code** (non-test files) to make the test pass
+3. **Run `tcr check`** when you believe the test should now pass
+4. **Tests pass** → WIP commit created, refactor if needed
+5. **Tests fail** → continue iterating, run `tcr check` again (after 5 failures, reconsider approach)
+
+**Key principle:** The failing test IS your scope. It guides development and defines what "done" means. Run `tcr check` when you think you've solved it.
+
+**Smaller increments:** Write smaller, more focused tests - not fewer file changes. One test = one behavior.
 
 ### Pre-Commit Enforcement (Husky)
 - Husky runs both **frontend** and **backend** tests with coverage before every commit
@@ -124,17 +154,39 @@ cargo install cargo-llvm-cov
 ### Commands
 
 ```bash
-bun .claude/skills/tcr/tcr.ts run <files>       # Run tests manually
-bun .claude/skills/tcr/tcr.ts status            # Show current state
-bun .claude/skills/tcr/tcr.ts status --coverage # Show state with coverage metrics
-bun .claude/skills/tcr/tcr.ts coverage          # Run coverage checks (both targets)
-bun .claude/skills/tcr/tcr.ts coverage frontend # Run frontend coverage only
-bun .claude/skills/tcr/tcr.ts coverage backend  # Run backend coverage only
-bun .claude/skills/tcr/tcr.ts verify-config     # Verify coverage thresholds are in sync
-bun .claude/skills/tcr/tcr.ts reset             # Reset failure counter and clear error log
-bun .claude/skills/tcr/tcr.ts help              # Show help message
+bun .claude/skills/tcr/tcr.ts check [step-name] [-v] # Run tests and auto-commit on success (primary)
+bun .claude/skills/tcr/tcr.ts run <files>            # Run tests for specific files
+bun .claude/skills/tcr/tcr.ts status                 # Show current state
+bun .claude/skills/tcr/tcr.ts status --coverage      # Show state with coverage metrics
+bun .claude/skills/tcr/tcr.ts coverage               # Run coverage on changed files
+bun .claude/skills/tcr/tcr.ts coverage --debug       # Show detailed per-file coverage
+bun .claude/skills/tcr/tcr.ts verify-config          # Verify coverage thresholds are in sync
+bun .claude/skills/tcr/tcr.ts reset                  # Reset failure counter and clear error log
+bun .claude/skills/tcr/tcr.ts help                   # Show help message
 ```
+
+**Output optimization:** The `check` command uses condensed output by default (saves context window). Use `-v` or `--verbose` for full test output when debugging.
+
+**Error persistence:** When tests fail, full output is saved to `.tcr-state.json` (first 5KB in `output.truncated`). If output exceeds 10KB, chunks are saved to `.tcr/output/` with paths in the state file.
 
 ### Test Discovery
 - **Frontend**: Convention-based (`foo.ts` → `foo.test.ts` or `foo.spec.ts`)
 - **Backend**: Rust tests in `#[cfg(test)]` modules (`src-tauri/src/*.rs`)
+- **Backend test files**: `*_test.rs` files are automatically excluded from coverage
+
+## Integration Verification
+
+For multi-component features:
+
+1. **Mock Usage Audit**: When reviewing specs with mocked dependencies, verify the mocked component is actually instantiated in production code (lib.rs, main.tsx, etc.)
+
+2. **Deferral Tracking**: Any comment like "handled separately", "will be implemented later", or "managed elsewhere" MUST reference a specific spec or ticket. Flag as NEEDS_WORK if no reference exists.
+
+3. **Final Integration Spec**: Multi-component features require a final "integration" spec that:
+   - Verifies all components are wired together in production
+   - Includes an integration test (automated)
+   - Documents the end-to-end flow with file:line references
+
+4. **Feature Completion Gate**: Before moving to 4-review:
+   - All "handled separately" comments must have corresponding completed specs
+   - Integration test must exist and pass

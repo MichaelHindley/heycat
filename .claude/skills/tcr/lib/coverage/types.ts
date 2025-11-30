@@ -38,8 +38,8 @@ export interface CoverageResult {
   passed: boolean;
   metrics: CoverageMetrics;
   thresholds: CoverageThresholds;
-  raw?: string;
   error?: string;
+  rawOutput?: string; // Full stdout+stderr from test runner
 }
 
 export interface CombinedCoverageResult {

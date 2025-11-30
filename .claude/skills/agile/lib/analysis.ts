@@ -5,6 +5,9 @@ import {
   type IssueAnalysis,
   type DoDStatus,
   type DoDItem,
+  type SpecInfo,
+  type SpecIntegrationStatus,
+  type IntegrationAnalysis,
 } from "./types";
 import { createSpecManager } from "./spec-manager";
 import { createGuidanceTracker } from "./guidance-tracker";
@@ -110,6 +113,55 @@ export function findIncompleteSections(content: string): string[] {
 }
 
 // ============================================================================
+// BDD Scenario Detection
+// ============================================================================
+
+/**
+ * Placeholder patterns that indicate BDD scenarios haven't been written yet
+ */
+const BDD_PLACEHOLDER_PATTERNS = [
+  /\[No scenarios defined yet\]/i,
+  /\[Write scenarios here\]/i,
+];
+
+/**
+ * Check if content has proper BDD scenarios (Given/When/Then format)
+ * Returns true if:
+ * - Has a "## BDD Scenarios" section (or similar)
+ * - Contains at least one Given, When, and Then clause
+ * - Does not contain placeholder text
+ */
+export function detectBDDScenarios(content: string): boolean {
+  // Check for BDD Scenarios section
+  const hasBDDSection = /## BDD Scenarios/i.test(content);
+  if (!hasBDDSection) {
+    return false;
+  }
+
+  // Extract the BDD Scenarios section content
+  const bddSectionMatch = content.match(/## BDD Scenarios[\s\S]*?(?=##|$)/i);
+  if (!bddSectionMatch) {
+    return false;
+  }
+
+  const bddContent = bddSectionMatch[0];
+
+  // Check for placeholder text
+  for (const pattern of BDD_PLACEHOLDER_PATTERNS) {
+    if (pattern.test(bddContent)) {
+      return false;
+    }
+  }
+
+  // Check for Given/When/Then patterns
+  const hasGiven = /\bGiven\b/i.test(bddContent);
+  const hasWhen = /\bWhen\b/i.test(bddContent);
+  const hasThen = /\bThen\b/i.test(bddContent);
+
+  return hasGiven && hasWhen && hasThen;
+}
+
+// ============================================================================
 // Definition of Done Parsing
 // ============================================================================
 
@@ -139,6 +191,82 @@ export function parseDoD(content: string): DoDStatus {
     completed: items.filter((i) => i.checked).length,
     total: items.length,
     items,
+  };
+}
+
+// ============================================================================
+// Integration Analysis
+// ============================================================================
+
+/**
+ * Check if a section exists and is complete (not placeholder text or empty)
+ * Returns: { exists: boolean, complete: boolean }
+ */
+function checkIntegrationSection(
+  sections: Section[],
+  sectionName: string
+): { exists: boolean; complete: boolean } {
+  const section = sections.find((s) => s.name === sectionName);
+  if (!section) {
+    return { exists: false, complete: false };
+  }
+  // Section exists - check if it's filled out
+  // "N/A" counts as complete, placeholder text does not
+  const content = section.content.trim().toLowerCase();
+  const isNA = content === "n/a" || content.includes("n/a (");
+  const hasContent = section.content.trim().length > 0;
+  const complete = hasContent && (isNA || !section.hasPlaceholders);
+  return { exists: true, complete };
+}
+
+/**
+ * Analyze integration readiness for a single spec
+ */
+async function analyzeSpecIntegration(spec: SpecInfo): Promise<SpecIntegrationStatus> {
+  const content = await readFile(spec.path, "utf-8");
+  const sections = parseSections(content);
+
+  const integrationPoints = checkIntegrationSection(sections, "Integration Points");
+  const integrationTest = checkIntegrationSection(sections, "Integration Test");
+
+  // Grandfathered if NEITHER section exists (pre-template spec)
+  const isGrandfathered = !integrationPoints.exists && !integrationTest.exists;
+
+  return {
+    specName: spec.name,
+    hasIntegrationPointsSection: integrationPoints.exists,
+    hasIntegrationTestSection: integrationTest.exists,
+    integrationPointsComplete: integrationPoints.complete,
+    integrationTestComplete: integrationTest.complete,
+    isGrandfathered,
+  };
+}
+
+/**
+ * Analyze integration readiness for all specs in an issue
+ */
+async function analyzeIntegration(specs: SpecInfo[]): Promise<IntegrationAnalysis> {
+  const specStatuses = await Promise.all(specs.map(analyzeSpecIntegration));
+
+  const incompleteSpecs: string[] = [];
+  for (const status of specStatuses) {
+    // Skip grandfathered specs
+    if (status.isGrandfathered) continue;
+
+    // Check if this spec has incomplete integration sections
+    const hasIncomplete =
+      (status.hasIntegrationPointsSection && !status.integrationPointsComplete) ||
+      (status.hasIntegrationTestSection && !status.integrationTestComplete);
+
+    if (hasIncomplete) {
+      incompleteSpecs.push(status.specName);
+    }
+  }
+
+  return {
+    specs: specStatuses,
+    allGrandfathered: specStatuses.every((s) => s.isGrandfathered),
+    incompleteSpecs,
   };
 }
 
@@ -177,6 +305,14 @@ export async function analyzeIssue(issue: Issue): Promise<IssueAnalysis> {
   const technicalGuidance = await guidanceTracker.getGuidanceMeta(issue);
   const needsGuidanceUpdate = await guidanceTracker.needsUpdate(issue, specStatus.specs);
 
+  // Analyze integration readiness
+  const integration = await analyzeIntegration(specStatus.specs);
+
+  // Check for BDD scenarios (only meaningful for features)
+  const hasBDDScenarios = issue.type === "feature"
+    ? detectBDDScenarios(mainContent)
+    : true; // Non-features don't need BDD scenarios
+
   return {
     issue,
     specs: specStatus.specs,
@@ -189,6 +325,8 @@ export async function analyzeIssue(issue: Issue): Promise<IssueAnalysis> {
     incompleteSections,
     hasDescription,
     ownerAssigned,
+    integration,
+    hasBDDScenarios,
   };
 }
 

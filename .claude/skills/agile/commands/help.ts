@@ -44,10 +44,14 @@ Workflow (only sequential transitions allowed):
   1-backlog -> 2-todo -> 3-in-progress -> 4-review -> 5-done
 
 Validation Requirements:
-  - 2-todo: Description must be complete
+  - 2-todo: Description complete, BDD scenarios defined (features only)
   - 3-in-progress: Owner assigned, technical guidance exists
   - 4-review: All specs completed, guidance updated
   - 5-done: All Definition of Done items checked
+
+BDD Scenarios (Features Only):
+  Features require Given/When/Then scenarios before moving to todo.
+  Run 'agile.ts discover <name>' for guided scenario creation.
 
 Examples:
   agile.ts move user-auth 2-todo
@@ -168,6 +172,104 @@ Examples:
   agile.ts guidance status user-auth active
 `);
         break;
+      case "review":
+        console.log(`
+Usage: agile.ts review
+
+Review a spec in in-review status in the current in-progress issue.
+
+The command:
+  1. Finds the issue in 3-in-progress (must be exactly one)
+  2. Finds specs with in-review status
+  3. Uses git history to identify the most recently modified in-review spec
+  4. Outputs a review prompt for Claude to execute
+
+The review covers:
+  - Implementation verification (acceptance criteria vs actual code)
+  - Code quality audit (patterns, error handling, test coverage)
+
+Output:
+  A structured prompt that guides Claude to:
+  - Read implementation files referenced in the spec
+  - Verify each acceptance criterion is implemented
+  - Check test coverage matches test cases
+  - Generate and append a Review section to the spec file
+
+After Review:
+  - If APPROVED: Run spec status <issue> <spec> completed
+  - If NEEDS_WORK: Run agile.ts fix to address feedback
+
+Examples:
+  agile.ts review
+`);
+        break;
+      case "fix":
+        console.log(`
+Usage: agile.ts fix
+
+Fix a spec that received NEEDS_WORK verdict during review.
+
+The command:
+  1. Finds spec in in-review status with NEEDS_WORK verdict
+  2. Parses the Review section to extract:
+     - Failed acceptance criteria with evidence
+     - Missing test coverage
+     - Code quality concerns
+  3. Displays a structured fix guide
+  4. Transitions spec back to in-progress
+
+After Fixing:
+  Run /agile:review for another independent review round.
+
+Review History:
+  Each review round is tracked in the spec frontmatter:
+  - review_round: Current iteration number
+  - review_history: Array of past review verdicts
+
+Examples:
+  agile.ts fix
+`);
+        break;
+      case "discover":
+        console.log(`
+Usage: agile.ts discover <name>
+
+Guide BDD scenario creation through product research questions.
+
+The discover command outputs a structured prompt that guides Claude through
+an interview process to define Given/When/Then scenarios for a feature.
+
+Process:
+  1. Phase 1: User Personas
+     - Who is the primary user?
+     - What problem are they solving?
+     - Why is this important now?
+
+  2. Phase 2: Happy + Failure Paths
+     - What is the ideal successful experience?
+     - What variations exist?
+     - What could go wrong?
+     - How should failures be handled?
+
+  3. Phase 3: Scope Boundaries
+     - What is explicitly out of scope?
+     - What assumptions are we making?
+
+  4. Synthesis: Claude writes BDD scenarios to the feature file
+
+Why BDD?
+  BDD scenarios (Given/When/Then) ensure features are well-defined before
+  breaking down into specs. This prevents scope creep and misunderstandings.
+
+Enforcement:
+  Features MUST have BDD scenarios before moving from backlog to todo.
+  Bugs and tasks skip this validation.
+
+Examples:
+  agile.ts discover user-auth
+  agile.ts discover dark-mode
+`);
+        break;
       default:
         console.error(`Unknown command: ${command}`);
         process.exit(1);
@@ -182,6 +284,7 @@ Usage: agile.ts <command> [options]
 
 Issue Commands:
   create <type> <name>    Create a new issue folder (feature, bug, or task)
+  discover <name>         Guide BDD scenario creation through product research
   move <name> <stage>     Move an issue to a different stage
   list                    List all issues with spec progress
   work <name>             Analyze an issue and get stage-appropriate guidance
@@ -191,7 +294,7 @@ Issue Commands:
 Spec Commands:
   spec list <issue>             List specs in an issue
   spec add <issue> <name>       Add a new spec
-  spec status <issue> <s> <st>  Update spec status (pending/in-progress/completed)
+  spec status <issue> <s> <st>  Update spec status (pending/in-progress/in-review/completed)
   spec delete <issue> <spec>    Delete a spec
   spec suggest <issue>          AI-assisted spec breakdown
 
@@ -200,8 +303,16 @@ Guidance Commands:
   guidance update <issue>       Mark guidance as updated
   guidance validate <issue>     Check if guidance is current
 
+Review Commands:
+  review                        Review a spec in in-review status
+  fix                           Fix issues from failed review (NEEDS_WORK)
+
 Workflow:
   1-backlog -> 2-todo -> 3-in-progress -> 4-review -> 5-done
+
+BDD Scenarios (Features Only):
+  Features require Given/When/Then scenarios before moving to todo.
+  Run 'discover' for guided product research and scenario creation.
 
 Issue Structure:
   agile/<stage>/<issue-name>/
@@ -215,6 +326,7 @@ SPS Pattern (Smallest Possible Spec):
 
 Examples:
   agile.ts create feature user-auth --title "User Authentication" --owner "Alice"
+  agile.ts discover user-auth
   agile.ts spec suggest user-auth
   agile.ts spec status user-auth login-flow in-progress
   agile.ts guidance update user-auth

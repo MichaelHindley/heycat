@@ -7,6 +7,7 @@ import { handleHelp } from "./commands/help";
 import { handleHookTodoComplete } from "./commands/hook-todo-complete";
 import { handleCoverage } from "./commands/coverage";
 import { handleVerifyConfig } from "./commands/verify-config";
+import { handleCheck } from "./commands/check";
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
@@ -30,7 +31,10 @@ async function main(): Promise<void> {
       case "verify-config":
         await handleVerifyConfig();
         break;
-      // Hidden hook handler (invoked by Claude Code hook)
+      case "check":
+        await handleCheck(commandArgs);
+        break;
+      // Hidden hook handler (invoked by Claude Code hook, disabled by default)
       case "hook-todo-complete":
         await handleHookTodoComplete();
         break;

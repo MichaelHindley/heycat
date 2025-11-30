@@ -1,7 +1,7 @@
 ---
-status: pending
+status: completed
 created: 2025-11-26
-completed: null
+completed: 2025-11-27
 dependencies: []
 ---
 
@@ -13,18 +13,18 @@ Integrate tauri-plugin-global-shortcut to register Cmd+Shift+R (macOS) / Ctrl+Sh
 
 ## Acceptance Criteria
 
-- [ ] Register platform-specific shortcut (CmdOrCtrl+Shift+R)
-- [ ] Callback invoked when shortcut pressed
-- [ ] Works when app window not focused (global system-wide)
-- [ ] Unregister shortcut on app cleanup
-- [ ] Handle conflicts with other apps gracefully (return error)
+- [x] Register platform-specific shortcut (CmdOrCtrl+Shift+R)
+- [x] Callback invoked when shortcut pressed
+- [x] Works when app window not focused (global system-wide)
+- [x] Unregister shortcut on app cleanup
+- [x] Handle conflicts with other apps gracefully (return error)
 
 ## Test Cases
 
-- [ ] Shortcut registration succeeds on supported platforms
-- [ ] Callback receives keypress events
-- [ ] Unregistration cleans up properly on app exit
-- [ ] Conflict detection returns descriptive error
+- [x] Shortcut registration succeeds on supported platforms
+- [x] Callback receives keypress events
+- [x] Unregistration cleans up properly on app exit
+- [x] Conflict detection returns descriptive error
 
 ## Dependencies
 

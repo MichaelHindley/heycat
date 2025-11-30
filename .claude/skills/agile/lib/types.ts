@@ -33,14 +33,26 @@ export type Template = (typeof TEMPLATES)[number];
 // Spec Types and Constants
 // ============================================================================
 
-export const SPEC_STATUSES = ["pending", "in-progress", "completed"] as const;
+export const SPEC_STATUSES = ["pending", "in-progress", "in-review", "completed"] as const;
 export type SpecStatus = (typeof SPEC_STATUSES)[number];
+
+export type ReviewVerdict = "APPROVED" | "NEEDS_WORK";
+
+export interface ReviewHistoryEntry {
+  round: number;
+  date: string;
+  verdict: ReviewVerdict;
+  failedCriteria: string[];
+  concerns: string[];
+}
 
 export interface SpecFrontmatter {
   status: SpecStatus;
   created: string;
   completed: string | null;
   dependencies: string[];
+  review_round?: number;
+  review_history?: ReviewHistoryEntry[];
 }
 
 export interface SpecInfo {
@@ -116,6 +128,25 @@ export interface DoDStatus {
 }
 
 // ============================================================================
+// Integration Analysis Types
+// ============================================================================
+
+export interface SpecIntegrationStatus {
+  specName: string;
+  hasIntegrationPointsSection: boolean;
+  hasIntegrationTestSection: boolean;
+  integrationPointsComplete: boolean;  // true if filled out or N/A
+  integrationTestComplete: boolean;    // true if filled out or N/A
+  isGrandfathered: boolean;            // true if sections don't exist (pre-template spec)
+}
+
+export interface IntegrationAnalysis {
+  specs: SpecIntegrationStatus[];
+  allGrandfathered: boolean;           // true if all specs are pre-template
+  incompleteSpecs: string[];           // specs with sections but incomplete content
+}
+
+// ============================================================================
 // Issue Analysis Types
 // ============================================================================
 
@@ -131,6 +162,8 @@ export interface IssueAnalysis {
   incompleteSections: string[];
   hasDescription: boolean;
   ownerAssigned: boolean;
+  integration: IntegrationAnalysis;
+  hasBDDScenarios: boolean;
 }
 
 // ============================================================================

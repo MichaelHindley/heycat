@@ -1,37 +1,72 @@
 const HELP_TEXT = `
 TCR (Test-Commit-Refactor) Skill
 
-Automates the test-commit-refactor workflow using Claude Code hooks.
+Enforces test discipline with explicit test triggers and pre-commit enforcement.
 
 USAGE:
   bun .claude/skills/tcr/tcr.ts <command> [options]
 
 COMMANDS:
-  run [files...]     Run tests for specific files
-  status [--coverage] Show current TCR state (step, failures, last result)
-  reset              Reset failure counter to continue past threshold
-  coverage [target]  Run coverage checks (frontend, backend, or both)
-  verify-config      Verify coverage thresholds are in sync across all config files
-  help               Show this help message
+  check [step-name] [-v]  Run tests and auto-commit on success (primary command)
+  run [files...]          Run tests for specific files
+  status [--coverage]     Show current TCR state (step, failures, last result)
+  reset                   Reset failure counter to continue past threshold
+  coverage [target] [-d]  Run coverage checks (frontend, backend, or both)
+  verify-config           Verify coverage thresholds are in sync across all config files
+  help                    Show this help message
+
+OPTIONS:
+  -v, --verbose   Show full test output (check command, default: condensed)
+  -d, --debug     Show detailed coverage output (coverage command)
 
 WORKFLOW:
-  1. Mark a todo as "completed" → tests run automatically
-  2. Tests pass → WIP commit created
-  3. Tests fail → failure counter increments
-  4. 5 failures → prompted to reconsider approach
-  5. Git commits blocked until tests pass
+  1. Write code and tests
+  2. Run "tcr check" when ready to test
+  3. Tests pass → WIP commit created automatically
+  4. Tests fail → fix and run "tcr check" again
+  5. Pre-commit hook enforces 100% coverage on all commits
 
 TEST DISCOVERY:
-  Convention-based: foo.ts → foo.test.ts or foo.spec.ts
+  Frontend: foo.ts → foo.test.ts or foo.spec.ts
   Backend: src-tauri/ changes trigger cargo test
+  Backend test files (*_test.rs) auto-excluded from coverage
 
 EXAMPLES:
-  bun .claude/skills/tcr/tcr.ts run src/App.tsx
+  bun .claude/skills/tcr/tcr.ts check "Add user auth"
+  bun .claude/skills/tcr/tcr.ts coverage --debug
   bun .claude/skills/tcr/tcr.ts status
-  bun .claude/skills/tcr/tcr.ts reset
 `;
 
 const COMMAND_HELP: Record<string, string> = {
+  check: `
+TCR CHECK - Run tests and auto-commit on success
+
+USAGE:
+  bun .claude/skills/tcr/tcr.ts check [step-name] [options]
+
+ARGUMENTS:
+  step-name   Optional description for the WIP commit (default: "manual check")
+
+OPTIONS:
+  --verbose, -v   Show full test output (default: condensed on success)
+
+BEHAVIOR:
+  1. Detects changed files via git status
+  2. Determines target (frontend/backend/both)
+  3. Runs tests with coverage
+  4. On success: shows condensed output, creates WIP commit
+  5. On failure: shows condensed error details, increments failure counter
+
+OUTPUT:
+  Default (quiet mode): "TCR: PASS: Frontend: PASS | Backend: PASS (100%)"
+  Verbose mode: Full vitest/cargo output
+
+EXAMPLES:
+  bun .claude/skills/tcr/tcr.ts check
+  bun .claude/skills/tcr/tcr.ts check "Add user authentication"
+  bun .claude/skills/tcr/tcr.ts check --verbose "Debug test issue"
+`,
+
   run: `
 TCR RUN - Run tests for specific files
 
@@ -77,15 +112,19 @@ to keep working on the current approach.
 TCR COVERAGE - Run coverage checks
 
 USAGE:
-  bun .claude/skills/tcr/tcr.ts coverage [target]
+  bun .claude/skills/tcr/tcr.ts coverage [target] [--debug]
 
 ARGUMENTS:
   target   Optional: "frontend", "backend", or omit for both
 
+OPTIONS:
+  --debug, -d   Show detailed per-file coverage output (useful for debugging)
+
 EXAMPLES:
-  bun .claude/skills/tcr/tcr.ts coverage          # Run both
-  bun .claude/skills/tcr/tcr.ts coverage frontend # Frontend only
-  bun .claude/skills/tcr/tcr.ts coverage backend  # Backend only
+  bun .claude/skills/tcr/tcr.ts coverage              # Run both, summary only
+  bun .claude/skills/tcr/tcr.ts coverage --debug      # Run both with per-file details
+  bun .claude/skills/tcr/tcr.ts coverage frontend     # Frontend only
+  bun .claude/skills/tcr/tcr.ts coverage backend -d   # Backend with details
 `,
 
   "verify-config": `
