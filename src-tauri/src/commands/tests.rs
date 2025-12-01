@@ -79,7 +79,7 @@ fn test_start_recording_returns_error_when_already_recording() {
     let result = start_recording_impl(&state, None);
 
     assert!(result.is_err());
-    assert!(result.unwrap_err().contains("Already recording"));
+    assert!(result.unwrap_err().contains("already in progress"));
 }
 
 #[test]
@@ -102,7 +102,7 @@ fn test_stop_recording_returns_error_when_not_recording() {
     let result = stop_recording_impl(&state, None);
 
     assert!(result.is_err());
-    assert!(result.unwrap_err().contains("Not currently recording"));
+    assert!(result.unwrap_err().contains("No recording in progress"));
 }
 
 #[test]
@@ -259,7 +259,7 @@ fn test_get_last_recording_buffer_returns_error_when_no_recording() {
     let result = get_last_recording_buffer_impl(&state);
 
     assert!(result.is_err());
-    assert!(result.unwrap_err().contains("Audio buffer not available"));
+    assert!(result.unwrap_err().contains("No recording available"));
 }
 
 #[test]

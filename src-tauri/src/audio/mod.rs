@@ -49,6 +49,11 @@ impl Clone for AudioBuffer {
 /// Default sample rate for audio capture (44.1 kHz)
 pub const DEFAULT_SAMPLE_RATE: u32 = 44100;
 
+/// Maximum buffer size in samples (~10 minutes at 48kHz = 28.8M samples)
+/// This prevents unlimited memory growth during long recordings.
+/// At 48kHz mono, this is approximately 115MB of f32 data.
+pub const MAX_BUFFER_SAMPLES: usize = 48000 * 60 * 10;
+
 /// State of the audio capture process
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureState {

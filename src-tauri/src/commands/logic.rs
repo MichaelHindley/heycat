@@ -28,19 +28,21 @@ pub fn start_recording_impl(
     state: &Mutex<RecordingManager>,
     audio_thread: Option<&AudioThreadHandle>,
 ) -> Result<(), String> {
-    let mut manager = state
-        .lock()
-        .map_err(|e| format!("Failed to acquire lock: {}", e))?;
+    let mut manager = state.lock().map_err(|_| {
+        "Unable to access recording state. Please try again or restart the application."
+    })?;
 
     // Check current state
     if manager.get_state() != RecordingState::Idle {
-        return Err("Already recording".to_string());
+        return Err(
+            "A recording is already in progress. Stop the current recording first.".to_string(),
+        );
     }
 
     // Start recording with default sample rate
     let buffer = manager
         .start_recording(DEFAULT_SAMPLE_RATE)
-        .map_err(|e| e.to_string())?;
+        .map_err(|_| "Failed to initialize recording.")?;
 
     // Start audio capture if audio thread is available
     if let Some(audio_thread) = audio_thread {
@@ -49,10 +51,12 @@ pub fn start_recording_impl(
                 // Update with actual sample rate from device
                 manager.set_sample_rate(sample_rate);
             }
-            Err(e) => {
+            Err(_) => {
                 // Audio capture failed - rollback state and return error
                 manager.reset_to_idle();
-                return Err(format!("Audio capture failed: {:?}", e));
+                return Err(
+                    "Could not access the microphone. Please check that your microphone is connected and permissions are granted.".to_string(),
+                );
             }
         }
     }
@@ -79,13 +83,13 @@ pub fn stop_recording_impl(
     state: &Mutex<RecordingManager>,
     audio_thread: Option<&AudioThreadHandle>,
 ) -> Result<RecordingMetadata, String> {
-    let mut manager = state
-        .lock()
-        .map_err(|e| format!("Failed to acquire lock: {}", e))?;
+    let mut manager = state.lock().map_err(|_| {
+        "Unable to access recording state. Please try again or restart the application."
+    })?;
 
     // Check current state
     if manager.get_state() != RecordingState::Recording {
-        return Err("Not currently recording".to_string());
+        return Err("No recording in progress. Start a recording first.".to_string());
     }
 
     // Stop audio capture if audio thread is available
@@ -99,18 +103,23 @@ pub fn stop_recording_impl(
     // Transition to Processing
     manager
         .transition_to(RecordingState::Processing)
-        .map_err(|e| e.to_string())?;
+        .map_err(|_| "Failed to process recording.")?;
 
     // Get the audio buffer and encode
-    let buffer = manager.get_audio_buffer().map_err(|e| e.to_string())?;
-    let samples = buffer.lock().map_err(|e| e.to_string())?.clone();
+    let buffer = manager
+        .get_audio_buffer()
+        .map_err(|_| "No recorded audio available.")?;
+    let samples = buffer
+        .lock()
+        .map_err(|_| "Unable to access recorded audio.")?
+        .clone();
     let sample_count = samples.len();
 
     // Encode WAV if we have samples
     let file_path = if !samples.is_empty() {
         let writer = SystemFileWriter;
         encode_wav(&samples, sample_rate, &writer)
-            .map_err(|e| format!("Encoding error: {:?}", e))?
+            .map_err(|_| "Failed to save the recording. Please check disk space and try again.")?
     } else {
         // No samples recorded - return placeholder
         String::new()
@@ -122,7 +131,7 @@ pub fn stop_recording_impl(
     // Transition to Idle
     manager
         .transition_to(RecordingState::Idle)
-        .map_err(|e| e.to_string())?;
+        .map_err(|_| "Failed to complete recording.")?;
 
     Ok(RecordingMetadata {
         duration_secs,
@@ -141,9 +150,9 @@ pub fn stop_recording_impl(
 pub fn get_recording_state_impl(
     state: &Mutex<RecordingManager>,
 ) -> Result<RecordingStateInfo, String> {
-    let manager = state
-        .lock()
-        .map_err(|e| format!("Failed to acquire lock: {}", e))?;
+    let manager = state.lock().map_err(|_| {
+        "Unable to access recording state. Please try again or restart the application."
+    })?;
     Ok(RecordingStateInfo {
         state: manager.get_state(),
     })
@@ -161,12 +170,12 @@ pub fn get_recording_state_impl(
 pub fn get_last_recording_buffer_impl(
     state: &Mutex<RecordingManager>,
 ) -> Result<AudioData, String> {
-    let manager = state
-        .lock()
-        .map_err(|e| format!("Failed to acquire lock: {}", e))?;
-    manager
-        .get_last_recording_buffer()
-        .map_err(|e| e.to_string())
+    let manager = state.lock().map_err(|_| {
+        "Unable to access recording state. Please try again or restart the application."
+    })?;
+    manager.get_last_recording_buffer().map_err(|_| {
+        "No recording available. Please make a recording first.".to_string()
+    })
 }
 
 /// Implementation of clear_last_recording_buffer
@@ -176,9 +185,9 @@ pub fn get_last_recording_buffer_impl(
 /// # Errors
 /// Returns an error string if the state lock is poisoned
 pub fn clear_last_recording_buffer_impl(state: &Mutex<RecordingManager>) -> Result<(), String> {
-    let mut manager = state
-        .lock()
-        .map_err(|e| format!("Failed to acquire lock: {}", e))?;
+    let mut manager = state.lock().map_err(|_| {
+        "Unable to access recording state. Please try again or restart the application."
+    })?;
     manager.clear_last_recording();
     Ok(())
 }

@@ -8,7 +8,7 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::Stream;
 
-use super::{AudioBuffer, AudioCaptureBackend, AudioCaptureError, CaptureState};
+use super::{AudioBuffer, AudioCaptureBackend, AudioCaptureError, CaptureState, MAX_BUFFER_SAMPLES};
 
 /// Audio capture backend using cpal for platform-specific audio capture
 pub struct CpalBackend {
@@ -72,6 +72,7 @@ impl AudioCaptureBackend for CpalBackend {
         };
 
         // Build the input stream based on sample format
+        // Each callback checks buffer size to prevent unbounded memory growth
         let stream = match config.sample_format() {
             cpal::SampleFormat::F32 => {
                 let buffer_clone = buffer.clone();
@@ -79,7 +80,11 @@ impl AudioCaptureBackend for CpalBackend {
                     &config.into(),
                     move |data: &[f32], _: &cpal::InputCallbackInfo| {
                         if let Ok(mut guard) = buffer_clone.lock() {
-                            guard.extend_from_slice(data);
+                            let remaining = MAX_BUFFER_SAMPLES.saturating_sub(guard.len());
+                            if remaining > 0 {
+                                let to_add = data.len().min(remaining);
+                                guard.extend_from_slice(&data[..to_add]);
+                            }
                         }
                     },
                     err_fn,
@@ -92,8 +97,15 @@ impl AudioCaptureBackend for CpalBackend {
                     &config.into(),
                     move |data: &[i16], _: &cpal::InputCallbackInfo| {
                         if let Ok(mut guard) = buffer_clone.lock() {
-                            // Convert i16 samples to f32 normalized to [-1.0, 1.0]
-                            guard.extend(data.iter().map(|&s| s as f32 / i16::MAX as f32));
+                            let remaining = MAX_BUFFER_SAMPLES.saturating_sub(guard.len());
+                            if remaining > 0 {
+                                // Convert i16 samples to f32 normalized to [-1.0, 1.0]
+                                guard.extend(
+                                    data.iter()
+                                        .take(remaining)
+                                        .map(|&s| s as f32 / i16::MAX as f32),
+                                );
+                            }
                         }
                     },
                     err_fn,
@@ -106,11 +118,15 @@ impl AudioCaptureBackend for CpalBackend {
                     &config.into(),
                     move |data: &[u16], _: &cpal::InputCallbackInfo| {
                         if let Ok(mut guard) = buffer_clone.lock() {
-                            // Convert u16 samples to f32 normalized to [-1.0, 1.0]
-                            guard.extend(
-                                data.iter()
-                                    .map(|&s| (s as f32 / u16::MAX as f32) * 2.0 - 1.0),
-                            );
+                            let remaining = MAX_BUFFER_SAMPLES.saturating_sub(guard.len());
+                            if remaining > 0 {
+                                // Convert u16 samples to f32 normalized to [-1.0, 1.0]
+                                guard.extend(
+                                    data.iter()
+                                        .take(remaining)
+                                        .map(|&s| (s as f32 / u16::MAX as f32) * 2.0 - 1.0),
+                                );
+                            }
                         }
                     },
                     err_fn,
