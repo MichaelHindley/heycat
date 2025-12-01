@@ -148,8 +148,4 @@ impl AudioCaptureBackend for CpalBackend {
         self.state = CaptureState::Stopped;
         Ok(())
     }
-
-    fn state(&self) -> CaptureState {
-        self.state
-    }
 }

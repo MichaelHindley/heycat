@@ -58,6 +58,17 @@ pub struct AudioData {
     pub duration_secs: f64,
 }
 
+/// Metadata returned after a successful recording
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RecordingMetadata {
+    /// Duration of the recording in seconds
+    pub duration_secs: f64,
+    /// Path to the saved WAV file
+    pub file_path: String,
+    /// Number of audio samples recorded
+    pub sample_count: usize,
+}
+
 /// Retained recording data from the last completed recording
 #[derive(Debug, Clone)]
 struct LastRecording {

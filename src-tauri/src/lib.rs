@@ -12,6 +12,9 @@ mod recording;
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
+/// Concrete type for HotkeyService with TauriShortcutBackend
+type HotkeyServiceHandle = hotkey::HotkeyService<hotkey::TauriShortcutBackend>;
+
 /// Greets the user with a personalized message.
 ///
 /// # Arguments
@@ -67,8 +70,25 @@ pub fn run() {
                     integration_guard.handle_toggle(&state_clone);
                 }))
                 .expect("Failed to register recording hotkey");
+
+            // Store service in state for cleanup on exit
+            app.manage(service);
+
             eprintln!("[app] Setup complete! Ready to record.");
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                eprintln!("[app] Window destroyed, cleaning up...");
+                // Unregister hotkey on window close
+                if let Some(service) = window.app_handle().try_state::<HotkeyServiceHandle>() {
+                    if let Err(e) = service.unregister_recording_shortcut() {
+                        eprintln!("[app] Failed to unregister hotkey: {:?}", e);
+                    } else {
+                        eprintln!("[app] Hotkey unregistered successfully");
+                    }
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             greet,

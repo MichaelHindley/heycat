@@ -40,6 +40,7 @@ impl<E: RecordingEventEmitter> HotkeyIntegration<E> {
     }
 
     /// Create with custom debounce duration (for testing)
+    #[cfg(test)]
     pub fn with_debounce(emitter: E, debounce_ms: u64) -> Self {
         Self {
             last_toggle_time: None,
@@ -203,6 +204,7 @@ impl<E: RecordingEventEmitter> HotkeyIntegration<E> {
     }
 
     /// Check if currently in debounce window (for testing)
+    #[cfg(test)]
     pub fn is_debouncing(&self) -> bool {
         if let Some(last) = self.last_toggle_time {
             Instant::now().duration_since(last) < self.debounce_duration

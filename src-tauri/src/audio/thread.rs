@@ -15,7 +15,8 @@ pub enum AudioCommand {
     Start(AudioBuffer),
     /// Stop capturing audio
     Stop,
-    /// Shutdown the audio thread
+    /// Shutdown the audio thread (used in tests)
+    #[allow(dead_code)]
     Shutdown,
 }
 
@@ -60,7 +61,8 @@ impl AudioThreadHandle {
             .map_err(|_| AudioThreadError::ThreadDisconnected)
     }
 
-    /// Shutdown the audio thread gracefully
+    /// Shutdown the audio thread gracefully (used in tests)
+    #[allow(dead_code)]
     pub fn shutdown(&self) -> Result<(), AudioThreadError> {
         self.sender
             .send(AudioCommand::Shutdown)

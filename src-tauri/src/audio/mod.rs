@@ -6,10 +6,10 @@ mod cpal_backend;
 pub use cpal_backend::CpalBackend;
 
 pub mod thread;
-pub use thread::{AudioThreadError, AudioThreadHandle};
+pub use thread::AudioThreadHandle;
 
 pub mod wav;
-pub use wav::{encode_wav, FileWriter, SystemFileWriter, WavEncodingError};
+pub use wav::{encode_wav, SystemFileWriter};
 
 #[cfg(test)]
 mod mod_test;
@@ -49,20 +49,6 @@ impl Clone for AudioBuffer {
 /// Default sample rate for audio capture (44.1 kHz)
 pub const DEFAULT_SAMPLE_RATE: u32 = 44100;
 
-/// Configuration for audio capture
-pub struct AudioConfig {
-    /// Sample rate in Hz (default: 44100)
-    pub sample_rate: u32,
-}
-
-impl Default for AudioConfig {
-    fn default() -> Self {
-        Self {
-            sample_rate: DEFAULT_SAMPLE_RATE,
-        }
-    }
-}
-
 /// State of the audio capture process
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureState {
@@ -98,48 +84,4 @@ pub trait AudioCaptureBackend {
 
     /// Stop capturing audio
     fn stop(&mut self) -> Result<(), AudioCaptureError>;
-
-    /// Get the current capture state
-    fn state(&self) -> CaptureState;
-}
-
-/// Service for managing audio capture
-pub struct AudioCaptureService<B: AudioCaptureBackend> {
-    backend: B,
-    config: AudioConfig,
-}
-
-impl<B: AudioCaptureBackend> AudioCaptureService<B> {
-    /// Create a new audio capture service with default configuration
-    pub fn new(backend: B) -> Self {
-        Self {
-            backend,
-            config: AudioConfig::default(),
-        }
-    }
-
-    /// Create a new audio capture service with custom configuration
-    pub fn with_config(backend: B, config: AudioConfig) -> Self {
-        Self { backend, config }
-    }
-
-    /// Get the current configuration
-    pub fn config(&self) -> &AudioConfig {
-        &self.config
-    }
-
-    /// Get the current capture state
-    pub fn state(&self) -> CaptureState {
-        self.backend.state()
-    }
-
-    /// Start capturing audio into the provided buffer
-    pub fn start_capture(&mut self, buffer: AudioBuffer) -> Result<(), AudioCaptureError> {
-        self.backend.start(buffer)
-    }
-
-    /// Stop capturing audio
-    pub fn stop_capture(&mut self) -> Result<(), AudioCaptureError> {
-        self.backend.stop()
-    }
 }
