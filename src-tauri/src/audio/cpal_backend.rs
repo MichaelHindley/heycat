@@ -8,7 +8,9 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::Stream;
 
-use super::{AudioBuffer, AudioCaptureBackend, AudioCaptureError, CaptureState, MAX_BUFFER_SAMPLES};
+use super::{AudioBuffer, AudioCaptureBackend, AudioCaptureError, CaptureState, StopReason, MAX_BUFFER_SAMPLES};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::Sender;
 
 /// Audio capture backend using cpal for platform-specific audio capture
 pub struct CpalBackend {
@@ -36,7 +38,11 @@ impl Default for CpalBackend {
 }
 
 impl AudioCaptureBackend for CpalBackend {
-    fn start(&mut self, buffer: AudioBuffer) -> Result<u32, AudioCaptureError> {
+    fn start(
+        &mut self,
+        buffer: AudioBuffer,
+        stop_signal: Option<Sender<StopReason>>,
+    ) -> Result<u32, AudioCaptureError> {
         eprintln!("[cpal] Starting audio capture...");
 
         // Get the default audio host
@@ -71,19 +77,40 @@ impl AudioCaptureBackend for CpalBackend {
             eprintln!("Audio stream error: {}", err);
         };
 
+        // Shared flag to ensure we only signal once
+        let signaled = std::sync::Arc::new(AtomicBool::new(false));
+
         // Build the input stream based on sample format
         // Each callback checks buffer size to prevent unbounded memory growth
+        // and signals if buffer is full or lock fails
         let stream = match config.sample_format() {
             cpal::SampleFormat::F32 => {
                 let buffer_clone = buffer.clone();
+                let signal_clone = stop_signal.clone();
+                let signaled_clone = signaled.clone();
                 device.build_input_stream(
                     &config.into(),
                     move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                        if let Ok(mut guard) = buffer_clone.lock() {
-                            let remaining = MAX_BUFFER_SAMPLES.saturating_sub(guard.len());
-                            if remaining > 0 {
-                                let to_add = data.len().min(remaining);
-                                guard.extend_from_slice(&data[..to_add]);
+                        match buffer_clone.lock() {
+                            Ok(mut guard) => {
+                                let remaining = MAX_BUFFER_SAMPLES.saturating_sub(guard.len());
+                                if remaining > 0 {
+                                    let to_add = data.len().min(remaining);
+                                    guard.extend_from_slice(&data[..to_add]);
+                                } else if !signaled_clone.swap(true, Ordering::SeqCst) {
+                                    // Buffer full - signal once
+                                    if let Some(ref sender) = signal_clone {
+                                        let _ = sender.send(StopReason::BufferFull);
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                // Lock poisoned - signal once
+                                if !signaled_clone.swap(true, Ordering::SeqCst) {
+                                    if let Some(ref sender) = signal_clone {
+                                        let _ = sender.send(StopReason::LockError);
+                                    }
+                                }
                             }
                         }
                     },
@@ -93,18 +120,35 @@ impl AudioCaptureBackend for CpalBackend {
             }
             cpal::SampleFormat::I16 => {
                 let buffer_clone = buffer.clone();
+                let signal_clone = stop_signal.clone();
+                let signaled_clone = signaled.clone();
                 device.build_input_stream(
                     &config.into(),
                     move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                        if let Ok(mut guard) = buffer_clone.lock() {
-                            let remaining = MAX_BUFFER_SAMPLES.saturating_sub(guard.len());
-                            if remaining > 0 {
-                                // Convert i16 samples to f32 normalized to [-1.0, 1.0]
-                                guard.extend(
-                                    data.iter()
-                                        .take(remaining)
-                                        .map(|&s| s as f32 / i16::MAX as f32),
-                                );
+                        match buffer_clone.lock() {
+                            Ok(mut guard) => {
+                                let remaining = MAX_BUFFER_SAMPLES.saturating_sub(guard.len());
+                                if remaining > 0 {
+                                    // Convert i16 samples to f32 normalized to [-1.0, 1.0]
+                                    guard.extend(
+                                        data.iter()
+                                            .take(remaining)
+                                            .map(|&s| s as f32 / i16::MAX as f32),
+                                    );
+                                } else if !signaled_clone.swap(true, Ordering::SeqCst) {
+                                    // Buffer full - signal once
+                                    if let Some(ref sender) = signal_clone {
+                                        let _ = sender.send(StopReason::BufferFull);
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                // Lock poisoned - signal once
+                                if !signaled_clone.swap(true, Ordering::SeqCst) {
+                                    if let Some(ref sender) = signal_clone {
+                                        let _ = sender.send(StopReason::LockError);
+                                    }
+                                }
                             }
                         }
                     },
@@ -114,18 +158,35 @@ impl AudioCaptureBackend for CpalBackend {
             }
             cpal::SampleFormat::U16 => {
                 let buffer_clone = buffer.clone();
+                let signal_clone = stop_signal;
+                let signaled_clone = signaled;
                 device.build_input_stream(
                     &config.into(),
                     move |data: &[u16], _: &cpal::InputCallbackInfo| {
-                        if let Ok(mut guard) = buffer_clone.lock() {
-                            let remaining = MAX_BUFFER_SAMPLES.saturating_sub(guard.len());
-                            if remaining > 0 {
-                                // Convert u16 samples to f32 normalized to [-1.0, 1.0]
-                                guard.extend(
-                                    data.iter()
-                                        .take(remaining)
-                                        .map(|&s| (s as f32 / u16::MAX as f32) * 2.0 - 1.0),
-                                );
+                        match buffer_clone.lock() {
+                            Ok(mut guard) => {
+                                let remaining = MAX_BUFFER_SAMPLES.saturating_sub(guard.len());
+                                if remaining > 0 {
+                                    // Convert u16 samples to f32 normalized to [-1.0, 1.0]
+                                    guard.extend(
+                                        data.iter()
+                                            .take(remaining)
+                                            .map(|&s| (s as f32 / u16::MAX as f32) * 2.0 - 1.0),
+                                    );
+                                } else if !signaled_clone.swap(true, Ordering::SeqCst) {
+                                    // Buffer full - signal once
+                                    if let Some(ref sender) = signal_clone {
+                                        let _ = sender.send(StopReason::BufferFull);
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                // Lock poisoned - signal once
+                                if !signaled_clone.swap(true, Ordering::SeqCst) {
+                                    if let Some(ref sender) = signal_clone {
+                                        let _ = sender.send(StopReason::LockError);
+                                    }
+                                }
                             }
                         }
                     },

@@ -93,9 +93,11 @@ pub fn stop_recording_impl(
     }
 
     // Stop audio capture if audio thread is available
-    if let Some(audio_thread) = audio_thread {
-        let _ = audio_thread.stop(); // Best effort, ignore errors
-    }
+    let stop_result = if let Some(audio_thread) = audio_thread {
+        audio_thread.stop().ok()
+    } else {
+        None
+    };
 
     // Get the actual sample rate before transitioning
     let sample_rate = manager.get_sample_rate().unwrap_or(DEFAULT_SAMPLE_RATE);
@@ -133,10 +135,14 @@ pub fn stop_recording_impl(
         .transition_to(RecordingState::Idle)
         .map_err(|_| "Failed to complete recording.")?;
 
+    // Extract stop reason from result
+    let stop_reason = stop_result.and_then(|r| r.reason);
+
     Ok(RecordingMetadata {
         duration_secs,
         file_path,
         sample_count,
+        stop_reason,
     })
 }
 

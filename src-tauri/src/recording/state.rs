@@ -1,6 +1,6 @@
 // Recording state management for Tauri application
 
-use crate::audio::{AudioBuffer, DEFAULT_SAMPLE_RATE};
+use crate::audio::{AudioBuffer, StopReason, DEFAULT_SAMPLE_RATE};
 use serde::Serialize;
 
 /// Recording state enum representing the current state of the recording process
@@ -67,6 +67,8 @@ pub struct RecordingMetadata {
     pub file_path: String,
     /// Number of audio samples recorded
     pub sample_count: usize,
+    /// Why recording stopped (None = user initiated, Some = auto-stopped)
+    pub stop_reason: Option<StopReason>,
 }
 
 /// Retained recording data from the last completed recording

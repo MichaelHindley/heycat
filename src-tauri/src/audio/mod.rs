@@ -6,7 +6,7 @@ mod cpal_backend;
 pub use cpal_backend::CpalBackend;
 
 pub mod thread;
-pub use thread::AudioThreadHandle;
+pub use thread::{AudioThreadHandle, StopResult};
 
 pub mod wav;
 pub use wav::{encode_wav, SystemFileWriter};
@@ -82,11 +82,27 @@ pub enum AudioCaptureError {
     StreamError(String),
 }
 
+/// Reason why audio capture was stopped automatically
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub enum StopReason {
+    /// Buffer reached maximum capacity (~10 minutes)
+    BufferFull,
+    /// Lock poisoning error in audio callback
+    LockError,
+}
+
 /// Trait for audio capture backends (allows mocking in tests)
 pub trait AudioCaptureBackend {
     /// Start capturing audio into the provided buffer
     /// Returns the actual sample rate of the audio device
-    fn start(&mut self, buffer: AudioBuffer) -> Result<u32, AudioCaptureError>;
+    ///
+    /// The optional `stop_signal` sender can be used by callbacks to signal
+    /// that recording should stop (e.g., buffer full, lock error).
+    fn start(
+        &mut self,
+        buffer: AudioBuffer,
+        stop_signal: Option<std::sync::mpsc::Sender<StopReason>>,
+    ) -> Result<u32, AudioCaptureError>;
 
     /// Stop capturing audio
     fn stop(&mut self) -> Result<(), AudioCaptureError>;

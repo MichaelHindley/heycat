@@ -107,6 +107,7 @@ mod tests {
             duration_secs: 5.5,
             file_path: "/tmp/test.wav".to_string(),
             sample_count: 88200,
+            stop_reason: None,
         };
         let payload = RecordingStoppedPayload { metadata };
         let json = serde_json::to_string(&payload).unwrap();
@@ -155,6 +156,7 @@ mod tests {
             duration_secs: 3.0,
             file_path: "/tmp/recording.wav".to_string(),
             sample_count: 48000,
+            stop_reason: None,
         };
         let payload = RecordingStoppedPayload {
             metadata: metadata.clone(),

@@ -4,20 +4,28 @@
 // CpalBackend contains cpal::Stream which is NOT Send+Sync, so we isolate
 // it on a dedicated thread and communicate via channels.
 
-use super::{AudioBuffer, AudioCaptureBackend, AudioCaptureError, CpalBackend};
+use super::{AudioBuffer, AudioCaptureBackend, AudioCaptureError, CpalBackend, StopReason};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 /// Response from a Start command
 pub type StartResponse = Result<u32, AudioCaptureError>;
+
+/// Result of stopping a recording (includes reason if auto-stopped)
+#[derive(Debug, Clone, PartialEq)]
+pub struct StopResult {
+    /// Why the recording stopped (None = user initiated)
+    pub reason: Option<StopReason>,
+}
 
 /// Commands sent to the audio thread
 pub enum AudioCommand {
     /// Start capturing audio into the provided buffer
     /// Includes a response channel to return the sample rate or error
     Start(AudioBuffer, Sender<StartResponse>),
-    /// Stop capturing audio
-    Stop,
+    /// Stop capturing audio and return result via channel
+    Stop(Option<Sender<StopResult>>),
     /// Shutdown the audio thread (used in tests)
     #[allow(dead_code)]
     Shutdown,
@@ -65,10 +73,16 @@ impl AudioThreadHandle {
             .map_err(AudioThreadError::CaptureError)
     }
 
-    /// Stop audio capture
-    pub fn stop(&self) -> Result<(), AudioThreadError> {
+    /// Stop audio capture and return the stop result
+    pub fn stop(&self) -> Result<StopResult, AudioThreadError> {
+        let (response_tx, response_rx) = mpsc::channel();
         self.sender
-            .send(AudioCommand::Stop)
+            .send(AudioCommand::Stop(Some(response_tx)))
+            .map_err(|_| AudioThreadError::ThreadDisconnected)?;
+
+        // Wait for response with the stop reason
+        response_rx
+            .recv()
             .map_err(|_| AudioThreadError::ThreadDisconnected)
     }
 
@@ -116,11 +130,52 @@ fn audio_thread_main(receiver: Receiver<AudioCommand>) {
     let mut backend = CpalBackend::new();
     eprintln!("[audio-thread] CpalBackend created, waiting for commands...");
 
-    while let Ok(command) = receiver.recv() {
+    // Track the stop signal receiver when recording is active
+    let mut stop_signal_rx: Option<Receiver<StopReason>> = None;
+    // Track pending stop reason from auto-stop
+    let mut pending_stop_reason: Option<StopReason> = None;
+
+    loop {
+        // Check for stop signals from callbacks (non-blocking)
+        if let Some(ref rx) = stop_signal_rx {
+            if let Ok(reason) = rx.try_recv() {
+                eprintln!("[audio-thread] Received auto-stop signal: {:?}", reason);
+                // Auto-stop the recording
+                match backend.stop() {
+                    Ok(()) => eprintln!("[audio-thread] Auto-stopped successfully"),
+                    Err(e) => eprintln!("[audio-thread] Auto-stop failed: {:?}", e),
+                }
+                // Store the reason for when Stop command arrives
+                pending_stop_reason = Some(reason);
+                stop_signal_rx = None;
+            }
+        }
+
+        // Wait for commands (with timeout to allow checking stop signals)
+        let command = if stop_signal_rx.is_some() {
+            // Recording active - use timeout to allow periodic signal checks
+            match receiver.recv_timeout(Duration::from_millis(100)) {
+                Ok(cmd) => cmd,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        } else {
+            // Not recording - block until command
+            match receiver.recv() {
+                Ok(cmd) => cmd,
+                Err(_) => break,
+            }
+        };
+
         match command {
             AudioCommand::Start(buffer, response_tx) => {
                 eprintln!("[audio-thread] Received START command");
-                let result = backend.start(buffer);
+                // Create stop signal channel for callbacks
+                let (stop_tx, stop_rx) = mpsc::channel();
+                stop_signal_rx = Some(stop_rx);
+                pending_stop_reason = None;
+
+                let result = backend.start(buffer, Some(stop_tx));
                 match &result {
                     Ok(sample_rate) => {
                         eprintln!(
@@ -128,16 +183,29 @@ fn audio_thread_main(receiver: Receiver<AudioCommand>) {
                             sample_rate
                         )
                     }
-                    Err(e) => eprintln!("[audio-thread] Audio capture failed to start: {:?}", e),
+                    Err(e) => {
+                        eprintln!("[audio-thread] Audio capture failed to start: {:?}", e);
+                        stop_signal_rx = None; // Clear receiver on failure
+                    }
                 }
                 // Send response back - ignore if receiver dropped
                 let _ = response_tx.send(result);
             }
-            AudioCommand::Stop => {
+            AudioCommand::Stop(response_tx) => {
                 eprintln!("[audio-thread] Received STOP command");
-                match backend.stop() {
-                    Ok(()) => eprintln!("[audio-thread] Audio capture stopped successfully"),
-                    Err(e) => eprintln!("[audio-thread] Audio capture failed to stop: {:?}", e),
+                // Use pending reason if auto-stopped, otherwise None (user-initiated)
+                let reason = pending_stop_reason.take();
+                if reason.is_none() {
+                    // Only stop if not already auto-stopped
+                    match backend.stop() {
+                        Ok(()) => eprintln!("[audio-thread] Audio capture stopped successfully"),
+                        Err(e) => eprintln!("[audio-thread] Audio capture failed to stop: {:?}", e),
+                    }
+                }
+                stop_signal_rx = None;
+                // Send stop result back
+                if let Some(tx) = response_tx {
+                    let _ = tx.send(StopResult { reason });
                 }
             }
             AudioCommand::Shutdown => {
