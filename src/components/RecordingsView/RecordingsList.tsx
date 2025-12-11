@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { EmptyState } from "./EmptyState";
 import "./RecordingsList.css";
 
@@ -46,9 +47,20 @@ export function RecordingsList({ className = "" }: RecordingsListProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedPath, setExpandedPath] = useState<string | null>(null);
+  const [openError, setOpenError] = useState<string | null>(null);
 
   const toggleExpanded = (filePath: string) => {
     setExpandedPath((current) => (current === filePath ? null : filePath));
+  };
+
+  const handleOpenRecording = async (filePath: string, event: React.MouseEvent) => {
+    event.stopPropagation();
+    setOpenError(null);
+    try {
+      await openPath(filePath);
+    } catch (err) {
+      setOpenError(err instanceof Error ? err.message : String(err));
+    }
   };
 
   useEffect(() => {
@@ -135,6 +147,20 @@ export function RecordingsList({ className = "" }: RecordingsListProps) {
                     <dd className="recordings-list__path">{recording.file_path}</dd>
                   </div>
                 </dl>
+                <div className="recordings-list__actions">
+                  <button
+                    type="button"
+                    className="recordings-list__open-button"
+                    onClick={(e) => handleOpenRecording(recording.file_path, e)}
+                  >
+                    Open
+                  </button>
+                </div>
+                {openError && expandedPath === recording.file_path && (
+                  <div className="recordings-list__open-error" role="alert">
+                    Failed to open recording: {openError}
+                  </div>
+                )}
               </div>
             </li>
           );

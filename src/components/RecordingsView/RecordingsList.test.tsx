@@ -13,9 +13,15 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));
 
+vi.mock("@tauri-apps/plugin-opener", () => ({
+  openPath: vi.fn(),
+}));
+
 import { invoke } from "@tauri-apps/api/core";
+import { openPath } from "@tauri-apps/plugin-opener";
 
 const mockInvoke = vi.mocked(invoke);
+const mockOpenPath = vi.mocked(openPath);
 
 const mockRecordings: RecordingInfo[] = [
   {
@@ -263,6 +269,149 @@ describe("RecordingsList", () => {
       await user.click(secondItem);
       expect(firstItem.getAttribute("aria-expanded")).toBe("false");
       expect(secondItem.getAttribute("aria-expanded")).toBe("true");
+    });
+  });
+
+  describe("open recording", () => {
+    it("renders Open button in expanded view", async () => {
+      const user = userEvent.setup();
+      mockInvoke.mockResolvedValue(mockRecordings);
+
+      render(<RecordingsList />);
+
+      await waitFor(() => {
+        expect(
+          screen.getByText("recording-2025-12-01-143025.wav")
+        ).toBeDefined();
+      });
+
+      const firstItem = screen.getByRole("button", {
+        name: /recording-2025-12-01-143025\.wav/,
+      });
+
+      await user.click(firstItem);
+
+      expect(screen.getByRole("button", { name: "Open" })).toBeDefined();
+    });
+
+    it("clicking Open button triggers openPath with file path", async () => {
+      const user = userEvent.setup();
+      mockInvoke.mockResolvedValue(mockRecordings);
+      mockOpenPath.mockResolvedValue();
+
+      render(<RecordingsList />);
+
+      await waitFor(() => {
+        expect(
+          screen.getByText("recording-2025-12-01-143025.wav")
+        ).toBeDefined();
+      });
+
+      const firstItem = screen.getByRole("button", {
+        name: /recording-2025-12-01-143025\.wav/,
+      });
+
+      await user.click(firstItem);
+
+      const openButton = screen.getByRole("button", { name: "Open" });
+      await user.click(openButton);
+
+      expect(mockOpenPath).toHaveBeenCalledWith(
+        "/path/to/recording-2025-12-01-143025.wav"
+      );
+    });
+
+    it("shows error state if file cannot be opened", async () => {
+      const user = userEvent.setup();
+      mockInvoke.mockResolvedValue(mockRecordings);
+      mockOpenPath.mockRejectedValue(new Error("File not found"));
+
+      render(<RecordingsList />);
+
+      await waitFor(() => {
+        expect(
+          screen.getByText("recording-2025-12-01-143025.wav")
+        ).toBeDefined();
+      });
+
+      const firstItem = screen.getByRole("button", {
+        name: /recording-2025-12-01-143025\.wav/,
+      });
+
+      await user.click(firstItem);
+
+      const openButton = screen.getByRole("button", { name: "Open" });
+      await user.click(openButton);
+
+      await waitFor(() => {
+        expect(screen.getByRole("alert")).toBeDefined();
+        expect(
+          screen.getByText("Failed to open recording: File not found")
+        ).toBeDefined();
+      });
+    });
+
+    it("clears error when successfully opening after failure", async () => {
+      const user = userEvent.setup();
+      mockInvoke.mockResolvedValue(mockRecordings);
+      mockOpenPath
+        .mockRejectedValueOnce(new Error("File not found"))
+        .mockResolvedValueOnce();
+
+      render(<RecordingsList />);
+
+      await waitFor(() => {
+        expect(
+          screen.getByText("recording-2025-12-01-143025.wav")
+        ).toBeDefined();
+      });
+
+      const firstItem = screen.getByRole("button", {
+        name: /recording-2025-12-01-143025\.wav/,
+      });
+
+      await user.click(firstItem);
+
+      const openButton = screen.getByRole("button", { name: "Open" });
+
+      // First click fails
+      await user.click(openButton);
+      await waitFor(() => {
+        expect(screen.getByRole("alert")).toBeDefined();
+      });
+
+      // Second click succeeds
+      await user.click(openButton);
+      await waitFor(() => {
+        expect(screen.queryByRole("alert")).toBeNull();
+      });
+    });
+
+    it("does not collapse entry when clicking Open button", async () => {
+      const user = userEvent.setup();
+      mockInvoke.mockResolvedValue(mockRecordings);
+      mockOpenPath.mockResolvedValue();
+
+      render(<RecordingsList />);
+
+      await waitFor(() => {
+        expect(
+          screen.getByText("recording-2025-12-01-143025.wav")
+        ).toBeDefined();
+      });
+
+      const firstItem = screen.getByRole("button", {
+        name: /recording-2025-12-01-143025\.wav/,
+      });
+
+      await user.click(firstItem);
+      expect(firstItem.getAttribute("aria-expanded")).toBe("true");
+
+      const openButton = screen.getByRole("button", { name: "Open" });
+      await user.click(openButton);
+
+      // Entry should still be expanded
+      expect(firstItem.getAttribute("aria-expanded")).toBe("true");
     });
   });
 });
