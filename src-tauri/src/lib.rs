@@ -135,7 +135,8 @@ pub fn run() {
             commands::stop_recording,
             commands::get_recording_state,
             commands::get_last_recording_buffer,
-            commands::clear_last_recording_buffer
+            commands::clear_last_recording_buffer,
+            commands::list_recordings
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

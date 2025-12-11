@@ -128,3 +128,26 @@ pub fn encode_wav<W: FileWriter>(
 
     Ok(file_path.to_string_lossy().to_string())
 }
+
+/// Parse the duration of a WAV file from its header
+///
+/// # Arguments
+/// * `path` - Path to the WAV file
+///
+/// # Returns
+/// * `Ok(f64)` - Duration in seconds
+/// * `Err(WavEncodingError)` - If the file cannot be read or is not a valid WAV
+pub fn parse_duration_from_file(path: &Path) -> Result<f64, WavEncodingError> {
+    let reader = hound::WavReader::open(path).map_err(hound_error)?;
+    let spec = reader.spec();
+    let num_samples = reader.duration(); // Total samples per channel
+
+    if spec.sample_rate == 0 {
+        return Err(WavEncodingError::InvalidInput(
+            "WAV file has invalid sample rate of 0".to_string(),
+        ));
+    }
+
+    let duration_secs = num_samples as f64 / spec.sample_rate as f64;
+    Ok(duration_secs)
+}

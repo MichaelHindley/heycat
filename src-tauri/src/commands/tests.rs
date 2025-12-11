@@ -3,7 +3,8 @@
 
 use super::logic::{
     clear_last_recording_buffer_impl, get_last_recording_buffer_impl, get_recording_state_impl,
-    start_recording_impl, stop_recording_impl, RecordingStateInfo,
+    list_recordings_impl, start_recording_impl, stop_recording_impl, RecordingInfo,
+    RecordingStateInfo,
 };
 use crate::audio::DEFAULT_SAMPLE_RATE;
 use crate::recording::{RecordingManager, RecordingState};
@@ -410,4 +411,128 @@ fn test_clear_last_recording_buffer_allows_new_recording() {
     // Should be able to record again
     assert!(start_recording_impl(&state, None).is_ok());
     assert!(stop_recording_impl(&state, None).is_ok());
+}
+
+// =============================================================================
+// list_recordings_impl Tests
+// =============================================================================
+
+// Note: list_recordings_impl reads from the actual recordings directory.
+// These tests verify the function works correctly with the system directory.
+// Since tests may run in parallel, we focus on testing that the function
+// doesn't error and returns a valid result.
+
+#[test]
+fn test_list_recordings_returns_ok() {
+    // This test verifies list_recordings_impl doesn't panic or error
+    // even if the directory doesn't exist yet
+    let result = list_recordings_impl();
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_list_recordings_returns_vec() {
+    let result = list_recordings_impl();
+    assert!(result.is_ok());
+    // Should return a Vec (empty or with recordings)
+    let recordings = result.unwrap();
+    // All items should have non-empty filenames
+    for recording in &recordings {
+        assert!(!recording.filename.is_empty());
+        assert!(!recording.file_path.is_empty());
+        assert!(recording.filename.ends_with(".wav"));
+    }
+}
+
+#[test]
+fn test_recording_info_struct_serializes() {
+    let info = RecordingInfo {
+        filename: "test.wav".to_string(),
+        file_path: "/path/to/test.wav".to_string(),
+        duration_secs: 1.5,
+        created_at: "2025-01-01T00:00:00Z".to_string(),
+        file_size_bytes: 1024,
+    };
+    let json = serde_json::to_string(&info);
+    assert!(json.is_ok());
+    let json_str = json.unwrap();
+    assert!(json_str.contains("test.wav"));
+    assert!(json_str.contains("1.5"));
+    assert!(json_str.contains("1024"));
+}
+
+#[test]
+fn test_recording_info_clone() {
+    let info = RecordingInfo {
+        filename: "test.wav".to_string(),
+        file_path: "/path/to/test.wav".to_string(),
+        duration_secs: 2.0,
+        created_at: "2025-01-01T00:00:00Z".to_string(),
+        file_size_bytes: 2048,
+    };
+    let cloned = info.clone();
+    assert_eq!(cloned.filename, "test.wav");
+    assert_eq!(cloned.duration_secs, 2.0);
+    assert_eq!(cloned.file_size_bytes, 2048);
+}
+
+#[test]
+fn test_recording_info_debug() {
+    let info = RecordingInfo {
+        filename: "debug-test.wav".to_string(),
+        file_path: "/debug/path.wav".to_string(),
+        duration_secs: 3.0,
+        created_at: "2025-01-01T00:00:00Z".to_string(),
+        file_size_bytes: 4096,
+    };
+    let debug = format!("{:?}", info);
+    assert!(debug.contains("debug-test.wav"));
+    assert!(debug.contains("3.0"));
+}
+
+#[test]
+fn test_recording_info_equality() {
+    let info1 = RecordingInfo {
+        filename: "test.wav".to_string(),
+        file_path: "/path/to/test.wav".to_string(),
+        duration_secs: 1.0,
+        created_at: "2025-01-01T00:00:00Z".to_string(),
+        file_size_bytes: 1024,
+    };
+    let info2 = RecordingInfo {
+        filename: "test.wav".to_string(),
+        file_path: "/path/to/test.wav".to_string(),
+        duration_secs: 1.0,
+        created_at: "2025-01-01T00:00:00Z".to_string(),
+        file_size_bytes: 1024,
+    };
+    assert_eq!(info1, info2);
+}
+
+#[test]
+fn test_list_recordings_after_stop_recording() {
+    // After creating a recording via stop_recording_impl, list_recordings should find it
+    let state = create_test_state();
+    start_recording_impl(&state, None).unwrap();
+
+    // Add samples to create a valid recording
+    {
+        let manager = state.lock().unwrap();
+        let buffer = manager.get_audio_buffer().unwrap();
+        let mut guard = buffer.lock().unwrap();
+        guard.extend_from_slice(&vec![0.5f32; 44100]); // 1 second
+    }
+
+    let metadata = stop_recording_impl(&state, None).unwrap();
+
+    // Now list should include at least this recording
+    let result = list_recordings_impl();
+    assert!(result.is_ok());
+    let recordings = result.unwrap();
+
+    // Find our recording by path
+    let found = recordings
+        .iter()
+        .any(|r| r.file_path == metadata.file_path);
+    assert!(found, "Created recording should be in list");
 }

@@ -5,10 +5,10 @@
 
 pub mod logic;
 
-pub use logic::RecordingStateInfo;
+pub use logic::{RecordingInfo, RecordingStateInfo};
 use logic::{
     clear_last_recording_buffer_impl, get_last_recording_buffer_impl, get_recording_state_impl,
-    start_recording_impl, stop_recording_impl,
+    list_recordings_impl, start_recording_impl, stop_recording_impl,
 };
 
 use crate::events::{
@@ -111,6 +111,12 @@ pub fn get_last_recording_buffer(state: State<'_, ProductionState>) -> Result<Au
 #[tauri::command]
 pub fn clear_last_recording_buffer(state: State<'_, ProductionState>) -> Result<(), String> {
     clear_last_recording_buffer_impl(state.as_ref())
+}
+
+/// List all recordings from the app data directory
+#[tauri::command]
+pub fn list_recordings() -> Result<Vec<RecordingInfo>, String> {
+    list_recordings_impl()
 }
 
 #[cfg(test)]

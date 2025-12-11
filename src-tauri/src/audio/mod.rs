@@ -9,7 +9,7 @@ pub mod thread;
 pub use thread::{AudioThreadHandle, StopResult};
 
 pub mod wav;
-pub use wav::{encode_wav, SystemFileWriter};
+pub use wav::{encode_wav, parse_duration_from_file, SystemFileWriter};
 
 #[cfg(test)]
 mod mod_test;

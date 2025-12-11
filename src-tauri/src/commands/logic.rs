@@ -1,9 +1,29 @@
 // Command implementation logic - testable functions separate from Tauri wrappers
 
-use crate::audio::{encode_wav, AudioThreadHandle, SystemFileWriter, DEFAULT_SAMPLE_RATE};
+use crate::audio::{
+    encode_wav, parse_duration_from_file, AudioThreadHandle, SystemFileWriter, DEFAULT_SAMPLE_RATE,
+};
+use crate::error;
 use crate::recording::{AudioData, RecordingManager, RecordingMetadata, RecordingState};
+use chrono::{DateTime, Utc};
 use serde::Serialize;
+use std::path::PathBuf;
 use std::sync::Mutex;
+
+/// Information about a single recording for frontend consumption
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct RecordingInfo {
+    /// Filename of the recording (e.g., "recording-2025-12-01-143025.wav")
+    pub filename: String,
+    /// Full path to the recording file
+    pub file_path: String,
+    /// Duration of the recording in seconds
+    pub duration_secs: f64,
+    /// Creation timestamp in ISO 8601 format
+    pub created_at: String,
+    /// File size in bytes
+    pub file_size_bytes: u64,
+}
 
 /// Information about the current recording state for frontend consumption
 #[derive(Debug, Clone, Serialize)]
@@ -196,4 +216,118 @@ pub fn clear_last_recording_buffer_impl(state: &Mutex<RecordingManager>) -> Resu
     })?;
     manager.clear_last_recording();
     Ok(())
+}
+
+/// Get the recordings directory path
+///
+/// Uses the same path as SystemFileWriter for consistency
+fn get_recordings_dir() -> PathBuf {
+    dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("heycat")
+        .join("recordings")
+}
+
+/// Implementation of list_recordings
+///
+/// Lists all recordings from the app data directory with their metadata.
+///
+/// # Returns
+/// A list of RecordingInfo sorted by creation time (newest first).
+/// Returns an empty list if the recordings directory doesn't exist or is empty.
+///
+/// # Errors
+/// Only returns an error if there's a critical system failure.
+/// Individual file errors are logged and the file is skipped.
+pub fn list_recordings_impl() -> Result<Vec<RecordingInfo>, String> {
+    let recordings_dir = get_recordings_dir();
+
+    // Return empty list if directory doesn't exist (not an error)
+    if !recordings_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let entries = std::fs::read_dir(&recordings_dir).map_err(|e| {
+        error!("Failed to read recordings directory: {}", e);
+        format!("Unable to access recordings directory: {}", e)
+    })?;
+
+    let mut recordings: Vec<RecordingInfo> = Vec::new();
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                error!("Failed to read directory entry: {}", e);
+                continue;
+            }
+        };
+
+        let path = entry.path();
+
+        // Only process .wav files
+        if path.extension().and_then(|s| s.to_str()) != Some("wav") {
+            continue;
+        }
+
+        // Get file metadata
+        let metadata = match std::fs::metadata(&path) {
+            Ok(m) => m,
+            Err(e) => {
+                error!("Failed to read metadata for {}: {}", path.display(), e);
+                continue;
+            }
+        };
+
+        // Get filename
+        let filename = match path.file_name().and_then(|s| s.to_str()) {
+            Some(name) => name.to_string(),
+            None => {
+                error!("Invalid filename for {}", path.display());
+                continue;
+            }
+        };
+
+        // Get file size
+        let file_size_bytes = metadata.len();
+
+        // Get creation time (or modification time as fallback)
+        let created_at = metadata
+            .created()
+            .or_else(|_| metadata.modified())
+            .map(|t| {
+                let datetime: DateTime<Utc> = t.into();
+                datetime.to_rfc3339()
+            })
+            .unwrap_or_else(|e| {
+                error!("Failed to get creation time for {}: {}", path.display(), e);
+                String::new()
+            });
+
+        // Parse duration from WAV header
+        let duration_secs = match parse_duration_from_file(&path) {
+            Ok(d) => d,
+            Err(e) => {
+                error!(
+                    "Failed to parse duration for {}: {:?}",
+                    path.display(),
+                    e
+                );
+                continue;
+            }
+        };
+
+        recordings.push(RecordingInfo {
+            filename,
+            file_path: path.to_string_lossy().to_string(),
+            duration_secs,
+            created_at,
+            file_size_bytes,
+        });
+    }
+
+    // Sort by created_at descending (newest first)
+    recordings.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
+    Ok(recordings)
 }

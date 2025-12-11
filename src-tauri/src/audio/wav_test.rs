@@ -1,7 +1,7 @@
 #![cfg(test)]
 #![cfg_attr(coverage_nightly, coverage(off))]
 
-use super::wav::{encode_wav, FileWriter, SystemFileWriter, WavEncodingError};
+use super::wav::{encode_wav, parse_duration_from_file, FileWriter, SystemFileWriter, WavEncodingError};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -398,6 +398,93 @@ fn test_wav_file_sample_count_matches() {
     let reader = hound::WavReader::open(&path).unwrap();
 
     assert_eq!(reader.len() as usize, 1000);
+
+    // Cleanup
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+// =============================================================================
+// parse_duration_from_file Tests
+// =============================================================================
+
+#[test]
+fn test_parse_duration_from_valid_wav_file() {
+    let temp_dir = std::env::temp_dir().join("heycat-wav-test-duration");
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    let writer = MockFileWriter::new()
+        .with_output_dir(temp_dir.clone())
+        .with_filename("test-duration.wav");
+
+    // Create a 1-second file at 44100 Hz
+    let samples: Vec<f32> = vec![0.1; 44100];
+    let path = encode_wav(&samples, 44100, &writer).unwrap();
+
+    let duration = parse_duration_from_file(Path::new(&path)).unwrap();
+    assert!((duration - 1.0).abs() < 0.001); // Should be ~1 second
+
+    // Cleanup
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_parse_duration_from_short_wav_file() {
+    let temp_dir = std::env::temp_dir().join("heycat-wav-test-duration-short");
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    let writer = MockFileWriter::new()
+        .with_output_dir(temp_dir.clone())
+        .with_filename("test-duration-short.wav");
+
+    // Create a 0.1-second file at 44100 Hz (4410 samples)
+    let samples: Vec<f32> = vec![0.1; 4410];
+    let path = encode_wav(&samples, 44100, &writer).unwrap();
+
+    let duration = parse_duration_from_file(Path::new(&path)).unwrap();
+    assert!((duration - 0.1).abs() < 0.001); // Should be ~0.1 second
+
+    // Cleanup
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_parse_duration_from_48k_wav_file() {
+    let temp_dir = std::env::temp_dir().join("heycat-wav-test-duration-48k");
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    let writer = MockFileWriter::new()
+        .with_output_dir(temp_dir.clone())
+        .with_filename("test-duration-48k.wav");
+
+    // Create a 2-second file at 48000 Hz (96000 samples)
+    let samples: Vec<f32> = vec![0.1; 96000];
+    let path = encode_wav(&samples, 48000, &writer).unwrap();
+
+    let duration = parse_duration_from_file(Path::new(&path)).unwrap();
+    assert!((duration - 2.0).abs() < 0.001); // Should be ~2 seconds
+
+    // Cleanup
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_parse_duration_from_nonexistent_file() {
+    let result = parse_duration_from_file(Path::new("/nonexistent/path/file.wav"));
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_parse_duration_from_invalid_file() {
+    let temp_dir = std::env::temp_dir().join("heycat-wav-test-duration-invalid");
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    // Create a non-WAV file
+    let path = temp_dir.join("not-a-wav.wav");
+    std::fs::write(&path, b"this is not a wav file").unwrap();
+
+    let result = parse_duration_from_file(&path);
+    assert!(result.is_err());
 
     // Cleanup
     let _ = std::fs::remove_dir_all(&temp_dir);
