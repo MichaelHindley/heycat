@@ -1,0 +1,88 @@
+.recordings-list {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.recordings-list--loading,
+.recordings-list--error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.recordings-list__loading-text {
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.recordings-list__error-text {
+  color: #ef4444;
+  font-size: 14px;
+}
+
+.recordings-list__items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.recordings-list__item {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e5e7eb;
+  align-items: center;
+}
+
+.recordings-list__item:last-child {
+  border-bottom: none;
+}
+
+.recordings-list__filename {
+  font-size: 14px;
+  font-weight: 500;
+  color: #374151;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recordings-list__duration {
+  font-size: 13px;
+  color: #6b7280;
+  font-variant-numeric: tabular-nums;
+}
+
+.recordings-list__date {
+  font-size: 13px;
+  color: #9ca3af;
+}
+
+@media (prefers-color-scheme: dark) {
+  .recordings-list__loading-text {
+    color: #9ca3af;
+  }
+
+  .recordings-list__error-text {
+    color: #f87171;
+  }
+
+  .recordings-list__item {
+    border-bottom-color: #374151;
+  }
+
+  .recordings-list__filename {
+    color: #f3f4f6;
+  }
+
+  .recordings-list__duration {
+    color: #9ca3af;
+  }
+
+  .recordings-list__date {
+    color: #6b7280;
+  }
+}
