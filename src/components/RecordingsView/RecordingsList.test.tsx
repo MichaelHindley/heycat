@@ -475,3 +475,204 @@ describe("formatFileSize", () => {
     expect(formatFileSize(1024 * 1024 * 1024)).toBe("1.0 GB");
   });
 });
+
+describe("error handling", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const mockRecordingWithError: RecordingInfo = {
+    filename: "corrupt-recording.wav",
+    file_path: "/path/to/corrupt-recording.wav",
+    duration_secs: 0,
+    created_at: "",
+    file_size_bytes: 0,
+    error: "Corrupt audio file: invalid WAV header",
+  };
+
+  const mixedRecordings: RecordingInfo[] = [
+    mockRecordings[0],
+    mockRecordingWithError,
+  ];
+
+  it("shows error indicator for recording with error", async () => {
+    mockInvoke.mockResolvedValue([mockRecordingWithError]);
+
+    render(<RecordingsList />);
+
+    await waitFor(() => {
+      expect(screen.getByText("corrupt-recording.wav")).toBeDefined();
+    });
+
+    // SVG error indicator should be present
+    const button = screen.getByRole("button", {
+      name: /corrupt-recording\.wav/,
+    });
+    expect(button.querySelector("svg")).not.toBeNull();
+  });
+
+  it("displays --:-- for duration when recording has error", async () => {
+    mockInvoke.mockResolvedValue([mockRecordingWithError]);
+
+    render(<RecordingsList />);
+
+    await waitFor(() => {
+      expect(screen.getByText("--:--")).toBeDefined();
+    });
+  });
+
+  it("displays -- for date when recording has empty created_at", async () => {
+    mockInvoke.mockResolvedValue([mockRecordingWithError]);
+
+    render(<RecordingsList />);
+
+    await waitFor(() => {
+      // Find the date element specifically (last span in the button)
+      const button = screen.getByRole("button", {
+        name: /corrupt-recording\.wav/,
+      });
+      const dateSpan = button.querySelector(".recordings-list__date");
+      expect(dateSpan?.textContent).toBe("--");
+    });
+  });
+
+  it("recording with error still appears in list alongside valid recordings", async () => {
+    mockInvoke.mockResolvedValue(mixedRecordings);
+
+    render(<RecordingsList />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("recording-2025-12-01-143025.wav")
+      ).toBeDefined();
+      expect(screen.getByText("corrupt-recording.wav")).toBeDefined();
+    });
+
+    const items = screen.getAllByRole("listitem");
+    expect(items.length).toBe(2);
+  });
+
+  it("shows error detail when expanding recording with error", async () => {
+    const user = userEvent.setup();
+    mockInvoke.mockResolvedValue([mockRecordingWithError]);
+
+    render(<RecordingsList />);
+
+    await waitFor(() => {
+      expect(screen.getByText("corrupt-recording.wav")).toBeDefined();
+    });
+
+    const button = screen.getByRole("button", {
+      name: /corrupt-recording\.wav/,
+    });
+
+    await user.click(button);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Corrupt audio file: invalid WAV header")
+      ).toBeDefined();
+    });
+  });
+
+  it("displays -- for file size when recording has 0 bytes", async () => {
+    const user = userEvent.setup();
+    mockInvoke.mockResolvedValue([mockRecordingWithError]);
+
+    render(<RecordingsList />);
+
+    await waitFor(() => {
+      expect(screen.getByText("corrupt-recording.wav")).toBeDefined();
+    });
+
+    const button = screen.getByRole("button", {
+      name: /corrupt-recording\.wav/,
+    });
+
+    await user.click(button);
+
+    await waitFor(() => {
+      // File size should show "--" for 0 bytes on errored recording
+      const fileSizeValue = screen.getAllByText("--").find((el) => {
+        const parent = el.closest(".recordings-list__metadata-row");
+        return parent?.textContent?.includes("File size");
+      });
+      expect(fileSizeValue).toBeDefined();
+    });
+  });
+
+  it("logs error to console for recordings with errors", async () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockInvoke.mockResolvedValue([mockRecordingWithError]);
+
+    render(<RecordingsList />);
+
+    await waitFor(() => {
+      expect(consoleSpy).toHaveBeenCalledWith(
+        "Recording error for corrupt-recording.wav: Corrupt audio file: invalid WAV header",
+        { file_path: "/path/to/corrupt-recording.wav" }
+      );
+    });
+
+    consoleSpy.mockRestore();
+  });
+
+  it("does not log to console for recordings without errors", async () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockInvoke.mockResolvedValue(mockRecordings);
+
+    render(<RecordingsList />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("recording-2025-12-01-143025.wav")
+      ).toBeDefined();
+    });
+
+    expect(consoleSpy).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
+  it("user can still interact with other recordings when one has error", async () => {
+    const user = userEvent.setup();
+    mockInvoke.mockResolvedValue(mixedRecordings);
+    mockOpenPath.mockResolvedValue();
+
+    render(<RecordingsList />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("recording-2025-12-01-143025.wav")
+      ).toBeDefined();
+    });
+
+    // Expand the valid recording
+    const validButton = screen.getByRole("button", {
+      name: /recording-2025-12-01-143025\.wav/,
+    });
+    await user.click(validButton);
+
+    // Open button should be available
+    const openButton = screen.getByRole("button", { name: "Open" });
+    await user.click(openButton);
+
+    expect(mockOpenPath).toHaveBeenCalledWith(
+      "/path/to/recording-2025-12-01-143025.wav"
+    );
+  });
+
+  it("applies has-error class to item with error", async () => {
+    mockInvoke.mockResolvedValue([mockRecordingWithError]);
+
+    render(<RecordingsList />);
+
+    await waitFor(() => {
+      expect(screen.getByText("corrupt-recording.wav")).toBeDefined();
+    });
+
+    const button = screen.getByRole("button", {
+      name: /corrupt-recording\.wav/,
+    });
+    expect(button.className).toContain("recordings-list__item--has-error");
+  });
+});

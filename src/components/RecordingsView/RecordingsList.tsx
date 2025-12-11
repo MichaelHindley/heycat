@@ -10,6 +10,8 @@ export interface RecordingInfo {
   duration_secs: number;
   created_at: string;
   file_size_bytes: number;
+  /** Error message if the recording has issues (missing file, corrupt metadata) */
+  error?: string;
 }
 
 export interface RecordingsListProps {
@@ -70,6 +72,16 @@ export function RecordingsList({ className = "" }: RecordingsListProps) {
         setError(null);
         const result = await invoke<RecordingInfo[]>("list_recordings");
         setRecordings(result);
+
+        // Log errors for any recordings with issues
+        result.forEach((recording) => {
+          if (recording.error) {
+            console.error(
+              `Recording error for ${recording.filename}: ${recording.error}`,
+              { file_path: recording.file_path }
+            );
+          }
+        });
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -117,30 +129,57 @@ export function RecordingsList({ className = "" }: RecordingsListProps) {
       <ul className="recordings-list__items" role="list">
         {recordings.map((recording) => {
           const isExpanded = expandedPath === recording.file_path;
+          const hasError = Boolean(recording.error);
+          const itemClasses = [
+            "recordings-list__item",
+            isExpanded && "recordings-list__item--expanded",
+            hasError && "recordings-list__item--has-error",
+          ].filter(Boolean).join(" ");
           return (
             <li key={recording.file_path} className="recordings-list__item-container">
               <button
                 type="button"
-                className={`recordings-list__item ${isExpanded ? "recordings-list__item--expanded" : ""}`}
+                className={itemClasses}
                 onClick={() => toggleExpanded(recording.file_path)}
                 aria-expanded={isExpanded}
               >
-                <span className="recordings-list__filename">{recording.filename}</span>
+                <span className="recordings-list__filename-wrapper">
+                  {hasError && (
+                    <svg
+                      className="recordings-list__error-indicator"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                      aria-hidden="true"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                  )}
+                  <span className="recordings-list__filename">{recording.filename}</span>
+                </span>
                 <span className="recordings-list__duration">
-                  {formatDuration(recording.duration_secs)}
+                  {recording.error ? "--:--" : formatDuration(recording.duration_secs)}
                 </span>
                 <span className="recordings-list__date">
-                  {formatDate(recording.created_at)}
+                  {recording.created_at ? formatDate(recording.created_at) : "--"}
                 </span>
               </button>
               <div
                 className={`recordings-list__details ${isExpanded ? "recordings-list__details--visible" : ""}`}
                 aria-hidden={!isExpanded}
               >
+                {hasError && (
+                  <div className="recordings-list__error-detail" role="alert">
+                    {recording.error}
+                  </div>
+                )}
                 <dl className="recordings-list__metadata">
                   <div className="recordings-list__metadata-row">
                     <dt>File size</dt>
-                    <dd>{formatFileSize(recording.file_size_bytes)}</dd>
+                    <dd>{recording.file_size_bytes > 0 ? formatFileSize(recording.file_size_bytes) : "--"}</dd>
                   </div>
                   <div className="recordings-list__metadata-row">
                     <dt>Location</dt>

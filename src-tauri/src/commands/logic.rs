@@ -23,6 +23,9 @@ pub struct RecordingInfo {
     pub created_at: String,
     /// File size in bytes
     pub file_size_bytes: u64,
+    /// Error message if the recording has issues (missing file, corrupt metadata)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// Information about the current recording state for frontend consumption
@@ -270,16 +273,7 @@ pub fn list_recordings_impl() -> Result<Vec<RecordingInfo>, String> {
             continue;
         }
 
-        // Get file metadata
-        let metadata = match std::fs::metadata(&path) {
-            Ok(m) => m,
-            Err(e) => {
-                error!("Failed to read metadata for {}: {}", path.display(), e);
-                continue;
-            }
-        };
-
-        // Get filename
+        // Get filename - skip if we can't even get the filename
         let filename = match path.file_name().and_then(|s| s.to_str()) {
             Some(name) => name.to_string(),
             None => {
@@ -288,21 +282,36 @@ pub fn list_recordings_impl() -> Result<Vec<RecordingInfo>, String> {
             }
         };
 
-        // Get file size
-        let file_size_bytes = metadata.len();
+        let file_path_str = path.to_string_lossy().to_string();
 
-        // Get creation time (or modification time as fallback)
-        let created_at = metadata
-            .created()
-            .or_else(|_| metadata.modified())
-            .map(|t| {
-                let datetime: DateTime<Utc> = t.into();
-                datetime.to_rfc3339()
-            })
-            .unwrap_or_else(|e| {
-                error!("Failed to get creation time for {}: {}", path.display(), e);
-                String::new()
-            });
+        // Track errors for this recording
+        let mut recording_error: Option<String> = None;
+
+        // Get file metadata
+        let (file_size_bytes, created_at) = match std::fs::metadata(&path) {
+            Ok(metadata) => {
+                let size = metadata.len();
+                let created = metadata
+                    .created()
+                    .or_else(|_| metadata.modified())
+                    .map(|t| {
+                        let datetime: DateTime<Utc> = t.into();
+                        datetime.to_rfc3339()
+                    })
+                    .unwrap_or_else(|e| {
+                        error!("Failed to get creation time for {}: {}", path.display(), e);
+                        let err_msg = "Missing creation date";
+                        recording_error = Some(err_msg.to_string());
+                        String::new()
+                    });
+                (size, created)
+            }
+            Err(e) => {
+                error!("Failed to read metadata for {}: {}", path.display(), e);
+                recording_error = Some(format!("Cannot read file metadata: {}", e));
+                (0, String::new())
+            }
+        };
 
         // Parse duration from WAV header
         let duration_secs = match parse_duration_from_file(&path) {
@@ -313,16 +322,20 @@ pub fn list_recordings_impl() -> Result<Vec<RecordingInfo>, String> {
                     path.display(),
                     e
                 );
-                continue;
+                // Set error but include the recording with 0 duration
+                let err_msg = format!("Corrupt audio file: {:?}", e);
+                recording_error = Some(err_msg);
+                0.0
             }
         };
 
         recordings.push(RecordingInfo {
             filename,
-            file_path: path.to_string_lossy().to_string(),
+            file_path: file_path_str,
             duration_secs,
             created_at,
             file_size_bytes,
+            error: recording_error,
         });
     }
 
