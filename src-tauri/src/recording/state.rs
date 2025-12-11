@@ -1,6 +1,7 @@
 // Recording state management for Tauri application
 
 use crate::audio::{AudioBuffer, StopReason, DEFAULT_SAMPLE_RATE};
+use crate::error;
 use serde::Serialize;
 
 /// Recording state enum representing the current state of the recording process
@@ -207,10 +208,7 @@ impl RecordingManager {
                     });
                 }
                 Err(e) => {
-                    eprintln!(
-                        "[recording] Failed to retain buffer (lock poisoned): {}",
-                        e
-                    );
+                    error!("Failed to retain buffer (lock poisoned): {}", e);
                 }
             }
         }

@@ -9,6 +9,7 @@ use crate::events::{
     RecordingStoppedPayload,
 };
 use crate::recording::{RecordingManager, RecordingState};
+use crate::{debug, error, info, trace};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -69,7 +70,7 @@ impl<E: RecordingEventEmitter> HotkeyIntegration<E> {
         // Check debounce
         if let Some(last) = self.last_toggle_time {
             if now.duration_since(last) < self.debounce_duration {
-                eprintln!("[hotkey] Toggle debounced");
+                trace!("Toggle debounced");
                 return false;
             }
         }
@@ -80,7 +81,7 @@ impl<E: RecordingEventEmitter> HotkeyIntegration<E> {
         let current_state = match state.lock() {
             Ok(guard) => guard.get_state(),
             Err(e) => {
-                eprintln!("[hotkey] Failed to acquire lock: {}", e);
+                error!("Failed to acquire lock: {}", e);
                 self.emitter.emit_recording_error(RecordingErrorPayload {
                     message: "Internal error: state lock poisoned".to_string(),
                 });
@@ -88,14 +89,11 @@ impl<E: RecordingEventEmitter> HotkeyIntegration<E> {
             }
         };
 
-        eprintln!(
-            "[hotkey] Toggle received, current state: {:?}",
-            current_state
-        );
+        debug!("Toggle received, current state: {:?}", current_state);
 
         match current_state {
             RecordingState::Idle => {
-                eprintln!("[hotkey] Starting recording...");
+                info!("Starting recording...");
                 // Use unified command implementation
                 match start_recording_impl(state, self.audio_thread.as_deref()) {
                     Ok(()) => {
@@ -103,11 +101,11 @@ impl<E: RecordingEventEmitter> HotkeyIntegration<E> {
                             .emit_recording_started(RecordingStartedPayload {
                                 timestamp: current_timestamp(),
                             });
-                        eprintln!("[hotkey] Recording started, emitted recording_started event");
+                        info!("Recording started, emitted recording_started event");
                         true
                     }
                     Err(e) => {
-                        eprintln!("[hotkey] Failed to start recording: {}", e);
+                        error!("Failed to start recording: {}", e);
                         self.emitter.emit_recording_error(RecordingErrorPayload {
                             message: e,
                         });
@@ -116,21 +114,21 @@ impl<E: RecordingEventEmitter> HotkeyIntegration<E> {
                 }
             }
             RecordingState::Recording => {
-                eprintln!("[hotkey] Stopping recording...");
+                info!("Stopping recording...");
                 // Use unified command implementation
                 match stop_recording_impl(state, self.audio_thread.as_deref()) {
                     Ok(metadata) => {
-                        eprintln!(
-                            "[hotkey] Recording stopped: {} samples, {:.2}s duration",
+                        info!(
+                            "Recording stopped: {} samples, {:.2}s duration",
                             metadata.sample_count, metadata.duration_secs
                         );
                         self.emitter
                             .emit_recording_stopped(RecordingStoppedPayload { metadata });
-                        eprintln!("[hotkey] Emitted recording_stopped event");
+                        debug!("Emitted recording_stopped event");
                         true
                     }
                     Err(e) => {
-                        eprintln!("[hotkey] Failed to stop recording: {}", e);
+                        error!("Failed to stop recording: {}", e);
                         self.emitter.emit_recording_error(RecordingErrorPayload {
                             message: e,
                         });
@@ -140,7 +138,7 @@ impl<E: RecordingEventEmitter> HotkeyIntegration<E> {
             }
             RecordingState::Processing => {
                 // In Processing state - ignore toggle (busy)
-                eprintln!("[hotkey] Toggle ignored - already processing");
+                debug!("Toggle ignored - already processing");
                 false
             }
         }

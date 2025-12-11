@@ -27,6 +27,7 @@ cpal = "0.15"
 hound = "3.5"
 chrono = "0.4"
 dirs = "5.0"
+tauri-plugin-log = "2"
 
 [lints.rust]
 # Allow coverage and coverage_nightly cfg flags used by cargo-llvm-cov

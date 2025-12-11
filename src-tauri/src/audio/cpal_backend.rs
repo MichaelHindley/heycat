@@ -9,6 +9,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::Stream;
 
 use super::{AudioBuffer, AudioCaptureBackend, AudioCaptureError, CaptureState, StopReason, MAX_BUFFER_SAMPLES};
+use crate::{debug, error, info};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 
@@ -40,30 +41,30 @@ impl AudioCaptureBackend for CpalBackend {
         buffer: AudioBuffer,
         stop_signal: Option<Sender<StopReason>>,
     ) -> Result<u32, AudioCaptureError> {
-        eprintln!("[cpal] Starting audio capture...");
+        info!("Starting audio capture...");
 
         // Get the default audio host
         let host = cpal::default_host();
-        eprintln!("[cpal] Host: {:?}", host.id());
+        debug!("Host: {:?}", host.id());
 
         // Get the default input device
         let device = host.default_input_device().ok_or_else(|| {
-            eprintln!("[cpal] ERROR: No input device available!");
+            error!("No input device available!");
             AudioCaptureError::NoDeviceAvailable
         })?;
-        eprintln!(
-            "[cpal] Input device: {:?}",
+        debug!(
+            "Input device: {:?}",
             device.name().unwrap_or_else(|_| "Unknown".to_string())
         );
 
         // Get the default input config
         let config = device.default_input_config().map_err(|e| {
-            eprintln!("[cpal] ERROR: Failed to get input config: {}", e);
+            error!("Failed to get input config: {}", e);
             AudioCaptureError::DeviceError(e.to_string())
         })?;
         let actual_sample_rate = config.sample_rate().0;
-        eprintln!(
-            "[cpal] Config: {} Hz, {:?}, {} channels",
+        debug!(
+            "Config: {} Hz, {:?}, {} channels",
             actual_sample_rate,
             config.sample_format(),
             config.channels()
@@ -71,7 +72,7 @@ impl AudioCaptureBackend for CpalBackend {
 
         // Create an error handler closure
         let err_fn = |err: cpal::StreamError| {
-            eprintln!("Audio stream error: {}", err);
+            error!("Audio stream error: {}", err);
         };
 
         // Shared flag to ensure we only signal once
@@ -198,30 +199,30 @@ impl AudioCaptureBackend for CpalBackend {
             }
         }
         .map_err(|e| {
-            eprintln!("[cpal] ERROR: Failed to build input stream: {}", e);
+            error!("Failed to build input stream: {}", e);
             AudioCaptureError::StreamError(e.to_string())
         })?;
 
         // Start the stream
         stream.play().map_err(|e| {
-            eprintln!("[cpal] ERROR: Failed to start stream: {}", e);
+            error!("Failed to start stream: {}", e);
             AudioCaptureError::StreamError(e.to_string())
         })?;
 
-        eprintln!("[cpal] Audio stream started successfully!");
+        info!("Audio stream started successfully!");
         self.stream = Some(stream);
         self.state = CaptureState::Capturing;
         Ok(actual_sample_rate)
     }
 
     fn stop(&mut self) -> Result<(), AudioCaptureError> {
-        eprintln!("[cpal] Stopping audio capture...");
+        debug!("Stopping audio capture...");
         if let Some(stream) = self.stream.take() {
             // Stream will be dropped here, stopping capture
             drop(stream);
-            eprintln!("[cpal] Audio stream stopped");
+            debug!("Audio stream stopped");
         } else {
-            eprintln!("[cpal] No active stream to stop");
+            debug!("No active stream to stop");
         }
         self.state = CaptureState::Stopped;
         Ok(())

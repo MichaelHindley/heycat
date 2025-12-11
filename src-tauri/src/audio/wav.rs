@@ -1,5 +1,6 @@
 // WAV encoding module for saving audio samples to disk
 
+use crate::info;
 use std::path::{Path, PathBuf};
 
 /// Errors that can occur during WAV encoding
@@ -102,6 +103,7 @@ pub fn encode_wav<W: FileWriter>(
     // Generate file path
     let filename = writer.generate_filename();
     let file_path = output_dir.join(&filename);
+    info!("Saving recording to: {}", file_path.display());
 
     // Create WAV writer
     let spec = hound::WavSpec {

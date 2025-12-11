@@ -11,6 +11,10 @@ mod recording;
 
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
+use tauri_plugin_log::{Target, TargetKind};
+
+// Re-export log macros for use throughout the crate
+pub use tauri_plugin_log::log::{debug, error, info, trace, warn};
 
 /// Concrete type for HotkeyService with TauriShortcutBackend
 type HotkeyServiceHandle = hotkey::HotkeyService<hotkey::TauriShortcutBackend>;
@@ -35,8 +39,24 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .targets([
+                    Target::new(TargetKind::Stdout),
+                    Target::new(TargetKind::Webview),
+                    Target::new(TargetKind::LogDir {
+                        file_name: Some("heycat".to_string()),
+                    }),
+                ])
+                .level(if cfg!(debug_assertions) {
+                    tauri_plugin_log::log::LevelFilter::Debug
+                } else {
+                    tauri_plugin_log::log::LevelFilter::Info
+                })
+                .build(),
+        )
         .setup(|app| {
-            eprintln!("[app] Setting up heycat...");
+            info!("Setting up heycat...");
 
             // Create shared state for recording manager
             let recording_state = Arc::new(Mutex::new(recording::RecordingManager::new()));
@@ -45,10 +65,10 @@ pub fn run() {
             app.manage(recording_state.clone());
 
             // Create event emitter, audio thread, and hotkey integration
-            eprintln!("[app] Creating audio thread...");
+            debug!("Creating audio thread...");
             let emitter = commands::TauriEventEmitter::new(app.handle().clone());
             let audio_thread = Arc::new(audio::AudioThreadHandle::spawn());
-            eprintln!("[app] Audio thread spawned");
+            debug!("Audio thread spawned");
 
             // Manage audio thread state for Tauri commands
             app.manage(audio_thread.clone());
@@ -63,18 +83,18 @@ pub fn run() {
             let app_handle_clone = app.handle().clone();
 
             // Register hotkey
-            eprintln!("[app] Registering global hotkey (Cmd+Shift+R)...");
+            info!("Registering global hotkey (Cmd+Shift+R)...");
             let backend = hotkey::TauriShortcutBackend::new(app.handle().clone());
             let service = hotkey::HotkeyService::new(backend);
 
             if let Err(e) = service.register_recording_shortcut(Box::new(move || {
-                eprintln!("[app] Hotkey pressed!");
+                debug!("Hotkey pressed!");
                 match integration_clone.lock() {
                     Ok(mut guard) => {
                         guard.handle_toggle(&state_clone);
                     }
                     Err(e) => {
-                        eprintln!("[app] Failed to acquire integration lock: {}", e);
+                        error!("Failed to acquire integration lock: {}", e);
                         // Emit error event so frontend knows something went wrong
                         let _ = app_handle_clone.emit(
                             events::event_names::RECORDING_ERROR,
@@ -86,25 +106,25 @@ pub fn run() {
                     }
                 }
             })) {
-                eprintln!("[app] WARNING: Failed to register recording hotkey: {:?}", e);
-                eprintln!("[app] Application will continue without global hotkey support");
+                warn!("Failed to register recording hotkey: {:?}", e);
+                warn!("Application will continue without global hotkey support");
             }
 
             // Store service in state for cleanup on exit
             app.manage(service);
 
-            eprintln!("[app] Setup complete! Ready to record.");
+            info!("Setup complete! Ready to record.");
             Ok(())
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
-                eprintln!("[app] Window destroyed, cleaning up...");
+                debug!("Window destroyed, cleaning up...");
                 // Unregister hotkey on window close
                 if let Some(service) = window.app_handle().try_state::<HotkeyServiceHandle>() {
                     if let Err(e) = service.unregister_recording_shortcut() {
-                        eprintln!("[app] Failed to unregister hotkey: {:?}", e);
+                        warn!("Failed to unregister hotkey: {:?}", e);
                     } else {
-                        eprintln!("[app] Hotkey unregistered successfully");
+                        debug!("Hotkey unregistered successfully");
                     }
                 }
             }
