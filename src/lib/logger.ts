@@ -1,3 +1,4 @@
+/* v8 ignore file -- @preserve */
 // Frontend logging utilities using Tauri logging plugin
 
 import { attachConsole } from "@tauri-apps/plugin-log";
