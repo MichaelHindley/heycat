@@ -1,5 +1,5 @@
 use super::*;
-use crate::audio::DEFAULT_SAMPLE_RATE;
+use crate::audio::TARGET_SAMPLE_RATE;
 use std::sync::Mutex;
 use std::thread;
 
@@ -23,7 +23,7 @@ fn test_default_state_is_idle() {
 #[test]
 fn test_start_recording_from_idle() {
     let mut manager = RecordingManager::new();
-    let result = manager.start_recording(DEFAULT_SAMPLE_RATE);
+    let result = manager.start_recording(TARGET_SAMPLE_RATE);
     assert!(result.is_ok());
     assert_eq!(manager.get_state(), RecordingState::Recording);
 }
@@ -31,7 +31,7 @@ fn test_start_recording_from_idle() {
 #[test]
 fn test_start_recording_returns_buffer() {
     let mut manager = RecordingManager::new();
-    let buffer = manager.start_recording(DEFAULT_SAMPLE_RATE).unwrap();
+    let buffer = manager.start_recording(TARGET_SAMPLE_RATE).unwrap();
     // Verify we can write to the buffer
     {
         let mut data = buffer.lock().unwrap();
@@ -55,9 +55,9 @@ fn test_start_recording_stores_sample_rate() {
 #[test]
 fn test_start_recording_fails_when_already_recording() {
     let mut manager = RecordingManager::new();
-    manager.start_recording(DEFAULT_SAMPLE_RATE).unwrap();
+    manager.start_recording(TARGET_SAMPLE_RATE).unwrap();
 
-    let result = manager.start_recording(DEFAULT_SAMPLE_RATE);
+    let result = manager.start_recording(TARGET_SAMPLE_RATE);
     assert!(result.is_err());
     assert_eq!(
         result.unwrap_err(),
@@ -71,10 +71,10 @@ fn test_start_recording_fails_when_already_recording() {
 #[test]
 fn test_start_recording_fails_when_processing() {
     let mut manager = RecordingManager::new();
-    manager.start_recording(DEFAULT_SAMPLE_RATE).unwrap();
+    manager.start_recording(TARGET_SAMPLE_RATE).unwrap();
     manager.transition_to(RecordingState::Processing).unwrap();
 
-    let result = manager.start_recording(DEFAULT_SAMPLE_RATE);
+    let result = manager.start_recording(TARGET_SAMPLE_RATE);
     assert!(result.is_err());
     assert_eq!(
         result.unwrap_err(),
@@ -121,7 +121,7 @@ fn test_transition_to_recording_is_invalid() {
 #[test]
 fn test_valid_transition_recording_to_processing() {
     let mut manager = RecordingManager::new();
-    manager.start_recording(DEFAULT_SAMPLE_RATE).unwrap();
+    manager.start_recording(TARGET_SAMPLE_RATE).unwrap();
 
     let result = manager.transition_to(RecordingState::Processing);
     assert!(result.is_ok());
@@ -131,7 +131,7 @@ fn test_valid_transition_recording_to_processing() {
 #[test]
 fn test_valid_transition_processing_to_idle() {
     let mut manager = RecordingManager::new();
-    manager.start_recording(DEFAULT_SAMPLE_RATE).unwrap();
+    manager.start_recording(TARGET_SAMPLE_RATE).unwrap();
     manager.transition_to(RecordingState::Processing).unwrap();
 
     let result = manager.transition_to(RecordingState::Idle);
@@ -144,7 +144,7 @@ fn test_full_cycle_idle_recording_processing_idle() {
     let mut manager = RecordingManager::new();
 
     // Idle -> Recording
-    assert!(manager.start_recording(DEFAULT_SAMPLE_RATE).is_ok());
+    assert!(manager.start_recording(TARGET_SAMPLE_RATE).is_ok());
     assert_eq!(manager.get_state(), RecordingState::Recording);
 
     // Recording -> Processing
@@ -190,7 +190,7 @@ fn test_invalid_transition_idle_to_idle() {
 #[test]
 fn test_invalid_transition_recording_to_idle() {
     let mut manager = RecordingManager::new();
-    manager.start_recording(DEFAULT_SAMPLE_RATE).unwrap();
+    manager.start_recording(TARGET_SAMPLE_RATE).unwrap();
 
     let result = manager.transition_to(RecordingState::Idle);
     assert!(result.is_err());
@@ -206,7 +206,7 @@ fn test_invalid_transition_recording_to_idle() {
 #[test]
 fn test_invalid_transition_processing_to_recording() {
     let mut manager = RecordingManager::new();
-    manager.start_recording(DEFAULT_SAMPLE_RATE).unwrap();
+    manager.start_recording(TARGET_SAMPLE_RATE).unwrap();
     manager.transition_to(RecordingState::Processing).unwrap();
 
     let result = manager.transition_to(RecordingState::Recording);
@@ -232,7 +232,7 @@ fn test_audio_buffer_not_available_in_idle() {
 #[test]
 fn test_audio_buffer_available_in_recording() {
     let mut manager = RecordingManager::new();
-    manager.start_recording(DEFAULT_SAMPLE_RATE).unwrap();
+    manager.start_recording(TARGET_SAMPLE_RATE).unwrap();
 
     let result = manager.get_audio_buffer();
     assert!(result.is_ok());
@@ -241,7 +241,7 @@ fn test_audio_buffer_available_in_recording() {
 #[test]
 fn test_audio_buffer_available_in_processing() {
     let mut manager = RecordingManager::new();
-    manager.start_recording(DEFAULT_SAMPLE_RATE).unwrap();
+    manager.start_recording(TARGET_SAMPLE_RATE).unwrap();
     manager.transition_to(RecordingState::Processing).unwrap();
 
     let result = manager.get_audio_buffer();
@@ -251,7 +251,7 @@ fn test_audio_buffer_available_in_processing() {
 #[test]
 fn test_audio_buffer_cleared_after_processing_to_idle() {
     let mut manager = RecordingManager::new();
-    manager.start_recording(DEFAULT_SAMPLE_RATE).unwrap();
+    manager.start_recording(TARGET_SAMPLE_RATE).unwrap();
     manager.transition_to(RecordingState::Processing).unwrap();
     manager.transition_to(RecordingState::Idle).unwrap();
 
@@ -263,7 +263,7 @@ fn test_audio_buffer_cleared_after_processing_to_idle() {
 #[test]
 fn test_audio_buffer_can_be_written_to_during_recording() {
     let mut manager = RecordingManager::new();
-    manager.start_recording(DEFAULT_SAMPLE_RATE).unwrap();
+    manager.start_recording(TARGET_SAMPLE_RATE).unwrap();
 
     let buffer = manager.get_audio_buffer().unwrap();
     {
@@ -306,7 +306,7 @@ fn test_concurrent_state_transitions() {
     // Transition to recording in one thread
     {
         let mut m = manager.lock().unwrap();
-        m.start_recording(DEFAULT_SAMPLE_RATE).unwrap();
+        m.start_recording(TARGET_SAMPLE_RATE).unwrap();
     }
 
     // Multiple threads reading state
@@ -351,7 +351,7 @@ fn test_error_is_std_error() {
 #[test]
 fn test_reset_to_idle_from_recording() {
     let mut manager = RecordingManager::new();
-    manager.start_recording(DEFAULT_SAMPLE_RATE).unwrap();
+    manager.start_recording(TARGET_SAMPLE_RATE).unwrap();
     assert!(manager.get_audio_buffer().is_ok());
 
     manager.reset_to_idle();
@@ -363,7 +363,7 @@ fn test_reset_to_idle_from_recording() {
 #[test]
 fn test_reset_to_idle_from_processing() {
     let mut manager = RecordingManager::new();
-    manager.start_recording(DEFAULT_SAMPLE_RATE).unwrap();
+    manager.start_recording(TARGET_SAMPLE_RATE).unwrap();
     manager.transition_to(RecordingState::Processing).unwrap();
 
     manager.reset_to_idle();
@@ -397,7 +397,7 @@ fn test_get_last_recording_buffer_not_available_initially() {
 #[test]
 fn test_last_recording_buffer_retained_after_processing_to_idle() {
     let mut manager = RecordingManager::new();
-    manager.start_recording(DEFAULT_SAMPLE_RATE).unwrap();
+    manager.start_recording(TARGET_SAMPLE_RATE).unwrap();
 
     // Add samples
     {
@@ -440,13 +440,13 @@ fn test_last_recording_buffer_has_correct_sample_rate() {
 #[test]
 fn test_last_recording_buffer_calculates_duration() {
     let mut manager = RecordingManager::new();
-    manager.start_recording(DEFAULT_SAMPLE_RATE).unwrap();
+    manager.start_recording(TARGET_SAMPLE_RATE).unwrap();
 
-    // Add 44100 samples (1 second at 44.1kHz)
+    // Add 16000 samples (1 second at 16kHz)
     {
         let buffer = manager.get_audio_buffer().unwrap();
         let mut guard = buffer.lock().unwrap();
-        guard.extend(std::iter::repeat(0.5f32).take(44100));
+        guard.extend(std::iter::repeat(0.5f32).take(16000));
     }
 
     manager.transition_to(RecordingState::Processing).unwrap();
@@ -459,7 +459,7 @@ fn test_last_recording_buffer_calculates_duration() {
 #[test]
 fn test_clear_last_recording_removes_buffer() {
     let mut manager = RecordingManager::new();
-    manager.start_recording(DEFAULT_SAMPLE_RATE).unwrap();
+    manager.start_recording(TARGET_SAMPLE_RATE).unwrap();
 
     {
         let buffer = manager.get_audio_buffer().unwrap();
@@ -485,7 +485,7 @@ fn test_new_recording_replaces_last_recording_buffer() {
     let mut manager = RecordingManager::new();
 
     // First recording
-    manager.start_recording(DEFAULT_SAMPLE_RATE).unwrap();
+    manager.start_recording(TARGET_SAMPLE_RATE).unwrap();
     {
         let buffer = manager.get_audio_buffer().unwrap();
         let mut guard = buffer.lock().unwrap();
@@ -495,7 +495,7 @@ fn test_new_recording_replaces_last_recording_buffer() {
     manager.transition_to(RecordingState::Idle).unwrap();
 
     // Second recording
-    manager.start_recording(DEFAULT_SAMPLE_RATE).unwrap();
+    manager.start_recording(TARGET_SAMPLE_RATE).unwrap();
     {
         let buffer = manager.get_audio_buffer().unwrap();
         let mut guard = buffer.lock().unwrap();

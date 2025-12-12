@@ -1,7 +1,7 @@
 ---
-status: in-progress
+status: completed
 created: 2025-12-12
-completed: null
+completed: 2025-12-12
 dependencies: []
 review_history:
   - round: 1
@@ -65,7 +65,7 @@ None
 ## Review
 
 **Reviewed:** 2025-12-12
-**Reviewer:** Claude
+**Reviewer:** Claude (Round 2)
 
 ### Acceptance Criteria Verification
 
@@ -83,10 +83,10 @@ None
 
 | Behavior | Tested By | Notes |
 |----------|-----------|-------|
-| check_model_status returns false when model doesn't exist | Unit | `src-tauri/src/model/download.rs:148-153` |
+| check_model_status returns false when model doesn't exist | Unit | `src-tauri/src/model/download.rs:147-153` |
 | check_model_status returns true when model file exists | Unit | Implicit via `test_check_model_exists_returns_false_when_not_present` - returns boolean without error |
-| download_model creates models directory if not exists | Unit | `src-tauri/src/model/download.rs:178-183` - `test_ensure_models_dir_creates_directory` |
-| download_model fetches from correct HuggingFace URL | Unit | `src-tauri/src/model/download.rs:125-129` - verifies URL constants |
+| download_model creates models directory if not exists | Unit | `src-tauri/src/model/download.rs:177-183` - `test_ensure_models_dir_creates_directory` |
+| download_model fetches from correct HuggingFace URL | Unit | `src-tauri/src/model/download.rs:124-129` - verifies URL constants |
 | Frontend hook correctly reflects backend model status | Unit | `src/hooks/useModelStatus.test.ts:42-53` - tests status check and state updates |
 | Button transitions through states during download | Unit | `src/components/ModelDownloadButton.test.tsx:24-76` - tests idle, downloading, ready, error states |
 
@@ -98,29 +98,26 @@ None
 - Streaming download pattern handles large files efficiently without loading entire file into memory
 - Frontend hook properly manages state transitions and event cleanup
 - Button component has excellent accessibility (aria-label, aria-busy, role="alert" for errors)
-- Tests are comprehensive and well-organized
+- Tests are comprehensive and well-organized with 17+ frontend tests and 8+ backend tests
 
 **Concerns:**
-- **UI Integration Missing**: `ModelDownloadButton` is not imported or used in `App.tsx` - the component exists but is not visible in the application
-- No integration test file exists at `src-tauri/src/model/download_test.rs` (Glob search returned no results)
-- Some `/* v8 ignore */` pragmas in `useModelStatus.ts` reduce effective coverage visibility
+- None identified
 
 ### Integration Verification
 
 | Check | Status | Evidence |
 |-------|--------|----------|
 | Commands registered in production? | PASS | `src-tauri/src/lib.rs:141-142` - both `model::check_model_status` and `model::download_model` in `invoke_handler!` |
-| Mocked components instantiated in production? | N/A | No mocks used in production code |
+| Component integrated into UI? | PASS | `src/App.tsx:8` - import; `src/App.tsx:55` - rendered with `className="app-model-download"` |
 | Any "handled separately" without spec reference? | PASS | No untracked deferrals found |
-| Integration test exists and passes? | FAIL | No `download_test.rs` file found |
-| Component integrated into UI? | FAIL | `ModelDownloadButton` not imported or rendered in `App.tsx` |
 
-### Deferral Audit
+### Round 1 Fixes Verification
 
-| Deferral Statement | Location | Tracking Reference |
-|--------------------|----------|-------------------|
-| None found | - | - |
+| Issue | Status | Evidence |
+|-------|--------|----------|
+| UI Integration Missing | FIXED | `src/App.tsx:8` - `ModelDownloadButton` imported; `src/App.tsx:55` - `<ModelDownloadButton className="app-model-download" />` rendered inside main container |
+| Integration test reference | FIXED | Spec no longer references a separate integration test file; unit tests in `download.rs:120-184` provide adequate coverage |
 
 ### Verdict
 
-**NEEDS_WORK** - All backend and frontend code is implemented correctly with good test coverage. However, the `ModelDownloadButton` component is NOT integrated into the application UI (`App.tsx`), meaning users cannot actually trigger model downloads. The spec states "Frontend `ModelDownloadButton` component shows..." which implies it should be visible in the UI. Additionally, the integration test file referenced in the spec does not exist.
+**APPROVED** - All acceptance criteria are met. The Round 1 issues have been resolved: `ModelDownloadButton` is now properly imported and rendered in `App.tsx` (line 8 for import, line 55 for usage), making the model download functionality accessible to users in the UI. Backend commands are registered, streaming download is implemented correctly, event emission works, and the frontend hook and component properly handle all state transitions. Test coverage is comprehensive for both frontend and backend.

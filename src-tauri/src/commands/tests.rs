@@ -6,7 +6,7 @@ use super::logic::{
     list_recordings_impl, start_recording_impl, stop_recording_impl, RecordingInfo,
     RecordingStateInfo,
 };
-use crate::audio::DEFAULT_SAMPLE_RATE;
+use crate::audio::TARGET_SAMPLE_RATE;
 use crate::recording::{RecordingManager, RecordingState};
 use std::sync::Mutex;
 
@@ -136,12 +136,12 @@ fn test_stop_recording_returns_metadata_with_samples() {
     start_recording_impl(&state, None).unwrap();
 
     // Add samples to the buffer manually
-    // DEFAULT_SAMPLE_RATE is 44100, so 44100 samples = 1 second
+    // TARGET_SAMPLE_RATE is 16000, so 16000 samples = 1 second
     {
         let manager = state.lock().unwrap();
         let buffer = manager.get_audio_buffer().unwrap();
         let mut guard = buffer.lock().unwrap();
-        guard.extend_from_slice(&vec![0.5f32; 44100]); // 1 second at 44.1kHz
+        guard.extend_from_slice(&vec![0.5f32; 16000]); // 1 second at 16kHz
     }
 
     let result = stop_recording_impl(&state, None);
@@ -150,7 +150,7 @@ fn test_stop_recording_returns_metadata_with_samples() {
     // We don't clean it up here to avoid parallel test conflicts
     assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
     let metadata = result.unwrap();
-    assert_eq!(metadata.sample_count, 44100);
+    assert_eq!(metadata.sample_count, 16000);
     assert!((metadata.duration_secs - 1.0).abs() < 0.001);
     assert!(metadata.file_path.contains(".wav"));
 }
@@ -160,19 +160,19 @@ fn test_stop_recording_returns_correct_duration() {
     let state = create_test_state();
     start_recording_impl(&state, None).unwrap();
 
-    // Add 2 seconds of samples at 44.1kHz
+    // Add 2 seconds of samples at 16kHz
     {
         let manager = state.lock().unwrap();
         let buffer = manager.get_audio_buffer().unwrap();
         let mut guard = buffer.lock().unwrap();
-        guard.extend_from_slice(&vec![0.5f32; 88200]); // 2 seconds
+        guard.extend_from_slice(&vec![0.5f32; 32000]); // 2 seconds at 16kHz
     }
 
     let result = stop_recording_impl(&state, None);
     assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
     let metadata = result.unwrap();
 
-    assert_eq!(metadata.sample_count, 88200);
+    assert_eq!(metadata.sample_count, 32000);
     assert!((metadata.duration_secs - 2.0).abs() < 0.001);
 }
 
@@ -250,7 +250,7 @@ fn test_get_last_recording_buffer_available_after_stop() {
     assert_eq!(audio_data.samples[0], 0.5);
     assert_eq!(audio_data.samples[1], -0.5);
     assert_eq!(audio_data.samples[2], 0.25);
-    assert_eq!(audio_data.sample_rate, DEFAULT_SAMPLE_RATE);
+    assert_eq!(audio_data.sample_rate, TARGET_SAMPLE_RATE);
 }
 
 #[test]
@@ -258,12 +258,12 @@ fn test_get_last_recording_buffer_correct_duration() {
     let state = create_test_state();
     start_recording_impl(&state, None).unwrap();
 
-    // Add 1 second of samples at 44.1kHz
+    // Add 1 second of samples at 16kHz
     {
         let manager = state.lock().unwrap();
         let buffer = manager.get_audio_buffer().unwrap();
         let mut guard = buffer.lock().unwrap();
-        guard.extend_from_slice(&vec![0.5f32; 44100]);
+        guard.extend_from_slice(&vec![0.5f32; 16000]);
     }
 
     stop_recording_impl(&state, None).unwrap();

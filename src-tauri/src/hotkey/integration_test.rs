@@ -144,7 +144,7 @@ fn test_events_emitted_on_each_toggle() {
 
 #[test]
 fn test_toggle_from_processing_ignored() {
-    use crate::audio::DEFAULT_SAMPLE_RATE;
+    use crate::audio::TARGET_SAMPLE_RATE;
 
     let emitter = MockEmitter::new();
     let mut integration = HotkeyIntegration::with_debounce(emitter.clone(), 0);
@@ -153,7 +153,7 @@ fn test_toggle_from_processing_ignored() {
     // Manually put into Processing state
     {
         let mut manager = state.lock().unwrap();
-        manager.start_recording(DEFAULT_SAMPLE_RATE).unwrap();
+        manager.start_recording(TARGET_SAMPLE_RATE).unwrap();
         manager.transition_to(RecordingState::Processing).unwrap();
     }
 

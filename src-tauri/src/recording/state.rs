@@ -1,6 +1,6 @@
 // Recording state management for Tauri application
 
-use crate::audio::{AudioBuffer, StopReason, DEFAULT_SAMPLE_RATE};
+use crate::audio::{AudioBuffer, StopReason, TARGET_SAMPLE_RATE};
 use crate::error;
 use serde::Serialize;
 
@@ -201,7 +201,7 @@ impl RecordingManager {
                         .active_recording
                         .as_ref()
                         .map(|r| r.sample_rate)
-                        .unwrap_or(DEFAULT_SAMPLE_RATE);
+                        .unwrap_or(TARGET_SAMPLE_RATE);
                     self.last_recording = Some(LastRecording {
                         samples: samples.clone(),
                         sample_rate,

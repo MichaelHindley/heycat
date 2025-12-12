@@ -1,7 +1,7 @@
 // Command implementation logic - testable functions separate from Tauri wrappers
 
 use crate::audio::{
-    encode_wav, parse_duration_from_file, AudioThreadHandle, SystemFileWriter, DEFAULT_SAMPLE_RATE,
+    encode_wav, parse_duration_from_file, AudioThreadHandle, SystemFileWriter, TARGET_SAMPLE_RATE,
 };
 use crate::error;
 use crate::recording::{AudioData, RecordingManager, RecordingMetadata, RecordingState};
@@ -64,7 +64,7 @@ pub fn start_recording_impl(
 
     // Start recording with default sample rate
     let buffer = manager
-        .start_recording(DEFAULT_SAMPLE_RATE)
+        .start_recording(TARGET_SAMPLE_RATE)
         .map_err(|_| "Failed to initialize recording.")?;
 
     // Start audio capture if audio thread is available
@@ -123,7 +123,7 @@ pub fn stop_recording_impl(
     };
 
     // Get the actual sample rate before transitioning
-    let sample_rate = manager.get_sample_rate().unwrap_or(DEFAULT_SAMPLE_RATE);
+    let sample_rate = manager.get_sample_rate().unwrap_or(TARGET_SAMPLE_RATE);
 
     // Transition to Processing
     manager
