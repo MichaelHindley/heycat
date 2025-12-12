@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 import { RecordingIndicator } from "./components/RecordingIndicator";
 import { Sidebar } from "./components/Sidebar";
+import { ModelDownloadButton } from "./components/ModelDownloadButton";
 
 function App() {
   const [greetMsg, setGreetMsg] = useState("");
@@ -50,6 +51,8 @@ function App() {
           <button type="submit">Greet</button>
         </form>
         <p>{greetMsg}</p>
+
+        <ModelDownloadButton className="app-model-download" />
       </main>
     </div>
   );

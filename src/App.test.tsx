@@ -3,16 +3,19 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import App from "./App";
 import * as useRecordingModule from "./hooks/useRecording";
+import * as useModelStatusModule from "./hooks/useModelStatus";
 
 vi.mock("./hooks/useRecording");
+vi.mock("./hooks/useModelStatus");
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockResolvedValue([]),
 }));
 
 const mockUseRecording = vi.mocked(useRecordingModule.useRecording);
+const mockUseModelStatus = vi.mocked(useModelStatusModule.useModelStatus);
 
 describe("App Integration", () => {
-  const defaultMock: useRecordingModule.UseRecordingResult = {
+  const defaultRecordingMock: useRecordingModule.UseRecordingResult = {
     isRecording: false,
     error: null,
     startRecording: vi.fn(),
@@ -20,9 +23,18 @@ describe("App Integration", () => {
     lastRecording: null,
   };
 
+  const defaultModelStatusMock: useModelStatusModule.UseModelStatusResult = {
+    isModelAvailable: false,
+    downloadState: "idle",
+    error: null,
+    downloadModel: vi.fn(),
+    refreshStatus: vi.fn(),
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
-    mockUseRecording.mockReturnValue(defaultMock);
+    mockUseRecording.mockReturnValue(defaultRecordingMock);
+    mockUseModelStatus.mockReturnValue(defaultModelStatusMock);
   });
 
   it("renders RecordingIndicator component without errors", () => {
@@ -39,7 +51,7 @@ describe("App Integration", () => {
     expect(screen.getByText("Idle")).toBeDefined();
 
     mockUseRecording.mockReturnValue({
-      ...defaultMock,
+      ...defaultRecordingMock,
       isRecording: true,
     });
 
