@@ -40,9 +40,11 @@ pub struct RecordingStateInfo {
 /// # Arguments
 /// * `state` - The recording manager state
 /// * `audio_thread` - Optional audio thread handle for starting capture
+/// * `model_available` - Whether the transcription model is available
 ///
 /// # Errors
 /// Returns an error string if:
+/// - Transcription model not available
 /// - Already recording
 /// - State transition fails
 /// - Audio capture fails to start
@@ -50,7 +52,12 @@ pub struct RecordingStateInfo {
 pub fn start_recording_impl(
     state: &Mutex<RecordingManager>,
     audio_thread: Option<&AudioThreadHandle>,
+    model_available: bool,
 ) -> Result<(), String> {
+    // Check model availability first
+    if !model_available {
+        return Err("Please download the transcription model first".to_string());
+    }
     let mut manager = state.lock().map_err(|_| {
         "Unable to access recording state. Please try again or restart the application."
     })?;

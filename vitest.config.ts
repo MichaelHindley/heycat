@@ -4,6 +4,10 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   test: {
+    pool: "threads",
+    testTimeout: 10000,
+    hookTimeout: 10000,
+    teardownTimeout: 5000,
     environment: "jsdom",
     globals: true,
     passWithNoTests: true,

@@ -9,6 +9,7 @@ use crate::events::{
     RecordingStoppedPayload, TranscriptionCompletedPayload, TranscriptionErrorPayload,
     TranscriptionStartedPayload,
 };
+use crate::model::check_model_exists;
 use crate::recording::{RecordingManager, RecordingState};
 use crate::whisper::{TranscriptionService, WhisperManager};
 use crate::{debug, error, info, trace, warn};
@@ -128,8 +129,10 @@ impl<E: RecordingEventEmitter> HotkeyIntegration<E> {
         match current_state {
             RecordingState::Idle => {
                 info!("Starting recording...");
+                // Check model availability before starting
+                let model_available = check_model_exists().unwrap_or(false);
                 // Use unified command implementation
-                match start_recording_impl(state, self.audio_thread.as_deref()) {
+                match start_recording_impl(state, self.audio_thread.as_deref(), model_available) {
                     Ok(()) => {
                         self.emitter
                             .emit_recording_started(RecordingStartedPayload {

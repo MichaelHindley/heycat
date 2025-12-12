@@ -79,7 +79,9 @@ pub fn start_recording(
     state: State<'_, ProductionState>,
     audio_thread: State<'_, AudioThreadState>,
 ) -> Result<(), String> {
-    let result = start_recording_impl(state.as_ref(), Some(audio_thread.as_ref()));
+    // Check model availability before starting recording
+    let model_available = crate::model::check_model_exists().unwrap_or(false);
+    let result = start_recording_impl(state.as_ref(), Some(audio_thread.as_ref()), model_available);
 
     // Emit event on success for frontend state sync
     if result.is_ok() {
