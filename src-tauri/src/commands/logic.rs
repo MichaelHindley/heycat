@@ -3,7 +3,7 @@
 use crate::audio::{
     encode_wav, parse_duration_from_file, AudioThreadHandle, SystemFileWriter, TARGET_SAMPLE_RATE,
 };
-use crate::error;
+use crate::{debug, error, info};
 use crate::recording::{AudioData, RecordingManager, RecordingMetadata, RecordingState};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -54,16 +54,23 @@ pub fn start_recording_impl(
     audio_thread: Option<&AudioThreadHandle>,
     model_available: bool,
 ) -> Result<(), String> {
+    debug!("start_recording_impl called, model_available={}", model_available);
+
     // Check model availability first
     if !model_available {
-        return Err("Please download the transcription model first".to_string());
+        debug!("Recording rejected: model not available");
+        return Err("Please download the transcription model first.".to_string());
     }
     let mut manager = state.lock().map_err(|_| {
+        error!("Failed to acquire recording state lock in start_recording_impl");
         "Unable to access recording state. Please try again or restart the application."
     })?;
 
     // Check current state
-    if manager.get_state() != RecordingState::Idle {
+    let current_state = manager.get_state();
+    debug!("Current recording state: {:?}", current_state);
+    if current_state != RecordingState::Idle {
+        debug!("Recording rejected: already in {:?} state", current_state);
         return Err(
             "A recording is already in progress. Stop the current recording first.".to_string(),
         );
@@ -72,7 +79,11 @@ pub fn start_recording_impl(
     // Start recording with default sample rate
     let buffer = manager
         .start_recording(TARGET_SAMPLE_RATE)
-        .map_err(|_| "Failed to initialize recording.")?;
+        .map_err(|e| {
+            error!("Failed to start recording: {:?}", e);
+            "Failed to initialize recording."
+        })?;
+    debug!("Recording buffer initialized");
 
     // Start audio capture if audio thread is available
     if let Some(audio_thread) = audio_thread {
@@ -80,17 +91,22 @@ pub fn start_recording_impl(
             Ok(sample_rate) => {
                 // Update with actual sample rate from device
                 manager.set_sample_rate(sample_rate);
+                info!("Audio capture started at {}Hz", sample_rate);
             }
-            Err(_) => {
+            Err(e) => {
                 // Audio capture failed - rollback state and return error
+                error!("Audio capture failed: {:?}", e);
                 manager.reset_to_idle();
                 return Err(
                     "Could not access the microphone. Please check that your microphone is connected and permissions are granted.".to_string(),
                 );
             }
         }
+    } else {
+        debug!("No audio thread available, recording without capture");
     }
 
+    info!("Recording started successfully");
     Ok(())
 }
 
@@ -113,46 +129,75 @@ pub fn stop_recording_impl(
     state: &Mutex<RecordingManager>,
     audio_thread: Option<&AudioThreadHandle>,
 ) -> Result<RecordingMetadata, String> {
+    debug!("stop_recording_impl called");
+
     let mut manager = state.lock().map_err(|_| {
+        error!("Failed to acquire recording state lock in stop_recording_impl");
         "Unable to access recording state. Please try again or restart the application."
     })?;
 
     // Check current state
-    if manager.get_state() != RecordingState::Recording {
+    let current_state = manager.get_state();
+    debug!("Current recording state: {:?}", current_state);
+    if current_state != RecordingState::Recording {
+        debug!("Stop rejected: not in Recording state");
         return Err("No recording in progress. Start a recording first.".to_string());
     }
 
     // Stop audio capture if audio thread is available
     let stop_result = if let Some(audio_thread) = audio_thread {
-        audio_thread.stop().ok()
+        debug!("Stopping audio thread");
+        match audio_thread.stop() {
+            Ok(result) => Some(result),
+            Err(e) => {
+                error!("Audio thread stop failed: {:?}", e);
+                // Continue with recording stop - we can't "unstop", but log the error
+                None
+            }
+        }
     } else {
+        debug!("No audio thread to stop");
         None
     };
 
     // Get the actual sample rate before transitioning
     let sample_rate = manager.get_sample_rate().unwrap_or(TARGET_SAMPLE_RATE);
+    debug!("Sample rate: {}Hz", sample_rate);
 
     // Transition to Processing
     manager
         .transition_to(RecordingState::Processing)
-        .map_err(|_| "Failed to process recording.")?;
+        .map_err(|e| {
+            error!("Failed to transition to Processing: {:?}", e);
+            "Failed to process recording."
+        })?;
+    debug!("Transitioned to Processing state");
 
     // Get the audio buffer and encode
     let buffer = manager
         .get_audio_buffer()
         .map_err(|_| "No recorded audio available.")?;
+    // Clone samples and release lock before encoding - we can't hold the lock
+    // across the WAV encoding I/O operation (it would block other threads)
     let samples = buffer
         .lock()
         .map_err(|_| "Unable to access recorded audio.")?
         .clone();
     let sample_count = samples.len();
+    debug!("Got {} samples from buffer", sample_count);
 
     // Encode WAV if we have samples
     let file_path = if !samples.is_empty() {
         let writer = SystemFileWriter;
-        encode_wav(&samples, sample_rate, &writer)
-            .map_err(|_| "Failed to save the recording. Please check disk space and try again.")?
+        let path = encode_wav(&samples, sample_rate, &writer)
+            .map_err(|e| {
+                error!("WAV encoding failed: {:?}", e);
+                "Failed to save the recording. Please check disk space and try again."
+            })?;
+        debug!("WAV encoded to: {}", path);
+        path
     } else {
+        debug!("No samples to encode");
         // No samples recorded - return placeholder
         String::new()
     };
@@ -163,10 +208,16 @@ pub fn stop_recording_impl(
     // Transition to Idle
     manager
         .transition_to(RecordingState::Idle)
-        .map_err(|_| "Failed to complete recording.")?;
+        .map_err(|e| {
+            error!("Failed to transition to Idle: {:?}", e);
+            "Failed to complete recording."
+        })?;
 
     // Extract stop reason from result
     let stop_reason = stop_result.and_then(|r| r.reason);
+
+    info!("Recording stopped: {} samples, {:.2}s, stop_reason={:?}",
+          sample_count, duration_secs, stop_reason);
 
     Ok(RecordingMetadata {
         duration_secs,

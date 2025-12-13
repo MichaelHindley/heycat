@@ -69,10 +69,9 @@ export function CommandSettings({ className = "" }: CommandSettingsProps) {
     if (!editingCommand) return;
 
     try {
-      // Remove old command and add new one with same trigger updates
-      await invoke("remove_command", { id: editingCommand.id });
-      const updatedCommand = await invoke<CommandDto>("add_command", {
+      const updatedCommand = await invoke<CommandDto>("update_command", {
         input: {
+          id: editingCommand.id,
           trigger,
           action_type: actionType,
           parameters,
@@ -99,10 +98,9 @@ export function CommandSettings({ className = "" }: CommandSettingsProps) {
 
   const handleToggleEnabled = async (command: CommandDto) => {
     try {
-      // Remove and re-add with toggled enabled state
-      await invoke("remove_command", { id: command.id });
-      const updatedCommand = await invoke<CommandDto>("add_command", {
+      const updatedCommand = await invoke<CommandDto>("update_command", {
         input: {
+          id: command.id,
           trigger: command.trigger,
           action_type: command.action_type,
           parameters: command.parameters,

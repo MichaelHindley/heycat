@@ -1,4 +1,5 @@
 use super::*;
+use crate::voice_commands::executor::ActionErrorCode;
 use std::collections::HashMap;
 
 fn params(app: &str) -> HashMap<String, String> {
@@ -57,7 +58,7 @@ async fn test_nonexistent_app_returns_not_found() {
 
     assert!(result.is_err());
     let error = result.unwrap_err();
-    assert_eq!(error.code, "NOT_FOUND");
+    assert_eq!(error.code, ActionErrorCode::NotFound);
     assert!(error.message.contains("not found"));
 }
 
@@ -85,7 +86,7 @@ async fn test_empty_app_name_returns_invalid_parameter() {
 
     assert!(result.is_err());
     let error = result.unwrap_err();
-    assert_eq!(error.code, "INVALID_PARAMETER");
+    assert_eq!(error.code, ActionErrorCode::InvalidParameter);
     assert!(error.message.contains("empty"));
 }
 
@@ -96,7 +97,7 @@ async fn test_whitespace_only_app_name_returns_invalid_parameter() {
 
     assert!(result.is_err());
     let error = result.unwrap_err();
-    assert_eq!(error.code, "INVALID_PARAMETER");
+    assert_eq!(error.code, ActionErrorCode::InvalidParameter);
 }
 
 #[tokio::test]
@@ -106,7 +107,7 @@ async fn test_missing_app_parameter_returns_error() {
 
     assert!(result.is_err());
     let error = result.unwrap_err();
-    assert_eq!(error.code, "INVALID_PARAMETER");
+    assert_eq!(error.code, ActionErrorCode::InvalidParameter);
     assert!(error.message.contains("app"));
 }
 

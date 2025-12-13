@@ -29,7 +29,10 @@ type HotkeyServiceHandle = hotkey::HotkeyService<hotkey::TauriShortcutBackend>;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_shell::init())
         .plugin(
             tauri_plugin_log::Builder::new()
                 .targets([
@@ -118,6 +121,7 @@ pub fn run() {
                 commands::TauriEventEmitter,
                 commands::TauriEventEmitter,
             >::new(recording_emitter)
+                .with_app_handle(app.handle().clone())
                 .with_audio_thread(audio_thread)
                 .with_whisper_manager(whisper_manager)
                 .with_transcription_emitter(emitter)
@@ -198,6 +202,7 @@ pub fn run() {
             model::download_model,
             voice_commands::get_commands,
             voice_commands::add_command,
+            voice_commands::update_command,
             voice_commands::remove_command,
             voice_commands::executor::test_command
         ])

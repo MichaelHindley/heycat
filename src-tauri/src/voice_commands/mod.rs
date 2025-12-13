@@ -64,15 +64,14 @@ pub struct AddCommandInput {
     pub enabled: bool,
 }
 
-fn parse_action_type(s: &str) -> Result<ActionType, String> {
-    match s {
-        "open_app" => Ok(ActionType::OpenApp),
-        "type_text" => Ok(ActionType::TypeText),
-        "system_control" => Ok(ActionType::SystemControl),
-        "workflow" => Ok(ActionType::Workflow),
-        "custom" => Ok(ActionType::Custom),
-        _ => Err(format!("Unknown action type: {}", s)),
-    }
+/// Input for updating an existing command
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateCommandInput {
+    pub id: String,
+    pub trigger: String,
+    pub action_type: String,
+    pub parameters: HashMap<String, String>,
+    pub enabled: bool,
 }
 
 /// Get all registered commands
@@ -93,7 +92,7 @@ pub fn add_command(
     state: tauri::State<'_, VoiceCommandsState>,
     input: AddCommandInput,
 ) -> Result<CommandDto, String> {
-    let action_type = parse_action_type(&input.action_type)?;
+    let action_type: ActionType = input.action_type.parse()?;
     let cmd = CommandDefinition {
         id: Uuid::new_v4(),
         trigger: input.trigger,
@@ -122,4 +121,28 @@ pub fn remove_command(
         .lock()
         .map_err(|e| format!("Lock error: {}", e))?;
     registry.delete(uuid).map_err(|e| e.to_string())
+}
+
+/// Update an existing command
+#[tauri::command]
+pub fn update_command(
+    state: tauri::State<'_, VoiceCommandsState>,
+    input: UpdateCommandInput,
+) -> Result<CommandDto, String> {
+    let uuid = Uuid::parse_str(&input.id).map_err(|e| format!("Invalid UUID: {}", e))?;
+    let action_type: ActionType = input.action_type.parse()?;
+    let cmd = CommandDefinition {
+        id: uuid,
+        trigger: input.trigger,
+        action_type,
+        parameters: input.parameters,
+        enabled: input.enabled,
+    };
+
+    let mut registry = state
+        .registry
+        .lock()
+        .map_err(|e| format!("Lock error: {}", e))?;
+    registry.update(cmd.clone()).map_err(|e| e.to_string())?;
+    Ok(CommandDto::from(&cmd))
 }

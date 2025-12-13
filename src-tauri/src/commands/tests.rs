@@ -525,7 +525,7 @@ fn test_start_recording_model_error_message_is_user_friendly() {
     // Verify the exact user-friendly message
     assert_eq!(
         error_msg,
-        "Please download the transcription model first"
+        "Please download the transcription model first."
     );
 }
 

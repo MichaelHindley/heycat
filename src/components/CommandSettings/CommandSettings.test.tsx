@@ -172,11 +172,9 @@ describe("CommandSettings", () => {
       await userEvent.clear(triggerInput);
       await userEvent.type(triggerInput, "launch browser");
 
-      // Mock remove and add for edit
-      mockInvoke.mockResolvedValueOnce(undefined); // remove_command
+      // Mock update_command response
       mockInvoke.mockResolvedValueOnce({
         ...mockCommand,
-        id: "cmd-1-updated",
         trigger: "launch browser",
       });
 

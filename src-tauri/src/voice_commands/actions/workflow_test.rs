@@ -1,5 +1,5 @@
 use super::*;
-use crate::voice_commands::executor::{Action, ActionError, ActionResult};
+use crate::voice_commands::executor::{Action, ActionError, ActionErrorCode, ActionResult};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -28,10 +28,10 @@ impl MockAction {
         }
     }
 
-    fn new_failure(id: usize, code: &str, message: &str, order: Arc<Mutex<Vec<usize>>>) -> Self {
+    fn new_failure(id: usize, code: ActionErrorCode, message: &str, order: Arc<Mutex<Vec<usize>>>) -> Self {
         Self {
             result: Err(ActionError {
-                code: code.to_string(),
+                code,
                 message: message.to_string(),
             }),
             execution_count: AtomicUsize::new(0),
@@ -103,7 +103,7 @@ async fn test_workflow_with_2_steps_executes_in_order() {
 #[tokio::test]
 async fn test_step_1_failure_stops_workflow() {
     let order = Arc::new(Mutex::new(Vec::new()));
-    let mock1 = Arc::new(MockAction::new_failure(1, "FAIL", "Step 1 failed", order.clone()));
+    let mock1 = Arc::new(MockAction::new_failure(1, ActionErrorCode::ExecutionError, "Step 1 failed", order.clone()));
     let mock2 = Arc::new(MockAction::new_success(2, "Step 2 done", order.clone()));
 
     let dispatcher = create_dispatcher_with_mocks(mock1, mock2);
@@ -126,7 +126,7 @@ async fn test_step_1_failure_stops_workflow() {
 
     assert!(result.is_err());
     let error = result.unwrap_err();
-    assert_eq!(error.code, "STEP_FAILED");
+    assert_eq!(error.code, ActionErrorCode::StepFailed);
     assert!(error.message.contains("step 1"));
 
     // Step 2 should not have been executed
@@ -277,7 +277,7 @@ async fn test_missing_steps_parameter_returns_error() {
 
     assert!(result.is_err());
     let error = result.unwrap_err();
-    assert_eq!(error.code, "INVALID_PARAMETER");
+    assert_eq!(error.code, ActionErrorCode::InvalidParameter);
 }
 
 #[tokio::test]
@@ -296,5 +296,5 @@ async fn test_invalid_json_returns_parse_error() {
 
     assert!(result.is_err());
     let error = result.unwrap_err();
-    assert_eq!(error.code, "PARSE_ERROR");
+    assert_eq!(error.code, ActionErrorCode::ParseError);
 }

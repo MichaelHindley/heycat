@@ -6,6 +6,19 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
 
+/// Stub workflow action for testing - doesn't require a dispatcher
+struct StubWorkflowAction;
+
+#[async_trait]
+impl Action for StubWorkflowAction {
+    async fn execute(&self, _parameters: &HashMap<String, String>) -> Result<ActionResult, ActionError> {
+        Ok(ActionResult {
+            message: "Would execute workflow".to_string(),
+            data: None,
+        })
+    }
+}
+
 /// Mock action that tracks execution count
 struct MockAction {
     result: Result<ActionResult, ActionError>,
@@ -23,10 +36,10 @@ impl MockAction {
         }
     }
 
-    fn new_failure(code: &str, message: &str) -> Self {
+    fn new_failure(code: ActionErrorCode, message: &str) -> Self {
         Self {
             result: Err(ActionError {
-                code: code.to_string(),
+                code,
                 message: message.to_string(),
             }),
             execution_count: AtomicUsize::new(0),
@@ -69,7 +82,7 @@ async fn test_dispatch_open_app_action() {
         mock.clone(),
         Arc::new(TextInputAction::new()),
         Arc::new(SystemControlAction),
-        Arc::new(WorkflowAction),
+        Arc::new(StubWorkflowAction),
         Arc::new(CustomAction),
     );
 
@@ -88,7 +101,7 @@ async fn test_dispatch_type_text_action() {
         Arc::new(AppLauncherAction::new()),
         mock.clone(),
         Arc::new(SystemControlAction),
-        Arc::new(WorkflowAction),
+        Arc::new(StubWorkflowAction),
         Arc::new(CustomAction),
     );
 
@@ -102,12 +115,12 @@ async fn test_dispatch_type_text_action() {
 
 #[tokio::test]
 async fn test_action_failure_returns_error() {
-    let mock = Arc::new(MockAction::new_failure("TEST_ERROR", "Test failure"));
+    let mock = Arc::new(MockAction::new_failure(ActionErrorCode::ExecutionError, "Test failure"));
     let dispatcher = ActionDispatcher::with_actions(
         mock.clone(),
         Arc::new(TextInputAction::new()),
         Arc::new(SystemControlAction),
-        Arc::new(WorkflowAction),
+        Arc::new(StubWorkflowAction),
         Arc::new(CustomAction),
     );
 
@@ -116,7 +129,7 @@ async fn test_action_failure_returns_error() {
 
     assert!(result.is_err());
     let error = result.unwrap_err();
-    assert_eq!(error.code, "TEST_ERROR");
+    assert_eq!(error.code, ActionErrorCode::ExecutionError);
     assert_eq!(error.message, "Test failure");
 }
 
@@ -131,7 +144,7 @@ async fn test_missing_parameter_returns_error() {
 
     assert!(result.is_err());
     let error = result.unwrap_err();
-    assert_eq!(error.code, "INVALID_PARAMETER");
+    assert_eq!(error.code, ActionErrorCode::InvalidParameter);
     assert!(error.message.contains("app"));
 }
 
@@ -169,14 +182,14 @@ async fn test_multiple_actions_execute_concurrently() {
         action1,
         Arc::new(TextInputAction::new()),
         Arc::new(SystemControlAction),
-        Arc::new(WorkflowAction),
+        Arc::new(StubWorkflowAction),
         Arc::new(CustomAction),
     );
     let dispatcher2 = ActionDispatcher::with_actions(
         action2,
         Arc::new(TextInputAction::new()),
         Arc::new(SystemControlAction),
-        Arc::new(WorkflowAction),
+        Arc::new(StubWorkflowAction),
         Arc::new(CustomAction),
     );
 
@@ -201,9 +214,9 @@ async fn test_stub_action_types_dispatch_correctly() {
     let dispatcher = ActionDispatcher::new();
 
     // Test stub action types only (OpenApp and TypeText use real implementations with system dependencies)
+    // Note: Workflow is tested separately in workflow_test.rs as it requires a "steps" parameter
     let test_cases = vec![
         (ActionType::SystemControl, "Would execute system control"),
-        (ActionType::Workflow, "Would execute workflow"),
         (ActionType::Custom, "Would execute custom script"),
     ];
 
@@ -232,7 +245,7 @@ async fn test_type_text_dispatches_to_text_input() {
         Arc::new(AppLauncherAction::new()),
         mock.clone(),
         Arc::new(SystemControlAction),
-        Arc::new(WorkflowAction),
+        Arc::new(StubWorkflowAction),
         Arc::new(CustomAction),
     );
 
@@ -251,7 +264,7 @@ async fn test_open_app_dispatches_to_app_launcher() {
         mock.clone(),
         Arc::new(TextInputAction::new()),
         Arc::new(SystemControlAction),
-        Arc::new(WorkflowAction),
+        Arc::new(StubWorkflowAction),
         Arc::new(CustomAction),
     );
 
@@ -276,21 +289,21 @@ fn test_action_result_serialization() {
 #[test]
 fn test_action_error_serialization() {
     let error = ActionError {
-        code: "TEST_ERROR".to_string(),
+        code: ActionErrorCode::ExecutionError,
         message: "Test error message".to_string(),
     };
     let json = serde_json::to_string(&error).unwrap();
-    assert!(json.contains("TEST_ERROR"));
+    assert!(json.contains("EXECUTION_ERROR"));
     assert!(json.contains("Test error message"));
 }
 
 #[test]
 fn test_action_error_display() {
     let error = ActionError {
-        code: "TEST_ERROR".to_string(),
+        code: ActionErrorCode::ExecutionError,
         message: "Test error message".to_string(),
     };
-    assert_eq!(error.to_string(), "TEST_ERROR: Test error message");
+    assert_eq!(error.to_string(), "EXECUTION_ERROR: Test error message");
 }
 
 #[test]
@@ -298,10 +311,7 @@ fn test_command_executed_payload_serialization() {
     let payload = CommandExecutedPayload {
         command_id: "test-id".to_string(),
         trigger: "open slack".to_string(),
-        result: ActionResult {
-            message: "App opened".to_string(),
-            data: None,
-        },
+        message: "App opened".to_string(),
     };
     let json = serde_json::to_string(&payload).unwrap();
     assert!(json.contains("test-id"));
@@ -314,13 +324,11 @@ fn test_command_failed_payload_serialization() {
     let payload = CommandFailedPayload {
         command_id: "test-id".to_string(),
         trigger: "open slack".to_string(),
-        error: ActionError {
-            code: "APP_NOT_FOUND".to_string(),
-            message: "Application not found".to_string(),
-        },
+        error_code: "NOT_FOUND".to_string(),
+        error_message: "Application not found".to_string(),
     };
     let json = serde_json::to_string(&payload).unwrap();
     assert!(json.contains("test-id"));
     assert!(json.contains("open slack"));
-    assert!(json.contains("APP_NOT_FOUND"));
+    assert!(json.contains("NOT_FOUND"));
 }

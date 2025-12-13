@@ -58,10 +58,12 @@ pub type TranscriptionResult<T> = Result<T, TranscriptionError>;
 /// Trait for transcription services, enabling mockability in tests
 pub trait TranscriptionService: Send + Sync {
     /// Load a whisper model from the given path
+    #[must_use = "this returns a Result that should be handled"]
     fn load_model(&self, path: &Path) -> TranscriptionResult<()>;
 
     /// Transcribe audio samples to text
     /// Audio must be 16kHz mono f32 samples
+    #[must_use = "this returns a Result that should be handled"]
     fn transcribe(&self, samples: &[f32]) -> TranscriptionResult<String>;
 
     /// Check if a model is loaded
@@ -72,6 +74,7 @@ pub trait TranscriptionService: Send + Sync {
 
     /// Reset state from Completed/Error back to Idle
     /// This should be called after handling the transcription result
+    #[must_use = "this returns a Result that should be handled"]
     fn reset_to_idle(&self) -> TranscriptionResult<()>;
 }
 

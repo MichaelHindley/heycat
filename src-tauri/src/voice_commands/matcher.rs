@@ -194,14 +194,15 @@ impl CommandMatcher {
     pub fn match_input(&self, input: &str, registry: &CommandRegistry) -> MatchResult {
         let commands = registry.list();
 
-        // Collect all matches
+        // Collect all matches, filtering out any with NaN scores (defensive)
         let mut candidates: Vec<MatchCandidate> = commands
             .iter()
             .filter_map(|cmd| self.match_command(input, cmd))
+            .filter(|c| c.score.is_finite()) // Filter out NaN/Inf scores
             .collect();
 
-        // Sort by score (highest first)
-        candidates.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        // Sort by score (highest first) using total_cmp for correct NaN handling
+        candidates.sort_by(|a, b| b.score.total_cmp(&a.score));
 
         match candidates.len() {
             0 => MatchResult::NoMatch,

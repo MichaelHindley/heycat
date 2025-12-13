@@ -1,4 +1,5 @@
 use super::*;
+use crate::voice_commands::executor::ActionErrorCode;
 use std::collections::HashMap;
 
 fn params(text: &str) -> HashMap<String, String> {
@@ -31,7 +32,7 @@ async fn test_missing_text_parameter_returns_error() {
 
     assert!(result.is_err());
     let error = result.unwrap_err();
-    assert_eq!(error.code, "INVALID_PARAMETER");
+    assert_eq!(error.code, ActionErrorCode::InvalidParameter);
     assert!(error.message.contains("text"));
 }
 
@@ -49,7 +50,7 @@ async fn test_type_hello_world() {
             assert!(r.message.contains("11")); // "hello world" has 11 characters
         }
         Err(e) => {
-            assert_eq!(e.code, "PERMISSION_DENIED");
+            assert_eq!(e.code, ActionErrorCode::PermissionDenied);
         }
     }
 }
@@ -65,7 +66,7 @@ async fn test_type_special_characters() {
             assert!(r.message.contains("5")); // 5 special characters
         }
         Err(e) => {
-            assert_eq!(e.code, "PERMISSION_DENIED");
+            assert_eq!(e.code, ActionErrorCode::PermissionDenied);
         }
     }
 }
@@ -82,7 +83,7 @@ async fn test_type_unicode_characters() {
             assert!(r.message.contains("7"));
         }
         Err(e) => {
-            assert_eq!(e.code, "PERMISSION_DENIED");
+            assert_eq!(e.code, ActionErrorCode::PermissionDenied);
         }
     }
 }
@@ -99,7 +100,7 @@ async fn test_configurable_delay() {
             assert!(r.message.contains("2"));
         }
         Err(e) => {
-            assert_eq!(e.code, "PERMISSION_DENIED");
+            assert_eq!(e.code, ActionErrorCode::PermissionDenied);
         }
     }
 }
@@ -136,5 +137,5 @@ async fn test_non_macos_returns_unsupported() {
 
     assert!(result.is_err());
     let error = result.unwrap_err();
-    assert_eq!(error.code, "UNSUPPORTED_PLATFORM");
+    assert_eq!(error.code, ActionErrorCode::UnsupportedPlatform);
 }

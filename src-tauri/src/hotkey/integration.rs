@@ -5,22 +5,27 @@
 use crate::audio::AudioThreadHandle;
 use crate::commands::logic::{get_last_recording_buffer_impl, start_recording_impl, stop_recording_impl};
 use crate::events::{
-    command_events, current_timestamp, CommandAmbiguousPayload, CommandCandidate,
-    CommandEventEmitter, CommandExecutedPayload, CommandFailedPayload, CommandMatchedPayload,
-    RecordingErrorPayload, RecordingEventEmitter, RecordingStartedPayload, RecordingStoppedPayload,
+    current_timestamp, CommandAmbiguousPayload, CommandCandidate, CommandEventEmitter,
+    CommandExecutedPayload, CommandFailedPayload, CommandMatchedPayload, RecordingErrorPayload,
+    RecordingEventEmitter, RecordingStartedPayload, RecordingStoppedPayload,
     TranscriptionCompletedPayload, TranscriptionErrorPayload, TranscriptionEventEmitter,
     TranscriptionStartedPayload,
 };
 use crate::model::check_model_exists;
 use crate::recording::{RecordingManager, RecordingState};
-use crate::voice_commands::executor::{ActionDispatcher, ExecutorState};
+use crate::voice_commands::executor::ActionDispatcher;
 use crate::voice_commands::matcher::{CommandMatcher, MatchResult};
 use crate::voice_commands::registry::CommandRegistry;
 use crate::whisper::{TranscriptionService, WhisperManager};
 use crate::{debug, error, info, trace, warn};
-use arboard::Clipboard;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tauri::AppHandle;
+use tauri_plugin_clipboard_manager::ClipboardExt;
+use tokio::sync::Semaphore;
+
+/// Maximum concurrent transcriptions allowed
+const MAX_CONCURRENT_TRANSCRIPTIONS: usize = 2;
 
 /// Debounce duration for hotkey presses (200ms)
 pub const DEBOUNCE_DURATION_MS: u64 = 200;
@@ -46,6 +51,10 @@ pub struct HotkeyIntegration<R: RecordingEventEmitter, T: TranscriptionEventEmit
     action_dispatcher: Option<Arc<ActionDispatcher>>,
     /// Optional command event emitter for voice command events
     command_emitter: Option<Arc<C>>,
+    /// Semaphore to limit concurrent transcriptions
+    transcription_semaphore: Arc<Semaphore>,
+    /// Optional app handle for clipboard access
+    app_handle: Option<AppHandle>,
 }
 
 impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: CommandEventEmitter + 'static> HotkeyIntegration<R, T, C> {
@@ -63,7 +72,15 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
             command_matcher: None,
             action_dispatcher: None,
             command_emitter: None,
+            transcription_semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_TRANSCRIPTIONS)),
+            app_handle: None,
         }
+    }
+
+    /// Add app handle for clipboard access (builder pattern)
+    pub fn with_app_handle(mut self, handle: AppHandle) -> Self {
+        self.app_handle = Some(handle);
+        self
     }
 
     /// Add an audio thread handle (builder pattern)
@@ -129,6 +146,8 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
             command_matcher: None,
             action_dispatcher: None,
             command_emitter: None,
+            transcription_semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_TRANSCRIPTIONS)),
+            app_handle: None,
         }
     }
 
@@ -229,9 +248,10 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
         }
     }
 
-    /// Spawn transcription in a separate thread
+    /// Spawn transcription as an async task
     ///
     /// Gets audio buffer, transcribes, tries command matching, then fallback to clipboard.
+    /// Uses Tauri's async runtime for bounded async execution.
     /// No-op if whisper manager, transcription emitter, or recording state is not configured.
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn spawn_transcription(&self) {
@@ -266,22 +286,42 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
         let action_dispatcher = self.action_dispatcher.clone();
         let command_emitter = self.command_emitter.clone();
 
+        // Clone app_handle for clipboard access
+        let app_handle = self.app_handle.clone();
+
         // Check if model is loaded
         if !whisper_manager.is_loaded() {
             info!("Transcription skipped: whisper model not loaded");
             return;
         }
 
-        info!("Spawning transcription thread...");
+        // Clone semaphore for the async task
+        let semaphore = self.transcription_semaphore.clone();
 
-        std::thread::spawn(move || {
+        info!("Spawning transcription task...");
+
+        // Spawn async task using Tauri's async runtime
+        tauri::async_runtime::spawn(async move {
+            // Acquire semaphore permit to limit concurrent transcriptions
+            let _permit = match semaphore.try_acquire() {
+                Ok(permit) => permit,
+                Err(_) => {
+                    warn!("Too many concurrent transcriptions, skipping this one");
+                    // Emit error event so the user knows their recording was not processed
+                    transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
+                        error: "Too many transcriptions in progress. Please wait and try again.".to_string(),
+                    });
+                    return;
+                }
+            };
+
             // Emit transcription_started event
             let start_time = Instant::now();
             transcription_emitter.emit_transcription_started(TranscriptionStartedPayload {
                 timestamp: current_timestamp(),
             });
 
-            // Get audio buffer
+            // Get audio buffer (sync operation, fast)
             let samples = match get_last_recording_buffer_impl(&recording_state) {
                 Ok(audio_data) => audio_data.samples,
                 Err(e) => {
@@ -295,157 +335,188 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
 
             debug!("Transcribing {} samples...", samples.len());
 
-            // Perform transcription
-            match whisper_manager.transcribe(&samples) {
-                Ok(text) => {
-                    let duration_ms = start_time.elapsed().as_millis() as u64;
-                    info!(
-                        "Transcription completed in {}ms: {} chars",
-                        duration_ms,
-                        text.len()
-                    );
+            // Perform transcription on blocking thread pool (CPU-intensive)
+            let whisper_clone = whisper_manager.clone();
+            let transcription_result = tokio::task::spawn_blocking(move || {
+                whisper_clone.transcribe(&samples)
+            }).await;
 
-                    // Try voice command matching if configured
-                    let command_handled = if let (Some(registry), Some(matcher), Some(dispatcher), Some(emitter)) =
-                        (&command_registry, &command_matcher, &action_dispatcher, &command_emitter)
-                    {
-                        // Lock registry and try to match
-                        if let Ok(registry_guard) = registry.lock() {
-                            let match_result = matcher.match_input(&text, &registry_guard);
-
-                            match &match_result {
-                                MatchResult::Exact { command: matched_cmd, .. } | MatchResult::Fuzzy { command: matched_cmd, score: _, .. } => {
-                                    let confidence = match &match_result {
-                                        MatchResult::Exact { .. } => 1.0,
-                                        MatchResult::Fuzzy { score, .. } => *score,
-                                        _ => 0.0,
-                                    };
-                                    info!("Command matched: {} (confidence: {:.2})", matched_cmd.trigger, confidence);
-
-                                    // Get full command from registry
-                                    let full_command = registry_guard.get(matched_cmd.id).cloned();
-                                    drop(registry_guard); // Release lock before execution
-
-                                    if let Some(cmd) = full_command {
-                                        // Emit command_matched event
-                                        emitter.emit_command_matched(CommandMatchedPayload {
-                                            transcription: text.clone(),
-                                            command_id: cmd.id.to_string(),
-                                            trigger: matched_cmd.trigger.clone(),
-                                            confidence,
-                                        });
-
-                                        // Execute command using tokio runtime
-                                        let rt = tokio::runtime::Runtime::new();
-                                        match rt {
-                                            Ok(runtime) => {
-                                                let exec_result = runtime.block_on(dispatcher.execute(&cmd));
-                                                match exec_result {
-                                                    Ok(action_result) => {
-                                                        info!("Command executed: {}", action_result.message);
-                                                        emitter.emit_command_executed(CommandExecutedPayload {
-                                                            command_id: cmd.id.to_string(),
-                                                            trigger: matched_cmd.trigger.clone(),
-                                                            message: action_result.message,
-                                                        });
-                                                    }
-                                                    Err(action_error) => {
-                                                        error!("Command execution failed: {}", action_error);
-                                                        emitter.emit_command_failed(CommandFailedPayload {
-                                                            command_id: cmd.id.to_string(),
-                                                            trigger: matched_cmd.trigger.clone(),
-                                                            error_code: action_error.code,
-                                                            error_message: action_error.message,
-                                                        });
-                                                    }
-                                                }
-                                            }
-                                            Err(e) => {
-                                                error!("Failed to create runtime for command execution: {}", e);
-                                                emitter.emit_command_failed(CommandFailedPayload {
-                                                    command_id: cmd.id.to_string(),
-                                                    trigger: matched_cmd.trigger.clone(),
-                                                    error_code: "RUNTIME_ERROR".to_string(),
-                                                    error_message: format!("Failed to create async runtime: {}", e),
-                                                });
-                                            }
-                                        }
-                                        true // Command was handled
-                                    } else {
-                                        warn!("Command not found in registry after match");
-                                        false
-                                    }
-                                }
-                                MatchResult::Ambiguous { ref candidates } => {
-                                    info!("Ambiguous match: {} candidates", candidates.len());
-
-                                    // Emit command_ambiguous event for disambiguation UI
-                                    emitter.emit_command_ambiguous(CommandAmbiguousPayload {
-                                        transcription: text.clone(),
-                                        candidates: candidates
-                                            .iter()
-                                            .map(|c| CommandCandidate {
-                                                id: c.command.id.to_string(),
-                                                trigger: c.command.trigger.clone(),
-                                                confidence: c.score,
-                                            })
-                                            .collect(),
-                                    });
-                                    true // Command matching was handled (ambiguous)
-                                }
-                                MatchResult::NoMatch => {
-                                    debug!("No command match for: {}", text);
-                                    false // Fall through to clipboard
-                                }
-                            }
-                        } else {
-                            warn!("Failed to lock command registry");
-                            false
-                        }
-                    } else {
-                        debug!("Voice commands not configured, skipping command matching");
-                        false
-                    };
-
-                    // Fallback to clipboard if no command was handled
-                    if !command_handled {
-                        // Copy to clipboard
-                        match Clipboard::new() {
-                            Ok(mut clipboard) => {
-                                if let Err(e) = clipboard.set_text(&text) {
-                                    warn!("Failed to copy to clipboard: {}", e);
-                                } else {
-                                    debug!("Transcribed text copied to clipboard");
-                                }
-                            }
-                            Err(e) => {
-                                warn!("Failed to access clipboard: {}", e);
-                            }
-                        }
-
-                        // Emit transcription_completed event
-                        transcription_emitter.emit_transcription_completed(TranscriptionCompletedPayload {
-                            text,
-                            duration_ms,
-                        });
-                    }
-
-                    // Reset whisper state to idle
-                    if let Err(e) = whisper_manager.reset_to_idle() {
-                        warn!("Failed to reset whisper state: {}", e);
-                    }
-                }
-                Err(e) => {
+            let text = match transcription_result {
+                Ok(Ok(text)) => text,
+                Ok(Err(e)) => {
                     error!("Transcription failed: {}", e);
                     transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
                         error: e.to_string(),
                     });
-
-                    // Reset whisper state to idle on error
                     if let Err(reset_err) = whisper_manager.reset_to_idle() {
                         warn!("Failed to reset whisper state: {}", reset_err);
                     }
+                    return;
                 }
+                Err(e) => {
+                    error!("Transcription task panicked: {}", e);
+                    transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
+                        error: "Internal transcription error.".to_string(),
+                    });
+                    if let Err(reset_err) = whisper_manager.reset_to_idle() {
+                        warn!("Failed to reset whisper state: {}", reset_err);
+                    }
+                    return;
+                }
+            };
+
+            let duration_ms = start_time.elapsed().as_millis() as u64;
+            info!(
+                "Transcription completed in {}ms: {} chars",
+                duration_ms,
+                text.len()
+            );
+
+            // Try voice command matching if configured
+            // Note: We extract all data from the lock before any await to ensure Send safety
+            // Local enum to capture match results before releasing the registry lock.
+            // IMPORTANT: registry_guard must be dropped before any await to ensure
+            // this async block remains Send. Holding a MutexGuard across an await
+            // point would make it !Send.
+            enum MatchOutcome {
+                Matched { cmd: crate::voice_commands::registry::CommandDefinition, trigger: String, confidence: f64 },
+                Ambiguous { candidates: Vec<CommandCandidate> },
+                NoMatch,
+            }
+
+            let command_handled = if let (Some(registry), Some(matcher), Some(dispatcher), Some(emitter)) =
+                (&command_registry, &command_matcher, &action_dispatcher, &command_emitter)
+            {
+                // Lock registry, match, extract all needed data, then release lock
+                let outcome = {
+                    let registry_guard = match registry.lock() {
+                        Ok(g) => g,
+                        Err(_) => {
+                            error!("Failed to lock command registry - lock poisoned");
+                            // Emit error event so UI doesn't hang waiting
+                            transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
+                                error: "Internal error: command registry unavailable. Please restart the application.".to_string(),
+                            });
+                            return;
+                        }
+                    };
+
+                    let match_result = matcher.match_input(&text, &registry_guard);
+
+                    match match_result {
+                        MatchResult::Exact { command: matched_cmd, .. } => {
+                            match registry_guard.get(matched_cmd.id).cloned() {
+                                Some(cmd) => MatchOutcome::Matched {
+                                    cmd,
+                                    trigger: matched_cmd.trigger.clone(),
+                                    confidence: 1.0
+                                },
+                                None => MatchOutcome::NoMatch,
+                            }
+                        }
+                        MatchResult::Fuzzy { command: matched_cmd, score, .. } => {
+                            match registry_guard.get(matched_cmd.id).cloned() {
+                                Some(cmd) => MatchOutcome::Matched {
+                                    cmd,
+                                    trigger: matched_cmd.trigger.clone(),
+                                    confidence: score
+                                },
+                                None => MatchOutcome::NoMatch,
+                            }
+                        }
+                        MatchResult::Ambiguous { candidates } => {
+                            let candidate_data: Vec<_> = candidates
+                                .iter()
+                                .map(|c| CommandCandidate {
+                                    id: c.command.id.to_string(),
+                                    trigger: c.command.trigger.clone(),
+                                    confidence: c.score,
+                                })
+                                .collect();
+                            MatchOutcome::Ambiguous { candidates: candidate_data }
+                        }
+                        MatchResult::NoMatch => MatchOutcome::NoMatch,
+                    }
+                    // registry_guard is dropped here - before any await
+                };
+
+                match outcome {
+                    MatchOutcome::Matched { cmd, trigger, confidence } => {
+                        info!("Command matched: {} (confidence: {:.2})", trigger, confidence);
+
+                        // Emit command_matched event
+                        emitter.emit_command_matched(CommandMatchedPayload {
+                            transcription: text.clone(),
+                            command_id: cmd.id.to_string(),
+                            trigger: trigger.clone(),
+                            confidence,
+                        });
+
+                        // Execute command directly using await (no new runtime needed!)
+                        match dispatcher.execute(&cmd).await {
+                            Ok(action_result) => {
+                                info!("Command executed: {}", action_result.message);
+                                emitter.emit_command_executed(CommandExecutedPayload {
+                                    command_id: cmd.id.to_string(),
+                                    trigger: trigger.clone(),
+                                    message: action_result.message,
+                                });
+                            }
+                            Err(action_error) => {
+                                error!("Command execution failed: {}", action_error);
+                                emitter.emit_command_failed(CommandFailedPayload {
+                                    command_id: cmd.id.to_string(),
+                                    trigger: trigger.clone(),
+                                    error_code: action_error.code.to_string(),
+                                    error_message: action_error.message,
+                                });
+                            }
+                        }
+                        true // Command was handled
+                    }
+                    MatchOutcome::Ambiguous { candidates } => {
+                        info!("Ambiguous match: {} candidates", candidates.len());
+
+                        // Emit command_ambiguous event for disambiguation UI
+                        emitter.emit_command_ambiguous(CommandAmbiguousPayload {
+                            transcription: text.clone(),
+                            candidates,
+                        });
+                        true // Command matching was handled (ambiguous)
+                    }
+                    MatchOutcome::NoMatch => {
+                        debug!("No command match for: {}", text);
+                        false // Fall through to clipboard
+                    }
+                }
+            } else {
+                debug!("Voice commands not configured, skipping command matching");
+                false
+            };
+
+            // Fallback to clipboard if no command was handled
+            if !command_handled {
+                // Copy to clipboard using the clipboard plugin
+                if let Some(ref handle) = app_handle {
+                    if let Err(e) = handle.clipboard().write_text(&text) {
+                        warn!("Failed to copy to clipboard: {}", e);
+                    } else {
+                        debug!("Transcribed text copied to clipboard");
+                    }
+                } else {
+                    warn!("Clipboard unavailable: no app handle configured");
+                }
+
+                // Emit transcription_completed event
+                transcription_emitter.emit_transcription_completed(TranscriptionCompletedPayload {
+                    text,
+                    duration_ms,
+                });
+            }
+
+            // Reset whisper state to idle
+            if let Err(e) = whisper_manager.reset_to_idle() {
+                warn!("Failed to reset whisper state: {}", e);
             }
         });
     }

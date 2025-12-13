@@ -9,7 +9,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleRate, Stream};
 use rubato::{FftFixedIn, Resampler};
 
-use super::{AudioBuffer, AudioCaptureBackend, AudioCaptureError, CaptureState, StopReason, MAX_BUFFER_SAMPLES, TARGET_SAMPLE_RATE};
+use super::{AudioBuffer, AudioCaptureBackend, AudioCaptureError, CaptureState, StopReason, MAX_BUFFER_SAMPLES, MAX_RESAMPLE_BUFFER_SAMPLES, TARGET_SAMPLE_RATE};
 use crate::{debug, error, info, warn};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
@@ -70,6 +70,100 @@ fn create_resampler(
     .map_err(|e| AudioCaptureError::DeviceError(format!("Failed to create resampler: {}", e)))
 }
 
+/// Shared state for audio processing callback
+/// Captures all the Arc-wrapped resources needed by the callback
+struct CallbackState {
+    buffer: AudioBuffer,
+    stop_signal: Option<Sender<StopReason>>,
+    signaled: Arc<AtomicBool>,
+    resampler: Option<Arc<Mutex<FftFixedIn<f32>>>>,
+    resample_buffer: Arc<Mutex<Vec<f32>>>,
+    chunk_buffer: Arc<Mutex<Vec<f32>>>,
+    chunk_size: usize,
+}
+
+impl CallbackState {
+    /// Process f32 audio samples - handles resampling and buffer management
+    ///
+    /// This is the core audio processing logic, extracted to avoid duplication
+    /// across F32, I16, and U16 sample format callbacks.
+    fn process_samples(&self, f32_samples: &[f32]) {
+        let samples_to_add = if let Some(ref resampler) = self.resampler {
+            // Accumulate samples and resample when we have enough
+            let mut resample_buf = match self.resample_buffer.lock() {
+                Ok(buf) => buf,
+                Err(_) => return,
+            };
+
+            // Signal stop if resample buffer overflows - data loss is unacceptable
+            if resample_buf.len() + f32_samples.len() > MAX_RESAMPLE_BUFFER_SAMPLES {
+                error!("Resample buffer overflow: resampling can't keep up with audio input");
+                if !self.signaled.swap(true, Ordering::SeqCst) {
+                    if let Some(ref sender) = self.stop_signal {
+                        let _ = sender.send(StopReason::ResampleOverflow);
+                    }
+                }
+                return;
+            }
+            resample_buf.extend_from_slice(f32_samples);
+
+            // Process full chunks using pre-allocated buffer
+            let mut resampled = Vec::new();
+            while resample_buf.len() >= self.chunk_size {
+                // Use pre-allocated chunk buffer to avoid allocation
+                if let Ok(mut chunk_buf) = self.chunk_buffer.lock() {
+                    chunk_buf.copy_from_slice(&resample_buf[..self.chunk_size]);
+                    resample_buf.drain(..self.chunk_size);
+                    if let Ok(mut r) = resampler.lock() {
+                        if let Ok(output) = r.process(&[chunk_buf.as_slice()], None) {
+                            if !output.is_empty() {
+                                resampled.extend_from_slice(&output[0]);
+                            }
+                        }
+                    }
+                } else {
+                    // Fallback to allocation if chunk buffer lock fails
+                    let chunk: Vec<f32> = resample_buf.drain(..self.chunk_size).collect();
+                    if let Ok(mut r) = resampler.lock() {
+                        if let Ok(output) = r.process(&[chunk], None) {
+                            if !output.is_empty() {
+                                resampled.extend_from_slice(&output[0]);
+                            }
+                        }
+                    }
+                }
+            }
+            resampled
+        } else {
+            // No resampling needed
+            f32_samples.to_vec()
+        };
+
+        match self.buffer.lock() {
+            Ok(mut guard) => {
+                let remaining = MAX_BUFFER_SAMPLES.saturating_sub(guard.len());
+                if remaining > 0 {
+                    let to_add = samples_to_add.len().min(remaining);
+                    guard.extend_from_slice(&samples_to_add[..to_add]);
+                } else if !self.signaled.swap(true, Ordering::SeqCst) {
+                    // Buffer full - signal once
+                    if let Some(ref sender) = self.stop_signal {
+                        let _ = sender.send(StopReason::BufferFull);
+                    }
+                }
+            }
+            Err(_) => {
+                // Lock poisoned - signal once
+                if !self.signaled.swap(true, Ordering::SeqCst) {
+                    if let Some(ref sender) = self.stop_signal {
+                        let _ = sender.send(StopReason::LockError);
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl AudioCaptureBackend for CpalBackend {
     fn start(
         &mut self,
@@ -127,199 +221,76 @@ impl AudioCaptureBackend for CpalBackend {
             None
         };
 
-        // Create an error handler closure
-        let err_fn = |err: cpal::StreamError| {
-            error!("Audio stream error: {}", err);
-        };
-
         // Shared flag to ensure we only signal once
         let signaled = std::sync::Arc::new(AtomicBool::new(false));
+
+        // Create error handler that signals stop on stream errors
+        let err_signal = stop_signal.clone();
+        let err_signaled = signaled.clone();
+        let err_fn = move |err: cpal::StreamError| {
+            error!("Audio stream error: {}", err);
+            // Signal stop so recording doesn't continue with garbage data
+            if !err_signaled.swap(true, Ordering::SeqCst) {
+                if let Some(ref sender) = err_signal {
+                    let _ = sender.send(StopReason::StreamError);
+                }
+            }
+        };
 
         // Buffer for accumulating samples before resampling
         let resample_buffer: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
         let chunk_size = 1024usize;
 
+        // Pre-allocated chunk buffer to avoid allocations in hot path
+        let chunk_buffer: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(vec![0.0f32; chunk_size]));
+
+        // Create shared callback state - all callbacks use the same processing logic
+        let callback_state = Arc::new(CallbackState {
+            buffer,
+            stop_signal,
+            signaled,
+            resampler,
+            resample_buffer,
+            chunk_buffer,
+            chunk_size,
+        });
+
         // Build the input stream based on sample format
-        // Each callback checks buffer size to prevent unbounded memory growth
-        // and signals if buffer is full or lock fails
+        // Each callback converts to f32 and delegates to CallbackState::process_samples
         let stream = match config.sample_format() {
             cpal::SampleFormat::F32 => {
-                let buffer_clone = buffer.clone();
-                let signal_clone = stop_signal.clone();
-                let signaled_clone = signaled.clone();
-                let resampler_clone = resampler.clone();
-                let resample_buf_clone = resample_buffer.clone();
+                let state = callback_state.clone();
                 device.build_input_stream(
                     &config.into(),
                     move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                        let samples_to_add = if let Some(ref resampler) = resampler_clone {
-                            // Accumulate samples and resample when we have enough
-                            let mut resample_buf = match resample_buf_clone.lock() {
-                                Ok(buf) => buf,
-                                Err(_) => return,
-                            };
-                            resample_buf.extend_from_slice(data);
-
-                            // Process full chunks
-                            let mut resampled = Vec::new();
-                            while resample_buf.len() >= chunk_size {
-                                let chunk: Vec<f32> = resample_buf.drain(..chunk_size).collect();
-                                if let Ok(mut r) = resampler.lock() {
-                                    if let Ok(output) = r.process(&[chunk], None) {
-                                        if !output.is_empty() {
-                                            resampled.extend_from_slice(&output[0]);
-                                        }
-                                    }
-                                }
-                            }
-                            resampled
-                        } else {
-                            // No resampling needed
-                            data.to_vec()
-                        };
-
-                        match buffer_clone.lock() {
-                            Ok(mut guard) => {
-                                let remaining = MAX_BUFFER_SAMPLES.saturating_sub(guard.len());
-                                if remaining > 0 {
-                                    let to_add = samples_to_add.len().min(remaining);
-                                    guard.extend_from_slice(&samples_to_add[..to_add]);
-                                } else if !signaled_clone.swap(true, Ordering::SeqCst) {
-                                    // Buffer full - signal once
-                                    if let Some(ref sender) = signal_clone {
-                                        let _ = sender.send(StopReason::BufferFull);
-                                    }
-                                }
-                            }
-                            Err(_) => {
-                                // Lock poisoned - signal once
-                                if !signaled_clone.swap(true, Ordering::SeqCst) {
-                                    if let Some(ref sender) = signal_clone {
-                                        let _ = sender.send(StopReason::LockError);
-                                    }
-                                }
-                            }
-                        }
+                        // F32 samples are already in the correct format
+                        state.process_samples(data);
                     },
                     err_fn,
                     None,
                 )
             }
             cpal::SampleFormat::I16 => {
-                let buffer_clone = buffer.clone();
-                let signal_clone = stop_signal.clone();
-                let signaled_clone = signaled.clone();
-                let resampler_clone = resampler.clone();
-                let resample_buf_clone = resample_buffer.clone();
+                let state = callback_state.clone();
                 device.build_input_stream(
                     &config.into(),
                     move |data: &[i16], _: &cpal::InputCallbackInfo| {
                         // Convert i16 samples to f32 normalized to [-1.0, 1.0]
                         let f32_samples: Vec<f32> = data.iter().map(|&s| s as f32 / i16::MAX as f32).collect();
-
-                        let samples_to_add = if let Some(ref resampler) = resampler_clone {
-                            let mut resample_buf = match resample_buf_clone.lock() {
-                                Ok(buf) => buf,
-                                Err(_) => return,
-                            };
-                            resample_buf.extend_from_slice(&f32_samples);
-
-                            let mut resampled = Vec::new();
-                            while resample_buf.len() >= chunk_size {
-                                let chunk: Vec<f32> = resample_buf.drain(..chunk_size).collect();
-                                if let Ok(mut r) = resampler.lock() {
-                                    if let Ok(output) = r.process(&[chunk], None) {
-                                        if !output.is_empty() {
-                                            resampled.extend_from_slice(&output[0]);
-                                        }
-                                    }
-                                }
-                            }
-                            resampled
-                        } else {
-                            f32_samples
-                        };
-
-                        match buffer_clone.lock() {
-                            Ok(mut guard) => {
-                                let remaining = MAX_BUFFER_SAMPLES.saturating_sub(guard.len());
-                                if remaining > 0 {
-                                    let to_add = samples_to_add.len().min(remaining);
-                                    guard.extend_from_slice(&samples_to_add[..to_add]);
-                                } else if !signaled_clone.swap(true, Ordering::SeqCst) {
-                                    if let Some(ref sender) = signal_clone {
-                                        let _ = sender.send(StopReason::BufferFull);
-                                    }
-                                }
-                            }
-                            Err(_) => {
-                                if !signaled_clone.swap(true, Ordering::SeqCst) {
-                                    if let Some(ref sender) = signal_clone {
-                                        let _ = sender.send(StopReason::LockError);
-                                    }
-                                }
-                            }
-                        }
+                        state.process_samples(&f32_samples);
                     },
                     err_fn,
                     None,
                 )
             }
             cpal::SampleFormat::U16 => {
-                let buffer_clone = buffer.clone();
-                let signal_clone = stop_signal;
-                let signaled_clone = signaled;
-                let resampler_clone = resampler;
-                let resample_buf_clone = resample_buffer;
+                let state = callback_state;
                 device.build_input_stream(
                     &config.into(),
                     move |data: &[u16], _: &cpal::InputCallbackInfo| {
                         // Convert u16 samples to f32 normalized to [-1.0, 1.0]
                         let f32_samples: Vec<f32> = data.iter().map(|&s| (s as f32 / u16::MAX as f32) * 2.0 - 1.0).collect();
-
-                        let samples_to_add = if let Some(ref resampler) = resampler_clone {
-                            let mut resample_buf = match resample_buf_clone.lock() {
-                                Ok(buf) => buf,
-                                Err(_) => return,
-                            };
-                            resample_buf.extend_from_slice(&f32_samples);
-
-                            let mut resampled = Vec::new();
-                            while resample_buf.len() >= chunk_size {
-                                let chunk: Vec<f32> = resample_buf.drain(..chunk_size).collect();
-                                if let Ok(mut r) = resampler.lock() {
-                                    if let Ok(output) = r.process(&[chunk], None) {
-                                        if !output.is_empty() {
-                                            resampled.extend_from_slice(&output[0]);
-                                        }
-                                    }
-                                }
-                            }
-                            resampled
-                        } else {
-                            f32_samples
-                        };
-
-                        match buffer_clone.lock() {
-                            Ok(mut guard) => {
-                                let remaining = MAX_BUFFER_SAMPLES.saturating_sub(guard.len());
-                                if remaining > 0 {
-                                    let to_add = samples_to_add.len().min(remaining);
-                                    guard.extend_from_slice(&samples_to_add[..to_add]);
-                                } else if !signaled_clone.swap(true, Ordering::SeqCst) {
-                                    if let Some(ref sender) = signal_clone {
-                                        let _ = sender.send(StopReason::BufferFull);
-                                    }
-                                }
-                            }
-                            Err(_) => {
-                                if !signaled_clone.swap(true, Ordering::SeqCst) {
-                                    if let Some(ref sender) = signal_clone {
-                                        let _ = sender.send(StopReason::LockError);
-                                    }
-                                }
-                            }
-                        }
+                        state.process_samples(&f32_samples);
                     },
                     err_fn,
                     None,

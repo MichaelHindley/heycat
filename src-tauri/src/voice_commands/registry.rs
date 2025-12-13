@@ -1,8 +1,10 @@
 // Voice command registry - stores and persists command definitions
 
+use crate::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, File};
+use std::io::Write;
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -20,6 +22,21 @@ pub enum ActionType {
     Workflow,
     /// Custom user-defined action
     Custom,
+}
+
+impl std::str::FromStr for ActionType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "open_app" => Ok(ActionType::OpenApp),
+            "type_text" => Ok(ActionType::TypeText),
+            "system_control" => Ok(ActionType::SystemControl),
+            "workflow" => Ok(ActionType::Workflow),
+            "custom" => Ok(ActionType::Custom),
+            _ => Err(format!("Unknown action type: {}", s)),
+        }
+    }
 }
 
 /// A voice command definition
@@ -94,8 +111,10 @@ impl CommandRegistry {
 
     /// Load commands from the persistence file
     pub fn load(&mut self) -> Result<(), RegistryError> {
+        debug!("Loading commands from {:?}", self.config_path);
+
         if !self.config_path.exists() {
-            // No file yet, start with empty registry
+            debug!("No commands file found, starting with empty registry");
             return Ok(());
         }
 
@@ -110,11 +129,14 @@ impl CommandRegistry {
             self.commands.insert(cmd.id, cmd);
         }
 
+        info!("Loaded {} commands from registry", self.commands.len());
         Ok(())
     }
 
-    /// Persist commands to the file
+    /// Persist commands to the file using atomic write (temp file + rename)
     fn persist(&self) -> Result<(), RegistryError> {
+        debug!("Persisting {} commands to {:?}", self.commands.len(), self.config_path);
+
         // Ensure parent directory exists
         if let Some(parent) = self.config_path.parent() {
             fs::create_dir_all(parent)
@@ -125,9 +147,28 @@ impl CommandRegistry {
         let content = serde_json::to_string_pretty(&commands)
             .map_err(|e| RegistryError::PersistenceError(e.to_string()))?;
 
-        fs::write(&self.config_path, content)
-            .map_err(|e| RegistryError::PersistenceError(e.to_string()))?;
+        // Use atomic temp file + rename pattern
+        let temp_path = self.config_path.with_extension("tmp");
 
+        // Write to temp file with explicit sync
+        {
+            let mut file = File::create(&temp_path)
+                .map_err(|e| RegistryError::PersistenceError(format!("Failed to create temp file: {}", e)))?;
+            file.write_all(content.as_bytes())
+                .map_err(|e| RegistryError::PersistenceError(format!("Failed to write: {}", e)))?;
+            file.sync_all()
+                .map_err(|e| RegistryError::PersistenceError(format!("Failed to sync: {}", e)))?;
+        } // File closed here
+
+        // Atomic rename
+        fs::rename(&temp_path, &self.config_path)
+            .map_err(|e| {
+                // Clean up temp file on error
+                let _ = fs::remove_file(&temp_path);
+                RegistryError::PersistenceError(format!("Failed to rename: {}", e))
+            })?;
+
+        debug!("Commands persisted successfully");
         Ok(())
     }
 
@@ -145,6 +186,7 @@ impl CommandRegistry {
     }
 
     /// Add a new command to the registry
+    #[must_use = "this returns a Result that should be handled"]
     pub fn add(&mut self, cmd: CommandDefinition) -> Result<(), RegistryError> {
         self.validate(&cmd, true)?;
         self.commands.insert(cmd.id, cmd);
@@ -153,6 +195,7 @@ impl CommandRegistry {
     }
 
     /// Update an existing command
+    #[must_use = "this returns a Result that should be handled"]
     pub fn update(&mut self, cmd: CommandDefinition) -> Result<(), RegistryError> {
         if !self.commands.contains_key(&cmd.id) {
             return Err(RegistryError::NotFound(cmd.id));
@@ -164,6 +207,7 @@ impl CommandRegistry {
     }
 
     /// Delete a command by ID
+    #[must_use = "this returns a Result that should be handled"]
     pub fn delete(&mut self, id: Uuid) -> Result<(), RegistryError> {
         if self.commands.remove(&id).is_none() {
             return Err(RegistryError::NotFound(id));

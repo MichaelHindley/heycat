@@ -121,6 +121,7 @@ impl RecordingManager {
     ///
     /// # Errors
     /// Returns error if not in Idle state
+    #[must_use = "this returns a Result that should be handled"]
     pub fn start_recording(&mut self, sample_rate: u32) -> Result<AudioBuffer, RecordingStateError> {
         if self.state != RecordingState::Idle {
             return Err(RecordingStateError::InvalidTransition {
@@ -155,6 +156,7 @@ impl RecordingManager {
     /// Note: Use `start_recording(sample_rate)` for Idle -> Recording transition
     ///
     /// Returns error for invalid transitions
+    #[must_use = "this returns a Result that should be handled"]
     pub fn transition_to(&mut self, new_state: RecordingState) -> Result<(), RecordingStateError> {
         let valid = matches!(
             (self.state, new_state),
@@ -229,7 +231,12 @@ impl RecordingManager {
         match &self.last_recording {
             Some(recording) => {
                 let sample_count = recording.samples.len();
-                let duration_secs = sample_count as f64 / recording.sample_rate as f64;
+                // Guard against division by zero (should never happen, but defensive)
+                let duration_secs = if recording.sample_rate > 0 {
+                    sample_count as f64 / recording.sample_rate as f64
+                } else {
+                    0.0
+                };
                 Ok(AudioData {
                     samples: recording.samples.clone(),
                     sample_rate: recording.sample_rate,

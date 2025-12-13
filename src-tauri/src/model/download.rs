@@ -1,6 +1,7 @@
 // Model download functionality
 // Contains the core download logic, testable independently from Tauri commands
 
+use crate::{debug, info, warn};
 use std::path::PathBuf;
 
 /// Model information constants
@@ -9,6 +10,9 @@ pub const MODEL_URL: &str =
     "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin";
 pub const MODELS_DIR_NAME: &str = "models";
 pub const APP_DIR_NAME: &str = "heycat";
+
+/// Download progress logging interval in bytes (50MB)
+const DOWNLOAD_PROGRESS_INTERVAL: u64 = 50_000_000;
 
 /// Error types for model operations
 #[derive(Debug, Clone)]
@@ -68,17 +72,28 @@ pub fn ensure_models_dir() -> Result<PathBuf, ModelError> {
 
 /// Download the model from HuggingFace using streaming
 /// This is an async function that streams the download to disk
+/// Uses atomic temp file + rename to prevent TOCTOU race conditions
 pub async fn download_model() -> Result<PathBuf, ModelError> {
     use futures_util::StreamExt;
+    use tauri_plugin_http::reqwest;
     use tokio::io::AsyncWriteExt;
+    use uuid::Uuid;
+
+    info!("Starting model download from {}", MODEL_URL);
 
     let models_dir = ensure_models_dir()?;
     let model_path = models_dir.join(MODEL_FILENAME);
 
     // If model already exists, return early
     if model_path.exists() {
+        info!("Model already exists at {:?}", model_path);
         return Ok(model_path);
     }
+
+    // Use unique temp file to avoid race conditions with concurrent downloads
+    let temp_filename = format!("{}.{}.tmp", MODEL_FILENAME, Uuid::new_v4());
+    let temp_path = models_dir.join(&temp_filename);
+    debug!("Downloading to temp file: {:?}", temp_path);
 
     // Create HTTP client and start download
     let client = reqwest::Client::new();
@@ -95,24 +110,79 @@ pub async fn download_model() -> Result<PathBuf, ModelError> {
         )));
     }
 
-    // Create file for writing
-    let mut file = tokio::fs::File::create(&model_path)
+    // Get content length for progress logging
+    let content_length = response.content_length();
+    if let Some(len) = content_length {
+        info!("Model size: {} MB", len / 1_000_000);
+    }
+
+    // Create temp file for writing
+    let mut file = tokio::fs::File::create(&temp_path)
         .await
         .map_err(|e| ModelError::IoError(e.to_string()))?;
 
-    // Stream the response body to file
+    // Stream the response body to file with progress logging
     let mut stream = response.bytes_stream();
+    let mut bytes_written: u64 = 0;
+    let mut last_progress_log: u64 = 0;
+
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| ModelError::NetworkError(e.to_string()))?;
+        let chunk = chunk.map_err(|e| {
+            ModelError::NetworkError(format!(
+                "Download failed after {} bytes: {}",
+                bytes_written, e
+            ))
+        })?;
         file.write_all(&chunk)
             .await
-            .map_err(|e| ModelError::IoError(e.to_string()))?;
+            .map_err(|e| {
+                ModelError::IoError(format!(
+                    "Write failed after {} bytes: {}",
+                    bytes_written, e
+                ))
+            })?;
+
+        bytes_written += chunk.len() as u64;
+
+        // Log progress at regular intervals
+        if bytes_written - last_progress_log >= DOWNLOAD_PROGRESS_INTERVAL {
+            if let Some(total) = content_length {
+                let percent = (bytes_written as f64 / total as f64) * 100.0;
+                info!("Download progress: {:.1}% ({} MB / {} MB)",
+                      percent, bytes_written / 1_000_000, total / 1_000_000);
+            } else {
+                info!("Downloaded {} MB", bytes_written / 1_000_000);
+            }
+            last_progress_log = bytes_written;
+        }
     }
 
     // Ensure all data is flushed to disk
     file.flush()
         .await
         .map_err(|e| ModelError::IoError(e.to_string()))?;
+    drop(file); // Close file before rename
+
+    debug!("Download complete, renaming temp file to final path");
+
+    // Atomic rename: if target already exists (race condition), that's fine - use it
+    match tokio::fs::rename(&temp_path, &model_path).await {
+        Ok(()) => {
+            info!("Model downloaded successfully to {:?}", model_path);
+        }
+        Err(e) => {
+            // Check if target now exists (another download completed first)
+            if model_path.exists() {
+                warn!("Model was downloaded by another process, using existing file");
+                // Clean up our temp file
+                let _ = tokio::fs::remove_file(&temp_path).await;
+            } else {
+                // Clean up temp file on error
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                return Err(ModelError::IoError(format!("Failed to rename temp file: {}", e)));
+            }
+        }
+    }
 
     Ok(model_path)
 }

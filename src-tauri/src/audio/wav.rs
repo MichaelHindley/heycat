@@ -14,6 +14,18 @@ pub enum WavEncodingError {
     InvalidInput(String),
 }
 
+impl std::fmt::Display for WavEncodingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WavEncodingError::IoError(msg) => write!(f, "I/O error: {}", msg),
+            WavEncodingError::EncodingError(msg) => write!(f, "Encoding error: {}", msg),
+            WavEncodingError::InvalidInput(msg) => write!(f, "Invalid input: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for WavEncodingError {}
+
 /// Convert a hound error to WavEncodingError
 #[cfg_attr(coverage_nightly, coverage(off))]
 fn hound_error(e: hound::Error) -> WavEncodingError {

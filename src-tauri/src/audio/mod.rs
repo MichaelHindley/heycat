@@ -54,6 +54,11 @@ pub const TARGET_SAMPLE_RATE: u32 = 16000;
 /// At 16kHz mono, this is approximately 38MB of f32 data.
 pub const MAX_BUFFER_SAMPLES: usize = 16000 * 60 * 10;
 
+/// Maximum resampling buffer size in samples (~3 seconds at 48kHz)
+/// This limits memory growth if resampling can't keep up with input rate.
+/// Typically source rates are 44.1kHz or 48kHz, so 3 seconds = ~144k samples.
+pub const MAX_RESAMPLE_BUFFER_SAMPLES: usize = 48000 * 3;
+
 /// State of the audio capture process
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureState {
@@ -82,6 +87,18 @@ pub enum AudioCaptureError {
     StreamError(String),
 }
 
+impl std::fmt::Display for AudioCaptureError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AudioCaptureError::NoDeviceAvailable => write!(f, "No audio input device available"),
+            AudioCaptureError::DeviceError(msg) => write!(f, "Audio device error: {}", msg),
+            AudioCaptureError::StreamError(msg) => write!(f, "Audio stream error: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for AudioCaptureError {}
+
 /// Reason why audio capture was stopped automatically
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum StopReason {
@@ -89,6 +106,10 @@ pub enum StopReason {
     BufferFull,
     /// Lock poisoning error in audio callback
     LockError,
+    /// Audio stream error (device disconnected, etc.)
+    StreamError,
+    /// Resample buffer overflow (resampling can't keep up)
+    ResampleOverflow,
 }
 
 /// Trait for audio capture backends (allows mocking in tests)

@@ -1,6 +1,7 @@
 // Action executor - dispatches commands to action implementations
 
-use crate::voice_commands::actions::{AppLauncherAction, TextInputAction};
+use crate::events::{command_events, CommandExecutedPayload, CommandFailedPayload};
+use crate::voice_commands::actions::{AppLauncherAction, TextInputAction, WorkflowAction};
 use crate::voice_commands::registry::{ActionType, CommandDefinition};
 use async_trait::async_trait;
 use serde::Serialize;
@@ -18,11 +19,82 @@ pub struct ActionResult {
     pub data: Option<serde_json::Value>,
 }
 
+/// Typed error codes for action execution failures
+///
+/// Using an enum instead of magic strings ensures:
+/// - Compile-time validation of error codes
+/// - Exhaustive matching in error handlers
+/// - Consistent naming across the codebase
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ActionErrorCode {
+    /// Missing required parameter
+    MissingParam,
+    /// Invalid parameter value
+    InvalidParameter,
+    /// Application not found
+    NotFound,
+    /// Permission denied (e.g., accessibility)
+    PermissionDenied,
+    /// General execution error
+    ExecutionError,
+    /// Failed to create event source
+    EventSourceError,
+    /// Nested workflows are not supported
+    NestedWorkflow,
+    /// Platform not supported for this action
+    UnsupportedPlatform,
+    /// Async task panicked
+    TaskPanic,
+    /// Character encoding error
+    EncodingError,
+    /// Keyboard event creation error
+    EventError,
+    /// Invalid application name
+    InvalidAppName,
+    /// Failed to open application
+    OpenFailed,
+    /// Failed to close application
+    CloseFailed,
+    /// Failed to parse workflow steps
+    ParseError,
+    /// Invalid action type in workflow
+    InvalidActionType,
+    /// A workflow step failed
+    StepFailed,
+}
+
+impl std::fmt::Display for ActionErrorCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Serialize to get the SCREAMING_SNAKE_CASE representation
+        let s = match self {
+            ActionErrorCode::MissingParam => "MISSING_PARAM",
+            ActionErrorCode::InvalidParameter => "INVALID_PARAMETER",
+            ActionErrorCode::NotFound => "NOT_FOUND",
+            ActionErrorCode::PermissionDenied => "PERMISSION_DENIED",
+            ActionErrorCode::ExecutionError => "EXECUTION_ERROR",
+            ActionErrorCode::EventSourceError => "EVENT_SOURCE_ERROR",
+            ActionErrorCode::NestedWorkflow => "NESTED_WORKFLOW",
+            ActionErrorCode::UnsupportedPlatform => "UNSUPPORTED_PLATFORM",
+            ActionErrorCode::TaskPanic => "TASK_PANIC",
+            ActionErrorCode::EncodingError => "ENCODING_ERROR",
+            ActionErrorCode::EventError => "EVENT_ERROR",
+            ActionErrorCode::InvalidAppName => "INVALID_APP_NAME",
+            ActionErrorCode::OpenFailed => "OPEN_FAILED",
+            ActionErrorCode::CloseFailed => "CLOSE_FAILED",
+            ActionErrorCode::ParseError => "PARSE_ERROR",
+            ActionErrorCode::InvalidActionType => "INVALID_ACTION_TYPE",
+            ActionErrorCode::StepFailed => "STEP_FAILED",
+        };
+        write!(f, "{}", s)
+    }
+}
+
 /// Error during action execution
 #[derive(Debug, Clone, Serialize)]
 pub struct ActionError {
-    /// Error code for categorization
-    pub code: String,
+    /// Typed error code for categorization
+    pub code: ActionErrorCode,
     /// Human-readable error message
     pub message: String,
 }
@@ -42,27 +114,7 @@ pub trait Action: Send + Sync {
     async fn execute(&self, parameters: &HashMap<String, String>) -> Result<ActionResult, ActionError>;
 }
 
-/// Event names for command execution
-pub mod event_names {
-    pub const COMMAND_EXECUTED: &str = "command_executed";
-    pub const COMMAND_FAILED: &str = "command_failed";
-}
-
-/// Payload for command_executed event
-#[derive(Debug, Clone, Serialize)]
-pub struct CommandExecutedPayload {
-    pub command_id: String,
-    pub trigger: String,
-    pub result: ActionResult,
-}
-
-/// Payload for command_failed event
-#[derive(Debug, Clone, Serialize)]
-pub struct CommandFailedPayload {
-    pub command_id: String,
-    pub trigger: String,
-    pub error: ActionError,
-}
+// CommandExecutedPayload and CommandFailedPayload are imported from events.rs
 
 
 /// Stub implementation for SystemControl action
@@ -72,7 +124,7 @@ pub struct SystemControlAction;
 impl Action for SystemControlAction {
     async fn execute(&self, parameters: &HashMap<String, String>) -> Result<ActionResult, ActionError> {
         let control = parameters.get("control").ok_or_else(|| ActionError {
-            code: "MISSING_PARAM".to_string(),
+            code: ActionErrorCode::MissingParam,
             message: "Missing 'control' parameter".to_string(),
         })?;
 
@@ -84,24 +136,7 @@ impl Action for SystemControlAction {
     }
 }
 
-/// Stub implementation for Workflow action
-pub struct WorkflowAction;
-
-#[async_trait]
-impl Action for WorkflowAction {
-    async fn execute(&self, parameters: &HashMap<String, String>) -> Result<ActionResult, ActionError> {
-        let workflow = parameters.get("workflow").ok_or_else(|| ActionError {
-            code: "MISSING_PARAM".to_string(),
-            message: "Missing 'workflow' parameter".to_string(),
-        })?;
-
-        // Stub implementation - will be replaced by workflow-action spec
-        Ok(ActionResult {
-            message: format!("Would execute workflow: {}", workflow),
-            data: None,
-        })
-    }
-}
+// WorkflowAction is imported from actions::workflow and used in ActionDispatcher
 
 /// Stub implementation for Custom action
 pub struct CustomAction;
@@ -110,7 +145,7 @@ pub struct CustomAction;
 impl Action for CustomAction {
     async fn execute(&self, parameters: &HashMap<String, String>) -> Result<ActionResult, ActionError> {
         let script = parameters.get("script").ok_or_else(|| ActionError {
-            code: "MISSING_PARAM".to_string(),
+            code: ActionErrorCode::MissingParam,
             message: "Missing 'script' parameter".to_string(),
         })?;
 
@@ -118,6 +153,20 @@ impl Action for CustomAction {
         Ok(ActionResult {
             message: format!("Would execute custom script: {}", script),
             data: None,
+        })
+    }
+}
+
+/// Stub workflow action used to break circular dependency in ActionDispatcher
+/// This is used in the base dispatcher that WorkflowAction receives
+struct StubWorkflowAction;
+
+#[async_trait]
+impl Action for StubWorkflowAction {
+    async fn execute(&self, _parameters: &HashMap<String, String>) -> Result<ActionResult, ActionError> {
+        Err(ActionError {
+            code: ActionErrorCode::NestedWorkflow,
+            message: "Nested workflows are not supported".to_string(),
         })
     }
 }
@@ -139,13 +188,35 @@ impl Default for ActionDispatcher {
 
 impl ActionDispatcher {
     /// Create a new dispatcher with default action implementations
+    ///
+    /// Note: For workflow execution, a base dispatcher is created first to avoid
+    /// circular dependencies. This means deeply nested workflows (workflow within
+    /// workflow) will use simplified action routing.
     pub fn new() -> Self {
+        // Create base actions that don't need the dispatcher
+        let open_app: Arc<dyn Action> = Arc::new(AppLauncherAction::new());
+        let type_text: Arc<dyn Action> = Arc::new(TextInputAction::new());
+        let system_control: Arc<dyn Action> = Arc::new(SystemControlAction);
+        let custom: Arc<dyn Action> = Arc::new(CustomAction);
+
+        // Create a base dispatcher for workflow execution (with stub workflow to break circular dep)
+        let base_dispatcher = Arc::new(Self {
+            open_app: open_app.clone(),
+            type_text: type_text.clone(),
+            system_control: system_control.clone(),
+            workflow: Arc::new(StubWorkflowAction),
+            custom: custom.clone(),
+        });
+
+        // Create the real workflow action with the base dispatcher
+        let workflow: Arc<dyn Action> = Arc::new(WorkflowAction::new(base_dispatcher));
+
         Self {
-            open_app: Arc::new(AppLauncherAction::new()),
-            type_text: Arc::new(TextInputAction::new()),
-            system_control: Arc::new(SystemControlAction),
-            workflow: Arc::new(WorkflowAction),
-            custom: Arc::new(CustomAction),
+            open_app,
+            type_text,
+            system_control,
+            workflow,
+            custom,
         }
     }
 
@@ -193,7 +264,7 @@ pub fn execute_command_async(
     let command_id = command.id;
     let trigger = command.trigger.clone();
 
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         let result = dispatcher.execute(&command).await;
 
         match result {
@@ -201,17 +272,18 @@ pub fn execute_command_async(
                 let payload = CommandExecutedPayload {
                     command_id: command_id.to_string(),
                     trigger,
-                    result: action_result,
+                    message: action_result.message,
                 };
-                let _ = app_handle.emit(event_names::COMMAND_EXECUTED, payload);
+                let _ = app_handle.emit(command_events::COMMAND_EXECUTED, payload);
             }
             Err(action_error) => {
                 let payload = CommandFailedPayload {
                     command_id: command_id.to_string(),
                     trigger,
-                    error: action_error,
+                    error_code: action_error.code.to_string(),
+                    error_message: action_error.message,
                 };
-                let _ = app_handle.emit(event_names::COMMAND_FAILED, payload);
+                let _ = app_handle.emit(command_events::COMMAND_FAILED, payload);
             }
         }
     });
@@ -261,17 +333,18 @@ pub async fn test_command(
             let payload = CommandExecutedPayload {
                 command_id: command.id.to_string(),
                 trigger: command.trigger.clone(),
-                result: action_result.clone(),
+                message: action_result.message.clone(),
             };
-            let _ = app_handle.emit(event_names::COMMAND_EXECUTED, payload);
+            let _ = app_handle.emit(command_events::COMMAND_EXECUTED, payload);
         }
         Err(action_error) => {
             let payload = CommandFailedPayload {
                 command_id: command.id.to_string(),
                 trigger: command.trigger.clone(),
-                error: action_error.clone(),
+                error_code: action_error.code.to_string(),
+                error_message: action_error.message.clone(),
             };
-            let _ = app_handle.emit(event_names::COMMAND_FAILED, payload);
+            let _ = app_handle.emit(command_events::COMMAND_FAILED, payload);
         }
     }
 

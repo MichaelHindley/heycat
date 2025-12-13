@@ -1,6 +1,6 @@
 // Workflow action - executes multi-step command sequences
 
-use crate::voice_commands::executor::{Action, ActionError, ActionResult, ActionDispatcher};
+use crate::voice_commands::executor::{Action, ActionError, ActionErrorCode, ActionResult, ActionDispatcher};
 use crate::voice_commands::registry::ActionType;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -43,32 +43,18 @@ impl WorkflowAction {
     }
 }
 
-fn parse_action_type(s: &str) -> Result<ActionType, ActionError> {
-    match s {
-        "open_app" => Ok(ActionType::OpenApp),
-        "type_text" => Ok(ActionType::TypeText),
-        "system_control" => Ok(ActionType::SystemControl),
-        "workflow" => Ok(ActionType::Workflow),
-        "custom" => Ok(ActionType::Custom),
-        _ => Err(ActionError {
-            code: "INVALID_ACTION_TYPE".to_string(),
-            message: format!("Unknown action type: {}", s),
-        }),
-    }
-}
-
 #[async_trait]
 impl Action for WorkflowAction {
     async fn execute(&self, parameters: &HashMap<String, String>) -> Result<ActionResult, ActionError> {
         // Get workflow steps from parameters
         let steps_json = parameters.get("steps").ok_or_else(|| ActionError {
-            code: "INVALID_PARAMETER".to_string(),
+            code: ActionErrorCode::InvalidParameter,
             message: "Missing 'steps' parameter".to_string(),
         })?;
 
         // Parse steps from JSON
         let steps: Vec<WorkflowStep> = serde_json::from_str(steps_json).map_err(|e| ActionError {
-            code: "PARSE_ERROR".to_string(),
+            code: ActionErrorCode::ParseError,
             message: format!("Failed to parse workflow steps: {}", e),
         })?;
 
@@ -93,7 +79,10 @@ impl Action for WorkflowAction {
 
         // Execute each step sequentially
         for (index, step) in steps.iter().enumerate() {
-            let action_type = parse_action_type(&step.action_type)?;
+            let action_type: ActionType = step.action_type.parse().map_err(|e: String| ActionError {
+                code: ActionErrorCode::InvalidActionType,
+                message: e,
+            })?;
             let action = self.dispatcher.get_action(&action_type);
 
             // Execute the step
@@ -110,7 +99,7 @@ impl Action for WorkflowAction {
                 Err(error) => {
                     // Stop on first error
                     return Err(ActionError {
-                        code: "STEP_FAILED".to_string(),
+                        code: ActionErrorCode::StepFailed,
                         message: format!(
                             "Workflow failed at step {} ({}): {}",
                             index + 1,

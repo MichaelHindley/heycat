@@ -61,6 +61,7 @@ impl AudioThreadHandle {
     ///
     /// Returns the actual sample rate of the audio device on success.
     /// Blocks until the audio thread responds.
+    #[must_use = "this returns a Result that should be handled"]
     pub fn start(&self, buffer: AudioBuffer) -> Result<u32, AudioThreadError> {
         let (response_tx, response_rx) = mpsc::channel();
         self.sender
@@ -75,6 +76,7 @@ impl AudioThreadHandle {
     }
 
     /// Stop audio capture and return the stop result
+    #[must_use = "this returns a Result that should be handled"]
     pub fn stop(&self) -> Result<StopResult, AudioThreadError> {
         let (response_tx, response_rx) = mpsc::channel();
         self.sender
@@ -119,6 +121,24 @@ pub enum AudioThreadError {
     ThreadDisconnected,
     /// Audio capture failed
     CaptureError(AudioCaptureError),
+}
+
+impl std::fmt::Display for AudioThreadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AudioThreadError::ThreadDisconnected => write!(f, "Audio thread disconnected"),
+            AudioThreadError::CaptureError(e) => write!(f, "Audio capture error: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for AudioThreadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            AudioThreadError::CaptureError(e) => Some(e),
+            _ => None,
+        }
+    }
 }
 
 /// Main loop for the audio thread

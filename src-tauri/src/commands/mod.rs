@@ -20,8 +20,18 @@ use crate::events::{
 };
 use crate::audio::AudioThreadHandle;
 use crate::recording::{AudioData, RecordingManager, RecordingMetadata};
+use crate::warn;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, State};
+
+/// Helper macro to emit events with error logging
+macro_rules! emit_or_warn {
+    ($handle:expr, $event:expr, $payload:expr) => {
+        if let Err(e) = $handle.emit($event, $payload) {
+            warn!("Failed to emit event '{}': {}", $event, e);
+        }
+    };
+}
 
 /// Type alias for audio thread state
 pub type AudioThreadState = Arc<AudioThreadHandle>;
@@ -42,61 +52,47 @@ impl TauriEventEmitter {
 
 impl RecordingEventEmitter for TauriEventEmitter {
     fn emit_recording_started(&self, payload: RecordingStartedPayload) {
-        let _ = self.app_handle.emit(event_names::RECORDING_STARTED, payload);
+        emit_or_warn!(self.app_handle, event_names::RECORDING_STARTED, payload);
     }
 
     fn emit_recording_stopped(&self, payload: RecordingStoppedPayload) {
-        let _ = self.app_handle.emit(event_names::RECORDING_STOPPED, payload);
+        emit_or_warn!(self.app_handle, event_names::RECORDING_STOPPED, payload);
     }
 
     fn emit_recording_error(&self, payload: RecordingErrorPayload) {
-        let _ = self.app_handle.emit(event_names::RECORDING_ERROR, payload);
+        emit_or_warn!(self.app_handle, event_names::RECORDING_ERROR, payload);
     }
 }
 
 impl TranscriptionEventEmitter for TauriEventEmitter {
     fn emit_transcription_started(&self, payload: TranscriptionStartedPayload) {
-        let _ = self
-            .app_handle
-            .emit(event_names::TRANSCRIPTION_STARTED, payload);
+        emit_or_warn!(self.app_handle, event_names::TRANSCRIPTION_STARTED, payload);
     }
 
     fn emit_transcription_completed(&self, payload: TranscriptionCompletedPayload) {
-        let _ = self
-            .app_handle
-            .emit(event_names::TRANSCRIPTION_COMPLETED, payload);
+        emit_or_warn!(self.app_handle, event_names::TRANSCRIPTION_COMPLETED, payload);
     }
 
     fn emit_transcription_error(&self, payload: TranscriptionErrorPayload) {
-        let _ = self
-            .app_handle
-            .emit(event_names::TRANSCRIPTION_ERROR, payload);
+        emit_or_warn!(self.app_handle, event_names::TRANSCRIPTION_ERROR, payload);
     }
 }
 
 impl CommandEventEmitter for TauriEventEmitter {
     fn emit_command_matched(&self, payload: CommandMatchedPayload) {
-        let _ = self
-            .app_handle
-            .emit(command_events::COMMAND_MATCHED, payload);
+        emit_or_warn!(self.app_handle, command_events::COMMAND_MATCHED, payload);
     }
 
     fn emit_command_executed(&self, payload: CommandExecutedPayload) {
-        let _ = self
-            .app_handle
-            .emit(command_events::COMMAND_EXECUTED, payload);
+        emit_or_warn!(self.app_handle, command_events::COMMAND_EXECUTED, payload);
     }
 
     fn emit_command_failed(&self, payload: CommandFailedPayload) {
-        let _ = self
-            .app_handle
-            .emit(command_events::COMMAND_FAILED, payload);
+        emit_or_warn!(self.app_handle, command_events::COMMAND_FAILED, payload);
     }
 
     fn emit_command_ambiguous(&self, payload: CommandAmbiguousPayload) {
-        let _ = self
-            .app_handle
-            .emit(command_events::COMMAND_AMBIGUOUS, payload);
+        emit_or_warn!(self.app_handle, command_events::COMMAND_AMBIGUOUS, payload);
     }
 }
 
@@ -108,16 +104,23 @@ pub fn start_recording(
     audio_thread: State<'_, AudioThreadState>,
 ) -> Result<(), String> {
     // Check model availability before starting recording
-    let model_available = crate::model::check_model_exists().unwrap_or(false);
+    let model_available = match crate::model::check_model_exists() {
+        Ok(available) => available,
+        Err(e) => {
+            warn!("Failed to check model status: {}", e);
+            false
+        }
+    };
     let result = start_recording_impl(state.as_ref(), Some(audio_thread.as_ref()), model_available);
 
     // Emit event on success for frontend state sync
     if result.is_ok() {
-        let _ = app_handle.emit(
+        emit_or_warn!(
+            app_handle,
             event_names::RECORDING_STARTED,
             RecordingStartedPayload {
                 timestamp: crate::events::current_timestamp(),
-            },
+            }
         );
     }
 
@@ -135,11 +138,12 @@ pub fn stop_recording(
 
     // Emit event on success for frontend state sync
     if let Ok(ref metadata) = result {
-        let _ = app_handle.emit(
+        emit_or_warn!(
+            app_handle,
             event_names::RECORDING_STOPPED,
             RecordingStoppedPayload {
                 metadata: metadata.clone(),
-            },
+            }
         );
     }
 
