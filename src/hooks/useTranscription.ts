@@ -17,10 +17,18 @@ interface TranscriptionErrorPayload {
   error: string;
 }
 
+/** Payload for transcription_partial event (streaming mode) */
+interface TranscriptionPartialPayload {
+  text: string;
+  is_final: boolean;
+}
+
 /** Return type of the useTranscription hook */
 export interface UseTranscriptionResult {
   isTranscribing: boolean;
   transcribedText: string | null;
+  /** Partial text from streaming transcription (EOU mode) */
+  partialText: string | null;
   error: string | null;
   durationMs: number | null;
 }
@@ -32,6 +40,7 @@ export interface UseTranscriptionResult {
 export function useTranscription(): UseTranscriptionResult {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [transcribedText, setTranscribedText] = useState<string | null>(null);
+  const [partialText, setPartialText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [durationMs, setDurationMs] = useState<number | null>(null);
 
@@ -46,6 +55,7 @@ export function useTranscription(): UseTranscriptionResult {
           setIsTranscribing(true);
           setError(null);
           setTranscribedText(null);
+          setPartialText(null);
           setDurationMs(null);
         }
       );
@@ -70,6 +80,17 @@ export function useTranscription(): UseTranscriptionResult {
         }
       );
       unlistenFns.push(unlistenError);
+
+      const unlistenPartial = await listen<TranscriptionPartialPayload>(
+        "transcription_partial",
+        (event) => {
+          setPartialText(event.payload.text);
+          if (event.payload.is_final) {
+            setTranscribedText(event.payload.text);
+          }
+        }
+      );
+      unlistenFns.push(unlistenPartial);
     };
 
     setupListeners();
@@ -85,6 +106,7 @@ export function useTranscription(): UseTranscriptionResult {
   return {
     isTranscribing,
     transcribedText,
+    partialText,
     error,
     durationMs,
   };
