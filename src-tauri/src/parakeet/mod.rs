@@ -6,5 +6,5 @@ mod streaming;
 mod types;
 
 pub use manager::TranscriptionManager;
-pub use streaming::StreamingTranscriber;
+pub use streaming::{StreamingState, StreamingTranscriber, CHUNK_SIZE};
 pub use types::{TranscriptionError, TranscriptionResult, TranscriptionService, TranscriptionState};

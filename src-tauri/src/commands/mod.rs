@@ -16,7 +16,7 @@ use crate::events::{
     CommandExecutedPayload, CommandFailedPayload, CommandMatchedPayload, RecordingErrorPayload,
     RecordingEventEmitter, RecordingStartedPayload, RecordingStoppedPayload,
     TranscriptionCompletedPayload, TranscriptionErrorPayload, TranscriptionEventEmitter,
-    TranscriptionStartedPayload,
+    TranscriptionPartialPayload, TranscriptionStartedPayload,
 };
 use crate::audio::AudioThreadHandle;
 use crate::recording::{AudioData, RecordingManager, RecordingMetadata};
@@ -75,6 +75,10 @@ impl TranscriptionEventEmitter for TauriEventEmitter {
 
     fn emit_transcription_error(&self, payload: TranscriptionErrorPayload) {
         emit_or_warn!(self.app_handle, event_names::TRANSCRIPTION_ERROR, payload);
+    }
+
+    fn emit_transcription_partial(&self, payload: TranscriptionPartialPayload) {
+        emit_or_warn!(self.app_handle, event_names::TRANSCRIPTION_PARTIAL, payload);
     }
 }
 

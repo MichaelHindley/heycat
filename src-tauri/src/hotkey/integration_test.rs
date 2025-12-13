@@ -4,7 +4,8 @@ use super::integration::{HotkeyIntegration, DEBOUNCE_DURATION_MS};
 use crate::events::{
     CommandAmbiguousPayload, CommandExecutedPayload, CommandFailedPayload, CommandMatchedPayload,
     RecordingErrorPayload, RecordingStartedPayload, RecordingStoppedPayload,
-    TranscriptionCompletedPayload, TranscriptionErrorPayload, TranscriptionStartedPayload,
+    TranscriptionCompletedPayload, TranscriptionErrorPayload, TranscriptionPartialPayload,
+    TranscriptionStartedPayload,
 };
 use crate::recording::{RecordingManager, RecordingState};
 use std::sync::{Arc, Mutex};
@@ -20,6 +21,7 @@ struct MockEmitter {
     transcription_started: Arc<Mutex<Vec<TranscriptionStartedPayload>>>,
     transcription_completed: Arc<Mutex<Vec<TranscriptionCompletedPayload>>>,
     transcription_errors: Arc<Mutex<Vec<TranscriptionErrorPayload>>>,
+    transcription_partials: Arc<Mutex<Vec<TranscriptionPartialPayload>>>,
     command_matched: Arc<Mutex<Vec<CommandMatchedPayload>>>,
     command_executed: Arc<Mutex<Vec<CommandExecutedPayload>>>,
     command_failed: Arc<Mutex<Vec<CommandFailedPayload>>>,
@@ -65,6 +67,10 @@ impl crate::events::TranscriptionEventEmitter for MockEmitter {
 
     fn emit_transcription_error(&self, payload: TranscriptionErrorPayload) {
         self.transcription_errors.lock().unwrap().push(payload);
+    }
+
+    fn emit_transcription_partial(&self, payload: TranscriptionPartialPayload) {
+        self.transcription_partials.lock().unwrap().push(payload);
     }
 }
 

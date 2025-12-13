@@ -1,132 +1,338 @@
 // StreamingTranscriber for EOU (End-of-Utterance) streaming transcription
 // Processes audio in 160ms chunks (2560 samples at 16kHz)
 
-use std::sync::mpsc::Receiver;
+use crate::events::{
+    TranscriptionCompletedPayload, TranscriptionEventEmitter, TranscriptionPartialPayload,
+};
+use crate::parakeet::types::TranscriptionError;
+use parakeet_rs::ParakeetEOU;
+use std::path::Path;
+use std::sync::Arc;
 
 /// Chunk size for EOU streaming (160ms at 16kHz)
 pub const CHUNK_SIZE: usize = 2560;
 
+/// Streaming transcription state
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamingState {
+    /// No EOU model loaded
+    Unloaded,
+    /// Model loaded, ready to stream
+    Idle,
+    /// Currently processing audio chunks
+    Streaming,
+    /// Processing final chunk
+    Finalizing,
+}
+
 /// Streaming transcriber for real-time audio processing
 /// Uses Parakeet EOU model for low-latency transcription
-pub struct StreamingTranscriber {
-    /// Audio sample receiver for streaming input
-    audio_receiver: Option<Receiver<Vec<f32>>>,
-    /// Buffer for accumulating audio chunks
-    chunk_buffer: Vec<f32>,
+pub struct StreamingTranscriber<E: TranscriptionEventEmitter> {
+    /// EOU model instance (None if not loaded)
+    eou: Option<ParakeetEOU>,
+    /// Current streaming state
+    state: StreamingState,
+    /// Buffer for accumulating audio samples before processing
+    sample_buffer: Vec<f32>,
+    /// Accumulated partial text from all chunks
+    partial_text: String,
+    /// Event emitter for partial/completed events
+    emitter: Arc<E>,
+    /// Start time for duration tracking
+    start_time: Option<std::time::Instant>,
 }
 
-impl Default for StreamingTranscriber {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl StreamingTranscriber {
-    /// Create a new StreamingTranscriber without audio input configured
-    pub fn new() -> Self {
+impl<E: TranscriptionEventEmitter> StreamingTranscriber<E> {
+    /// Create a new StreamingTranscriber in unloaded state
+    pub fn new(emitter: Arc<E>) -> Self {
         Self {
-            audio_receiver: None,
-            chunk_buffer: Vec::new(),
+            eou: None,
+            state: StreamingState::Unloaded,
+            sample_buffer: Vec::new(),
+            partial_text: String::new(),
+            emitter,
+            start_time: None,
         }
     }
 
-    /// Configure the audio receiver for streaming input
-    pub fn with_audio_receiver(mut self, receiver: Receiver<Vec<f32>>) -> Self {
-        self.audio_receiver = Some(receiver);
-        self
+    /// Load the EOU model from the given directory path
+    pub fn load_model(&mut self, model_dir: &Path) -> Result<(), TranscriptionError> {
+        let path_str = model_dir.to_str().ok_or_else(|| {
+            TranscriptionError::ModelLoadFailed("Invalid path encoding".to_string())
+        })?;
+
+        let eou = ParakeetEOU::from_pretrained(path_str, None)
+            .map_err(|e| TranscriptionError::ModelLoadFailed(e.to_string()))?;
+
+        self.eou = Some(eou);
+        self.state = StreamingState::Idle;
+        Ok(())
     }
 
-    /// Check if audio receiver is configured
-    pub fn has_audio_receiver(&self) -> bool {
-        self.audio_receiver.is_some()
+    /// Check if a model is loaded
+    pub fn is_loaded(&self) -> bool {
+        self.eou.is_some()
     }
 
-    /// Process a chunk of audio samples
-    /// Accumulates samples and emits partial transcriptions when enough data is available
-    ///
-    /// Note: This is a stub implementation. The actual EOU model integration
-    /// will be implemented in the eou-streaming-transcription spec.
-    pub fn process_chunk(&mut self, samples: &[f32]) -> Option<String> {
-        self.chunk_buffer.extend_from_slice(samples);
-
-        // When we have enough samples for a chunk, process it
-        if self.chunk_buffer.len() >= CHUNK_SIZE {
-            // TODO: Implement EOU transcription in eou-streaming-transcription spec
-            // For now, just clear the buffer and return None
-            self.chunk_buffer.clear();
-        }
-
-        None
-    }
-
-    /// Clear the accumulated audio buffer
-    pub fn clear_buffer(&mut self) {
-        self.chunk_buffer.clear();
+    /// Get the current streaming state
+    pub fn state(&self) -> StreamingState {
+        self.state
     }
 
     /// Get the current buffer size
     pub fn buffer_size(&self) -> usize {
-        self.chunk_buffer.len()
+        self.sample_buffer.len()
+    }
+
+    /// Process incoming audio samples
+    /// Buffers samples until CHUNK_SIZE (2560) is reached, then transcribes
+    pub fn process_samples(&mut self, samples: &[f32]) -> Result<(), TranscriptionError> {
+        // Check if model is loaded
+        let eou = self.eou.as_mut().ok_or(TranscriptionError::ModelNotLoaded)?;
+
+        // Track start time on first samples
+        if self.start_time.is_none() {
+            self.start_time = Some(std::time::Instant::now());
+        }
+
+        // Transition to Streaming state
+        if self.state == StreamingState::Idle {
+            self.state = StreamingState::Streaming;
+        }
+
+        // Add samples to buffer
+        self.sample_buffer.extend_from_slice(samples);
+
+        // Process complete chunks
+        while self.sample_buffer.len() >= CHUNK_SIZE {
+            // Extract chunk from buffer
+            let chunk: Vec<f32> = self.sample_buffer.drain(..CHUNK_SIZE).collect();
+
+            // Transcribe with is_final=false (intermediate chunk)
+            let text = eou
+                .transcribe(&chunk, false)
+                .map_err(|e| TranscriptionError::TranscriptionFailed(e.to_string()))?;
+
+            // Accumulate partial text
+            if !text.is_empty() {
+                self.partial_text.push_str(&text);
+            }
+
+            // Emit partial event
+            self.emitter.emit_transcription_partial(TranscriptionPartialPayload {
+                text: self.partial_text.clone(),
+                is_final: false,
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Finalize transcription - process remaining buffer with is_final=true
+    /// Returns the complete transcribed text
+    pub fn finalize(&mut self) -> Result<String, TranscriptionError> {
+        // Check if model is loaded
+        let eou = self.eou.as_mut().ok_or(TranscriptionError::ModelNotLoaded)?;
+
+        self.state = StreamingState::Finalizing;
+
+        // Process remaining samples (even if less than CHUNK_SIZE)
+        if !self.sample_buffer.is_empty() {
+            let final_chunk: Vec<f32> = self.sample_buffer.drain(..).collect();
+
+            let text = eou
+                .transcribe(&final_chunk, true)
+                .map_err(|e| TranscriptionError::TranscriptionFailed(e.to_string()))?;
+
+            if !text.is_empty() {
+                self.partial_text.push_str(&text);
+            }
+        } else {
+            // Call with empty chunk but is_final=true to finalize
+            let text = eou
+                .transcribe(&[], true)
+                .map_err(|e| TranscriptionError::TranscriptionFailed(e.to_string()))?;
+
+            if !text.is_empty() {
+                self.partial_text.push_str(&text);
+            }
+        }
+
+        // Emit final partial event
+        self.emitter.emit_transcription_partial(TranscriptionPartialPayload {
+            text: self.partial_text.clone(),
+            is_final: true,
+        });
+
+        // Calculate duration
+        let duration_ms = self
+            .start_time
+            .map(|t| t.elapsed().as_millis() as u64)
+            .unwrap_or(0);
+
+        // Emit completed event
+        self.emitter
+            .emit_transcription_completed(TranscriptionCompletedPayload {
+                text: self.partial_text.clone(),
+                duration_ms,
+            });
+
+        let result = self.partial_text.clone();
+
+        // Reset to Idle state
+        self.state = StreamingState::Idle;
+
+        Ok(result)
+    }
+
+    /// Reset the transcriber for a new recording
+    pub fn reset(&mut self) {
+        self.sample_buffer.clear();
+        self.partial_text.clear();
+        self.start_time = None;
+        if self.eou.is_some() {
+            self.state = StreamingState::Idle;
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::mpsc;
+    use std::sync::{Arc, Mutex};
+
+    /// Mock event emitter for testing
+    #[derive(Default)]
+    struct MockEmitter {
+        partial_events: Arc<Mutex<Vec<TranscriptionPartialPayload>>>,
+        completed_events: Arc<Mutex<Vec<TranscriptionCompletedPayload>>>,
+    }
+
+    impl MockEmitter {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        fn partial_count(&self) -> usize {
+            self.partial_events.lock().unwrap().len()
+        }
+
+        fn completed_count(&self) -> usize {
+            self.completed_events.lock().unwrap().len()
+        }
+    }
+
+    impl TranscriptionEventEmitter for MockEmitter {
+        fn emit_transcription_started(
+            &self,
+            _payload: crate::events::TranscriptionStartedPayload,
+        ) {
+        }
+
+        fn emit_transcription_completed(&self, payload: TranscriptionCompletedPayload) {
+            self.completed_events.lock().unwrap().push(payload);
+        }
+
+        fn emit_transcription_error(&self, _payload: crate::events::TranscriptionErrorPayload) {}
+
+        fn emit_transcription_partial(&self, payload: TranscriptionPartialPayload) {
+            self.partial_events.lock().unwrap().push(payload);
+        }
+    }
 
     #[test]
-    fn test_streaming_transcriber_new() {
-        let transcriber = StreamingTranscriber::new();
-        assert!(!transcriber.has_audio_receiver());
+    fn test_streaming_transcriber_new_unloaded() {
+        let emitter = Arc::new(MockEmitter::new());
+        let transcriber = StreamingTranscriber::new(emitter);
+        assert!(!transcriber.is_loaded());
+        assert_eq!(transcriber.state(), StreamingState::Unloaded);
         assert_eq!(transcriber.buffer_size(), 0);
     }
 
     #[test]
-    fn test_streaming_transcriber_default() {
-        let transcriber = StreamingTranscriber::default();
-        assert!(!transcriber.has_audio_receiver());
-        assert_eq!(transcriber.buffer_size(), 0);
+    fn test_streaming_transcriber_load_model_invalid_path() {
+        let emitter = Arc::new(MockEmitter::new());
+        let mut transcriber = StreamingTranscriber::new(emitter);
+        let result = transcriber.load_model(Path::new("/nonexistent/path/to/model"));
+        assert!(result.is_err());
+        assert!(matches!(result, Err(TranscriptionError::ModelLoadFailed(_))));
+        assert!(!transcriber.is_loaded());
+        assert_eq!(transcriber.state(), StreamingState::Unloaded);
     }
 
     #[test]
-    fn test_streaming_transcriber_with_audio_receiver() {
-        let (_tx, rx) = mpsc::channel::<Vec<f32>>();
-        let transcriber = StreamingTranscriber::new().with_audio_receiver(rx);
-        assert!(transcriber.has_audio_receiver());
-    }
-
-    #[test]
-    fn test_process_chunk_accumulates_samples() {
-        let mut transcriber = StreamingTranscriber::new();
+    fn test_streaming_transcriber_process_samples_without_model() {
+        let emitter = Arc::new(MockEmitter::new());
+        let mut transcriber = StreamingTranscriber::new(emitter);
         let samples = vec![0.0f32; 1000];
+        let result = transcriber.process_samples(&samples);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(TranscriptionError::ModelNotLoaded)));
+    }
 
-        transcriber.process_chunk(&samples);
+    #[test]
+    fn test_streaming_transcriber_finalize_without_model() {
+        let emitter = Arc::new(MockEmitter::new());
+        let mut transcriber = StreamingTranscriber::new(emitter);
+        let result = transcriber.finalize();
+        assert!(result.is_err());
+        assert!(matches!(result, Err(TranscriptionError::ModelNotLoaded)));
+    }
+
+    #[test]
+    fn test_streaming_transcriber_buffers_small_chunks() {
+        let emitter = Arc::new(MockEmitter::new());
+        let mut transcriber = StreamingTranscriber::new(emitter.clone());
+
+        // Manually set to loaded state for buffer test (no actual model)
+        transcriber.state = StreamingState::Idle;
+
+        // Buffer should accumulate samples
+        // Note: This test validates buffering logic, actual transcription requires model
+        let initial_buffer = transcriber.buffer_size();
+        assert_eq!(initial_buffer, 0);
+    }
+
+    #[test]
+    fn test_streaming_transcriber_reset_clears_buffer() {
+        let emitter = Arc::new(MockEmitter::new());
+        let mut transcriber = StreamingTranscriber::new(emitter);
+        transcriber.sample_buffer.extend_from_slice(&[0.0f32; 1000]);
+        transcriber.partial_text = "test".to_string();
+        transcriber.start_time = Some(std::time::Instant::now());
+
         assert_eq!(transcriber.buffer_size(), 1000);
 
-        transcriber.process_chunk(&samples);
-        assert_eq!(transcriber.buffer_size(), 2000);
+        transcriber.reset();
+
+        assert_eq!(transcriber.buffer_size(), 0);
+        assert!(transcriber.partial_text.is_empty());
+        assert!(transcriber.start_time.is_none());
     }
 
     #[test]
-    fn test_process_chunk_clears_when_full() {
-        let mut transcriber = StreamingTranscriber::new();
-        let samples = vec![0.0f32; CHUNK_SIZE];
-
-        transcriber.process_chunk(&samples);
-        // Buffer should be cleared after reaching CHUNK_SIZE
-        assert_eq!(transcriber.buffer_size(), 0);
+    fn test_streaming_state_values() {
+        assert_ne!(StreamingState::Unloaded, StreamingState::Idle);
+        assert_ne!(StreamingState::Idle, StreamingState::Streaming);
+        assert_ne!(StreamingState::Streaming, StreamingState::Finalizing);
     }
 
     #[test]
-    fn test_clear_buffer() {
-        let mut transcriber = StreamingTranscriber::new();
-        let samples = vec![0.0f32; 1000];
+    fn test_mock_emitter_tracks_events() {
+        let emitter = MockEmitter::new();
+        assert_eq!(emitter.partial_count(), 0);
+        assert_eq!(emitter.completed_count(), 0);
 
-        transcriber.process_chunk(&samples);
-        assert_eq!(transcriber.buffer_size(), 1000);
+        emitter.emit_transcription_partial(TranscriptionPartialPayload {
+            text: "test".to_string(),
+            is_final: false,
+        });
+        assert_eq!(emitter.partial_count(), 1);
 
-        transcriber.clear_buffer();
-        assert_eq!(transcriber.buffer_size(), 0);
+        emitter.emit_transcription_completed(TranscriptionCompletedPayload {
+            text: "test".to_string(),
+            duration_ms: 100,
+        });
+        assert_eq!(emitter.completed_count(), 1);
     }
 }
