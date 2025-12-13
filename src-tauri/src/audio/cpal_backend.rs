@@ -9,7 +9,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleRate, Stream};
 use rubato::{FftFixedIn, Resampler};
 
-use super::{AudioBuffer, AudioCaptureBackend, AudioCaptureError, CaptureState, StopReason, MAX_BUFFER_SAMPLES, MAX_RESAMPLE_BUFFER_SAMPLES, TARGET_SAMPLE_RATE};
+use super::{AudioBuffer, AudioCaptureBackend, AudioCaptureError, CaptureState, StopReason, StreamingAudioSender, MAX_BUFFER_SAMPLES, MAX_RESAMPLE_BUFFER_SAMPLES, STREAMING_CHUNK_SIZE, TARGET_SAMPLE_RATE};
 use crate::{debug, error, info, warn};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
@@ -80,6 +80,9 @@ struct CallbackState {
     resample_buffer: Arc<Mutex<Vec<f32>>>,
     chunk_buffer: Arc<Mutex<Vec<f32>>>,
     chunk_size: usize,
+    // Streaming support
+    streaming_sender: Option<StreamingAudioSender>,
+    streaming_accumulator: Arc<Mutex<Vec<f32>>>,
 }
 
 impl CallbackState {
@@ -161,6 +164,21 @@ impl CallbackState {
                 }
             }
         }
+
+        // Streaming: accumulate and send 160ms chunks
+        if let Some(ref sender) = self.streaming_sender {
+            if let Ok(mut acc) = self.streaming_accumulator.lock() {
+                acc.extend_from_slice(&samples_to_add);
+
+                while acc.len() >= STREAMING_CHUNK_SIZE {
+                    let chunk: Vec<f32> = acc.drain(..STREAMING_CHUNK_SIZE).collect();
+                    // Non-blocking send - log warning on overflow, don't stop recording
+                    if let Err(e) = sender.try_send(chunk) {
+                        warn!("Streaming channel full, dropping chunk: {}", e);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -169,6 +187,7 @@ impl AudioCaptureBackend for CpalBackend {
         &mut self,
         buffer: AudioBuffer,
         stop_signal: Option<Sender<StopReason>>,
+        streaming_sender: Option<StreamingAudioSender>,
     ) -> Result<u32, AudioCaptureError> {
         info!("Starting audio capture (target: {}Hz)...", TARGET_SAMPLE_RATE);
 
@@ -244,6 +263,9 @@ impl AudioCaptureBackend for CpalBackend {
         // Pre-allocated chunk buffer to avoid allocations in hot path
         let chunk_buffer: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(vec![0.0f32; chunk_size]));
 
+        // Streaming accumulator for 160ms chunks
+        let streaming_accumulator: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
+
         // Create shared callback state - all callbacks use the same processing logic
         let callback_state = Arc::new(CallbackState {
             buffer,
@@ -253,6 +275,8 @@ impl AudioCaptureBackend for CpalBackend {
             resample_buffer,
             chunk_buffer,
             chunk_size,
+            streaming_sender,
+            streaming_accumulator,
         });
 
         // Build the input stream based on sample format

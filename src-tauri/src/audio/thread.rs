@@ -4,7 +4,7 @@
 // CpalBackend contains cpal::Stream which is NOT Send+Sync, so we isolate
 // it on a dedicated thread and communicate via channels.
 
-use super::{AudioBuffer, AudioCaptureBackend, AudioCaptureError, CpalBackend, StopReason};
+use super::{AudioBuffer, AudioCaptureBackend, AudioCaptureError, CpalBackend, StopReason, StreamingAudioSender};
 use crate::{debug, error, info};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
@@ -24,7 +24,8 @@ pub struct StopResult {
 pub enum AudioCommand {
     /// Start capturing audio into the provided buffer
     /// Includes a response channel to return the sample rate or error
-    Start(AudioBuffer, Sender<StartResponse>),
+    /// Optionally includes a streaming sender for real-time audio chunks
+    Start(AudioBuffer, Sender<StartResponse>, Option<StreamingAudioSender>),
     /// Stop capturing audio and return result via channel
     Stop(Option<Sender<StopResult>>),
     /// Shutdown the audio thread (used in tests)
@@ -61,11 +62,14 @@ impl AudioThreadHandle {
     ///
     /// Returns the actual sample rate of the audio device on success.
     /// Blocks until the audio thread responds.
+    ///
+    /// The optional `streaming_sender` can be used to receive 160ms audio chunks
+    /// in real-time for streaming transcription.
     #[must_use = "this returns a Result that should be handled"]
-    pub fn start(&self, buffer: AudioBuffer) -> Result<u32, AudioThreadError> {
+    pub fn start(&self, buffer: AudioBuffer, streaming_sender: Option<StreamingAudioSender>) -> Result<u32, AudioThreadError> {
         let (response_tx, response_rx) = mpsc::channel();
         self.sender
-            .send(AudioCommand::Start(buffer, response_tx))
+            .send(AudioCommand::Start(buffer, response_tx, streaming_sender))
             .map_err(|_| AudioThreadError::ThreadDisconnected)?;
 
         // Wait for response from audio thread
@@ -189,14 +193,14 @@ fn audio_thread_main(receiver: Receiver<AudioCommand>) {
         };
 
         match command {
-            AudioCommand::Start(buffer, response_tx) => {
+            AudioCommand::Start(buffer, response_tx, streaming_sender) => {
                 debug!("Received START command");
                 // Create stop signal channel for callbacks
                 let (stop_tx, stop_rx) = mpsc::channel();
                 stop_signal_rx = Some(stop_rx);
                 pending_stop_reason = None;
 
-                let result = backend.start(buffer, Some(stop_tx));
+                let result = backend.start(buffer, Some(stop_tx), streaming_sender);
                 match &result {
                     Ok(sample_rate) => {
                         info!("Audio capture started at {} Hz", sample_rate)
@@ -269,7 +273,7 @@ mod tests {
         let buffer = AudioBuffer::new();
 
         // Start returns sample rate on success (or CaptureError if no device)
-        let result = handle.start(buffer);
+        let result = handle.start(buffer, None);
         // Either succeeds with sample rate or fails with CaptureError (no device in CI)
         match result {
             Ok(sample_rate) => assert!(sample_rate > 0),

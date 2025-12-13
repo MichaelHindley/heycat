@@ -730,6 +730,9 @@ mod tests {
         // Create the directory but not the files
         let model_dir = get_model_dir(ModelType::ParakeetTDT).unwrap();
 
+        // Clean up before test (in case previous test left state)
+        let _ = std::fs::remove_dir_all(&model_dir);
+
         // Create the directory if it doesn't exist
         let _ = std::fs::create_dir_all(&model_dir);
 
@@ -739,7 +742,7 @@ mod tests {
         assert!(!result.unwrap());
 
         // Clean up
-        let _ = std::fs::remove_dir(&model_dir);
+        let _ = std::fs::remove_dir_all(&model_dir);
     }
 
     #[test]
@@ -747,6 +750,9 @@ mod tests {
         use std::io::Write;
 
         let model_dir = get_model_dir(ModelType::ParakeetTDT).unwrap();
+
+        // Clean up before test (in case previous test left state)
+        let _ = std::fs::remove_dir_all(&model_dir);
 
         // Create the directory and all required files
         std::fs::create_dir_all(&model_dir).unwrap();
@@ -765,11 +771,7 @@ mod tests {
         assert!(result.unwrap());
 
         // Clean up
-        for file in &manifest.files {
-            let file_path = model_dir.join(&file.name);
-            let _ = std::fs::remove_file(&file_path);
-        }
-        let _ = std::fs::remove_dir(&model_dir);
+        let _ = std::fs::remove_dir_all(&model_dir);
     }
 
     // ModelFile tests

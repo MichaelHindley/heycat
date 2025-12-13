@@ -87,7 +87,7 @@ pub fn start_recording_impl(
 
     // Start audio capture if audio thread is available
     if let Some(audio_thread) = audio_thread {
-        match audio_thread.start(buffer) {
+        match audio_thread.start(buffer, None) {
             Ok(sample_rate) => {
                 // Update with actual sample rate from device
                 manager.set_sample_rate(sample_rate);
