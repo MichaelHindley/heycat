@@ -4,7 +4,6 @@ import { RecordingIndicator } from "./components/RecordingIndicator";
 import { TranscriptionIndicator } from "./components/TranscriptionIndicator";
 import { TranscriptionNotification } from "./components/TranscriptionNotification";
 import { Sidebar } from "./components/Sidebar";
-import { ModelDownloadButton } from "./components/ModelDownloadButton";
 import { useTranscription } from "./hooks/useTranscription";
 
 function App() {
@@ -16,7 +15,6 @@ function App() {
       <main className="container">
         <RecordingIndicator className="app-recording-indicator" isBlocked={isTranscribing} />
         <TranscriptionIndicator className="app-transcription-indicator" />
-        <ModelDownloadButton className="app-model-download" />
         <TranscriptionNotification className="app-transcription-notification" />
       </main>
     </div>
