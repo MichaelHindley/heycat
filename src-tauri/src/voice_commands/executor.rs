@@ -1,5 +1,6 @@
 // Action executor - dispatches commands to action implementations
 
+use crate::voice_commands::actions::AppLauncherAction;
 use crate::voice_commands::registry::{ActionType, CommandDefinition};
 use async_trait::async_trait;
 use serde::Serialize;
@@ -63,24 +64,6 @@ pub struct CommandFailedPayload {
     pub error: ActionError,
 }
 
-/// Stub implementation for OpenApp action
-pub struct OpenAppAction;
-
-#[async_trait]
-impl Action for OpenAppAction {
-    async fn execute(&self, parameters: &HashMap<String, String>) -> Result<ActionResult, ActionError> {
-        let app_name = parameters.get("app").ok_or_else(|| ActionError {
-            code: "MISSING_PARAM".to_string(),
-            message: "Missing 'app' parameter".to_string(),
-        })?;
-
-        // Stub implementation - will be replaced by app-launcher-action spec
-        Ok(ActionResult {
-            message: format!("Would open app: {}", app_name),
-            data: None,
-        })
-    }
-}
 
 /// Stub implementation for TypeText action
 pub struct TypeTextAction;
@@ -177,7 +160,7 @@ impl ActionDispatcher {
     /// Create a new dispatcher with default action implementations
     pub fn new() -> Self {
         Self {
-            open_app: Arc::new(OpenAppAction),
+            open_app: Arc::new(AppLauncherAction::new()),
             type_text: Arc::new(TypeTextAction),
             system_control: Arc::new(SystemControlAction),
             workflow: Arc::new(WorkflowAction),

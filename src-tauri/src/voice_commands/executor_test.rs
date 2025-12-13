@@ -1,4 +1,5 @@
 use super::*;
+use crate::voice_commands::actions::AppLauncherAction;
 use crate::voice_commands::registry::ActionType;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -84,7 +85,7 @@ async fn test_dispatch_open_app_action() {
 async fn test_dispatch_type_text_action() {
     let mock = Arc::new(MockAction::new_success("Text typed"));
     let dispatcher = ActionDispatcher::with_actions(
-        Arc::new(OpenAppAction),
+        Arc::new(AppLauncherAction::new()),
         mock.clone(),
         Arc::new(SystemControlAction),
         Arc::new(WorkflowAction),
@@ -130,7 +131,7 @@ async fn test_missing_parameter_returns_error() {
 
     assert!(result.is_err());
     let error = result.unwrap_err();
-    assert_eq!(error.code, "MISSING_PARAM");
+    assert_eq!(error.code, "INVALID_PARAMETER");
     assert!(error.message.contains("app"));
 }
 
@@ -199,9 +200,8 @@ async fn test_multiple_actions_execute_concurrently() {
 async fn test_all_action_types_dispatch_correctly() {
     let dispatcher = ActionDispatcher::new();
 
-    // Test each action type with proper parameters
+    // Test stub action types with proper parameters (OpenApp is tested separately as it uses real implementation)
     let test_cases = vec![
-        (ActionType::OpenApp, "Would open app"),
         (ActionType::TypeText, "Would type text"),
         (ActionType::SystemControl, "Would execute system control"),
         (ActionType::Workflow, "Would execute workflow"),
@@ -223,6 +223,25 @@ async fn test_all_action_types_dispatch_correctly() {
             action_type
         );
     }
+}
+
+#[tokio::test]
+async fn test_open_app_dispatches_to_app_launcher() {
+    // OpenApp uses real AppLauncherAction - test with mock for isolation
+    let mock = Arc::new(MockAction::new_success("App launched"));
+    let dispatcher = ActionDispatcher::with_actions(
+        mock.clone(),
+        Arc::new(TypeTextAction),
+        Arc::new(SystemControlAction),
+        Arc::new(WorkflowAction),
+        Arc::new(CustomAction),
+    );
+
+    let command = create_test_command(ActionType::OpenApp);
+    let result = dispatcher.execute(&command).await;
+
+    assert!(result.is_ok());
+    assert_eq!(mock.count(), 1);
 }
 
 #[test]

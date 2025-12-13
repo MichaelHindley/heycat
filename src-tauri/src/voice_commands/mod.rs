@@ -1,5 +1,6 @@
 // Voice commands module - command matching and execution
 
+pub mod actions;
 pub mod executor;
 pub mod registry;
 
