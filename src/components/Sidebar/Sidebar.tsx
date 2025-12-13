@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { RecordingsList } from "../RecordingsView";
 import { CommandSettings } from "../CommandSettings";
+import { TranscriptionSettings } from "../TranscriptionSettings";
 import "./Sidebar.css";
 
-export type SidebarTab = "history" | "commands";
+export type SidebarTab = "history" | "commands" | "transcription";
 
 export interface SidebarProps {
   className?: string;
@@ -36,6 +37,16 @@ export function Sidebar({ className = "", defaultTab = "history" }: SidebarProps
         >
           Commands
         </button>
+        <button
+          className={`sidebar__tab ${activeTab === "transcription" ? "sidebar__tab--active" : ""}`.trim()}
+          role="tab"
+          aria-selected={activeTab === "transcription"}
+          aria-controls="sidebar-panel-transcription"
+          onClick={() => setActiveTab("transcription")}
+          type="button"
+        >
+          Transcription
+        </button>
       </nav>
       <div
         id={`sidebar-panel-${activeTab}`}
@@ -45,6 +56,7 @@ export function Sidebar({ className = "", defaultTab = "history" }: SidebarProps
       >
         {activeTab === "history" && <RecordingsList />}
         {activeTab === "commands" && <CommandSettings />}
+        {activeTab === "transcription" && <TranscriptionSettings />}
       </div>
     </aside>
   );

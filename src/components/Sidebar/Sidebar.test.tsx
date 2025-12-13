@@ -7,6 +7,10 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockResolvedValue([]),
 }));
 
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn().mockResolvedValue(() => {}),
+}));
+
 describe("Sidebar", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -54,6 +58,37 @@ describe("Sidebar", () => {
       // Wait for CommandSettings async effect to complete
       await waitFor(() => {
         expect(screen.getByText("Voice Commands")).toBeDefined();
+      });
+    });
+  });
+
+  describe("Transcription tab", () => {
+    it("Transcription tab is present in sidebar", async () => {
+      render(<Sidebar />);
+
+      expect(await screen.findByRole("tab", { name: "Transcription" })).toBeDefined();
+    });
+
+    it("Transcription tab switches panel content when clicked", async () => {
+      render(<Sidebar />);
+
+      const transcriptionTab = screen.getByRole("tab", { name: "Transcription" });
+      await userEvent.click(transcriptionTab);
+
+      expect(transcriptionTab.getAttribute("aria-selected")).toBe("true");
+      expect(
+        screen.getByRole("tab", { name: "History" }).getAttribute("aria-selected")
+      ).toBe("false");
+    });
+
+    it("can start on Transcription tab via defaultTab prop", async () => {
+      render(<Sidebar defaultTab="transcription" />);
+
+      const transcriptionTab = await screen.findByRole("tab", { name: "Transcription" });
+      expect(transcriptionTab.getAttribute("aria-selected")).toBe("true");
+      // Wait for TranscriptionSettings to render
+      await waitFor(() => {
+        expect(screen.getByText("Models")).toBeDefined();
       });
     });
   });
