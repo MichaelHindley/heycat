@@ -132,7 +132,7 @@ Feature: Voice Commands
 
 ## Definition of Done
 
-- [x] All specs completed
+- [ ] All specs completed
 - [x] Technical guidance finalized
 - [x] Code reviewed and approved
 - [x] Tests written and passing
