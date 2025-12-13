@@ -2,6 +2,7 @@
 
 pub mod actions;
 pub mod executor;
+pub mod matcher;
 pub mod registry;
 
 use registry::{ActionType, CommandDefinition, CommandRegistry, RegistryError};
