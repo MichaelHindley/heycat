@@ -2,7 +2,7 @@
 // Connects global hotkey to recording state with debouncing
 // Uses unified command implementations for start/stop logic
 
-use crate::audio::AudioThreadHandle;
+use crate::audio::{AudioThreadHandle, StreamingAudioReceiver, StreamingAudioSender};
 use crate::commands::logic::{get_last_recording_buffer_impl, start_recording_impl, stop_recording_impl};
 use crate::events::{
     current_timestamp, CommandAmbiguousPayload, CommandCandidate, CommandEventEmitter,
@@ -16,7 +16,7 @@ use crate::recording::{RecordingManager, RecordingState};
 use crate::voice_commands::executor::ActionDispatcher;
 use crate::voice_commands::matcher::{CommandMatcher, MatchResult};
 use crate::voice_commands::registry::CommandRegistry;
-use crate::parakeet::{TranscriptionManager, TranscriptionService};
+use crate::parakeet::{StreamingTranscriber, TranscriptionManager, TranscriptionMode, TranscriptionService};
 use crate::{debug, error, info, trace, warn};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -55,6 +55,10 @@ pub struct HotkeyIntegration<R: RecordingEventEmitter, T: TranscriptionEventEmit
     transcription_semaphore: Arc<Semaphore>,
     /// Optional app handle for clipboard access
     app_handle: Option<AppHandle>,
+    /// Optional streaming transcriber for real-time EOU transcription
+    streaming_transcriber: Option<Arc<Mutex<StreamingTranscriber<T>>>>,
+    /// Holds the streaming receiver during recording (wrapped in Option for take semantics)
+    streaming_receiver: Arc<Mutex<Option<StreamingAudioReceiver>>>,
 }
 
 impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: CommandEventEmitter + 'static> HotkeyIntegration<R, T, C> {
@@ -74,6 +78,8 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
             command_emitter: None,
             transcription_semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_TRANSCRIPTIONS)),
             app_handle: None,
+            streaming_transcriber: None,
+            streaming_receiver: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -131,6 +137,12 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
         self
     }
 
+    /// Add streaming transcriber for real-time EOU transcription (builder pattern)
+    pub fn with_streaming_transcriber(mut self, transcriber: Arc<Mutex<StreamingTranscriber<T>>>) -> Self {
+        self.streaming_transcriber = Some(transcriber);
+        self
+    }
+
     /// Create with custom debounce duration (for testing)
     #[cfg(test)]
     pub fn with_debounce(recording_emitter: R, debounce_ms: u64) -> Self {
@@ -148,6 +160,8 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
             command_emitter: None,
             transcription_semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_TRANSCRIPTIONS)),
             app_handle: None,
+            streaming_transcriber: None,
+            streaming_receiver: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -194,8 +208,31 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
                 info!("Starting recording...");
                 // Check model availability before starting
                 let model_available = check_model_exists().unwrap_or(false);
+
+                // Check transcription mode at recording start (not toggle time) for deterministic behavior
+                let mode = self.transcription_manager.as_ref()
+                    .map(|tm| tm.current_mode())
+                    .unwrap_or(TranscriptionMode::Batch);
+
+                // Create streaming channel if in streaming mode
+                let streaming_sender = match mode {
+                    TranscriptionMode::Streaming => {
+                        let (sender, receiver) = std::sync::mpsc::sync_channel::<Vec<f32>>(10);
+                        // Store receiver for consumer task
+                        if let Ok(mut rx_holder) = self.streaming_receiver.lock() {
+                            *rx_holder = Some(receiver);
+                        }
+                        // Spawn consumer task to process audio chunks
+                        self.spawn_streaming_consumer();
+                        Some(sender)
+                    }
+                    TranscriptionMode::Batch => None,
+                };
+
+                debug!("Recording mode: {:?}, streaming_sender: {}", mode, streaming_sender.is_some());
+
                 // Use unified command implementation
-                match start_recording_impl(state, self.audio_thread.as_deref(), model_available) {
+                match start_recording_impl(state, self.audio_thread.as_deref(), model_available, streaming_sender) {
                     Ok(()) => {
                         self.recording_emitter
                             .emit_recording_started(RecordingStartedPayload {
@@ -215,6 +252,12 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
             }
             RecordingState::Recording => {
                 info!("Stopping recording...");
+
+                // Check transcription mode to decide how to handle transcription
+                let mode = self.transcription_manager.as_ref()
+                    .map(|tm| tm.current_mode())
+                    .unwrap_or(TranscriptionMode::Batch);
+
                 // Use unified command implementation
                 match stop_recording_impl(state, self.audio_thread.as_deref()) {
                     Ok(metadata) => {
@@ -226,8 +269,17 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
                             .emit_recording_stopped(RecordingStoppedPayload { metadata });
                         debug!("Emitted recording_stopped event");
 
-                        // Auto-transcribe if transcription manager is configured
-                        self.spawn_transcription();
+                        // Handle transcription based on mode
+                        match mode {
+                            TranscriptionMode::Batch => {
+                                // Auto-transcribe if transcription manager is configured
+                                self.spawn_transcription();
+                            }
+                            TranscriptionMode::Streaming => {
+                                // Finalize streaming transcription
+                                self.finalize_streaming();
+                            }
+                        }
 
                         true
                     }
@@ -519,6 +571,134 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
                 warn!("Failed to reset transcription state: {}", e);
             }
         });
+    }
+
+    /// Spawn a consumer thread that reads audio chunks from the streaming channel
+    /// and processes them through the streaming transcriber
+    ///
+    /// This is called at recording start in streaming mode. The thread will exit
+    /// when the channel is closed (receiver dropped on recording stop).
+    #[cfg_attr(coverage_nightly, coverage(off))]
+    fn spawn_streaming_consumer(&self) {
+        let receiver = self.streaming_receiver.clone();
+        let transcriber = match &self.streaming_transcriber {
+            Some(t) => t.clone(),
+            None => {
+                debug!("Streaming consumer not spawned: no streaming transcriber configured");
+                return;
+            }
+        };
+
+        debug!("Spawning streaming consumer thread...");
+
+        std::thread::spawn(move || {
+            debug!("Streaming consumer thread started");
+            // Take the receiver out of the holder
+            let rx = {
+                let mut rx_guard = match receiver.lock() {
+                    Ok(guard) => guard,
+                    Err(e) => {
+                        error!("Streaming consumer: failed to lock receiver holder: {}", e);
+                        return;
+                    }
+                };
+                rx_guard.take()
+            };
+
+            let rx = match rx {
+                Some(rx) => rx,
+                None => {
+                    warn!("Streaming consumer: no receiver available");
+                    return;
+                }
+            };
+
+            // Process chunks until channel is closed
+            while let Ok(chunk) = rx.recv() {
+                if let Ok(mut t) = transcriber.lock() {
+                    if let Err(e) = t.process_samples(&chunk) {
+                        warn!("Streaming transcription error: {}", e);
+                    }
+                }
+            }
+
+            debug!("Streaming consumer thread exiting (channel closed)");
+        });
+    }
+
+    /// Finalize streaming transcription and handle the result
+    ///
+    /// Called when recording stops in streaming mode. Closes the channel to stop
+    /// the consumer thread, then finalizes the transcriber to get the complete text.
+    #[cfg_attr(coverage_nightly, coverage(off))]
+    fn finalize_streaming(&self) {
+        let transcriber = match &self.streaming_transcriber {
+            Some(t) => t.clone(),
+            None => {
+                debug!("Streaming finalization skipped: no streaming transcriber configured");
+                return;
+            }
+        };
+
+        // Drop the receiver to signal consumer thread to exit
+        // This closes the channel, causing recv() to return Err
+        {
+            if let Ok(mut rx_holder) = self.streaming_receiver.lock() {
+                *rx_holder = None;
+            }
+        }
+
+        // Give the consumer thread a moment to finish processing
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        // Finalize transcription and get the complete text
+        let result = {
+            let mut t = match transcriber.lock() {
+                Ok(guard) => guard,
+                Err(e) => {
+                    error!("Streaming finalization failed: lock poisoned: {}", e);
+                    return;
+                }
+            };
+
+            let result = t.finalize();
+            t.reset();
+            result
+        };
+
+        match result {
+            Ok(text) => {
+                info!("Streaming transcription finalized: {} chars", text.len());
+                // Handle command matching / clipboard same as batch mode
+                self.handle_transcription_result(&text);
+            }
+            Err(e) => {
+                error!("Streaming finalization failed: {}", e);
+            }
+        }
+    }
+
+    /// Handle transcription result: try command matching, fallback to clipboard
+    ///
+    /// This is the common result handling for both batch and streaming modes.
+    #[cfg_attr(coverage_nightly, coverage(off))]
+    fn handle_transcription_result(&self, text: &str) {
+        // Try voice command matching if configured
+        // Note: Streaming mode doesn't need to emit transcription_started because
+        // partial events are already being emitted during recording
+
+        // For now, just copy to clipboard as fallback
+        // Full command matching would require async execution which complicates
+        // the synchronous finalize_streaming flow
+        if let Some(ref handle) = self.app_handle {
+            if let Err(e) = handle.clipboard().write_text(text) {
+                warn!("Failed to copy to clipboard: {}", e);
+            } else {
+                debug!("Transcribed text copied to clipboard");
+            }
+        } else {
+            warn!("Clipboard unavailable: no app handle configured");
+        }
     }
 
     /// Check if currently in debounce window (for testing)

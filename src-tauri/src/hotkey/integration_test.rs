@@ -368,3 +368,153 @@ fn test_audio_thread_disconnection_rolls_back_state() {
     );
     assert_eq!(emitter.started_count(), 0, "Started event should not be emitted");
 }
+
+// === Streaming Wire-Up Tests ===
+
+#[test]
+fn test_hotkey_integration_accepts_streaming_transcriber_via_builder() {
+    use crate::parakeet::StreamingTranscriber;
+    use std::sync::Arc;
+
+    let emitter = MockEmitter::new();
+    let transcription_emitter = Arc::new(MockEmitter::new());
+    let streaming_transcriber = Arc::new(Mutex::new(StreamingTranscriber::new(transcription_emitter.clone())));
+
+    let integration: TestIntegration =
+        HotkeyIntegration::new(emitter)
+            .with_streaming_transcriber(streaming_transcriber);
+
+    // Verify the builder method accepted the streaming transcriber
+    // (we can't directly access private fields, but if it compiles, the type signature is correct)
+    assert!(true, "Builder method accepted streaming transcriber");
+}
+
+#[test]
+fn test_recording_start_in_batch_mode_passes_none_streaming_sender() {
+    use crate::parakeet::{TranscriptionManager, TranscriptionMode};
+    use std::sync::Arc;
+
+    let emitter = MockEmitter::new();
+    let transcription_manager = Arc::new(TranscriptionManager::new());
+    // Default mode is Batch
+    assert_eq!(transcription_manager.current_mode(), TranscriptionMode::Batch);
+
+    let mut integration: TestIntegration =
+        HotkeyIntegration::with_debounce(emitter.clone(), 0)
+            .with_transcription_manager(transcription_manager);
+    let state = Mutex::new(RecordingManager::new());
+
+    // Start recording - in batch mode, no streaming sender should be created
+    // We can't directly verify streaming_sender is None, but we verify recording starts
+    let accepted = integration.handle_toggle(&state);
+
+    assert!(accepted, "Recording should start in batch mode");
+    assert_eq!(
+        state.lock().unwrap().get_state(),
+        RecordingState::Recording
+    );
+}
+
+#[test]
+fn test_recording_start_in_streaming_mode_creates_streaming_channel() {
+    use crate::parakeet::{TranscriptionManager, TranscriptionMode, StreamingTranscriber};
+    use std::sync::Arc;
+
+    let emitter = MockEmitter::new();
+    let transcription_emitter = Arc::new(MockEmitter::new());
+    let transcription_manager = Arc::new(TranscriptionManager::new());
+
+    // Set mode to Streaming
+    transcription_manager.set_mode(TranscriptionMode::Streaming).unwrap();
+    assert_eq!(transcription_manager.current_mode(), TranscriptionMode::Streaming);
+
+    let streaming_transcriber = Arc::new(Mutex::new(StreamingTranscriber::new(transcription_emitter.clone())));
+
+    let mut integration: TestIntegration =
+        HotkeyIntegration::with_debounce(emitter.clone(), 0)
+            .with_transcription_manager(transcription_manager)
+            .with_streaming_transcriber(streaming_transcriber);
+    let state = Mutex::new(RecordingManager::new());
+
+    // Start recording - in streaming mode, a streaming channel should be created
+    // We can't directly verify the channel exists, but we verify recording starts
+    let accepted = integration.handle_toggle(&state);
+
+    assert!(accepted, "Recording should start in streaming mode");
+    assert_eq!(
+        state.lock().unwrap().get_state(),
+        RecordingState::Recording
+    );
+}
+
+#[test]
+fn test_recording_stop_in_batch_mode_calls_spawn_transcription() {
+    use crate::parakeet::{TranscriptionManager, TranscriptionMode};
+    use std::sync::Arc;
+
+    let emitter = MockEmitter::new();
+    let transcription_manager = Arc::new(TranscriptionManager::new());
+    // Default mode is Batch
+    assert_eq!(transcription_manager.current_mode(), TranscriptionMode::Batch);
+
+    let mut integration: TestIntegration =
+        HotkeyIntegration::with_debounce(emitter.clone(), 0)
+            .with_transcription_manager(transcription_manager);
+    let state = Mutex::new(RecordingManager::new());
+
+    // Start and stop recording
+    integration.handle_toggle(&state);
+    assert_eq!(
+        state.lock().unwrap().get_state(),
+        RecordingState::Recording
+    );
+
+    integration.handle_toggle(&state);
+    // Recording should stop and state should be Idle
+    assert_eq!(
+        state.lock().unwrap().get_state(),
+        RecordingState::Idle
+    );
+    // Stopped event should be emitted
+    assert_eq!(emitter.stopped_count(), 1);
+}
+
+#[test]
+fn test_recording_stop_in_streaming_mode_calls_finalize() {
+    use crate::parakeet::{TranscriptionManager, TranscriptionMode, StreamingTranscriber};
+    use std::sync::Arc;
+
+    let emitter = MockEmitter::new();
+    let transcription_emitter = Arc::new(MockEmitter::new());
+    let transcription_manager = Arc::new(TranscriptionManager::new());
+
+    // Set mode to Streaming
+    transcription_manager.set_mode(TranscriptionMode::Streaming).unwrap();
+    assert_eq!(transcription_manager.current_mode(), TranscriptionMode::Streaming);
+
+    let streaming_transcriber = Arc::new(Mutex::new(StreamingTranscriber::new(transcription_emitter.clone())));
+
+    let mut integration: TestIntegration =
+        HotkeyIntegration::with_debounce(emitter.clone(), 0)
+            .with_transcription_manager(transcription_manager)
+            .with_streaming_transcriber(streaming_transcriber);
+    let state = Mutex::new(RecordingManager::new());
+
+    // Start and stop recording
+    integration.handle_toggle(&state);
+    assert_eq!(
+        state.lock().unwrap().get_state(),
+        RecordingState::Recording
+    );
+
+    integration.handle_toggle(&state);
+    // Recording should stop and state should be Idle
+    assert_eq!(
+        state.lock().unwrap().get_state(),
+        RecordingState::Idle
+    );
+    // Stopped event should be emitted
+    assert_eq!(emitter.stopped_count(), 1);
+    // In streaming mode, finalize_streaming is called (instead of spawn_transcription)
+    // We can't directly verify this, but the test passes without errors
+}

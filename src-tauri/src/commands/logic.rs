@@ -1,7 +1,7 @@
 // Command implementation logic - testable functions separate from Tauri wrappers
 
 use crate::audio::{
-    encode_wav, parse_duration_from_file, AudioThreadHandle, SystemFileWriter, TARGET_SAMPLE_RATE,
+    encode_wav, parse_duration_from_file, AudioThreadHandle, StreamingAudioSender, SystemFileWriter, TARGET_SAMPLE_RATE,
 };
 use crate::{debug, error, info};
 use crate::recording::{AudioData, RecordingManager, RecordingMetadata, RecordingState};
@@ -41,6 +41,7 @@ pub struct RecordingStateInfo {
 /// * `state` - The recording manager state
 /// * `audio_thread` - Optional audio thread handle for starting capture
 /// * `model_available` - Whether the transcription model is available
+/// * `streaming_sender` - Optional channel sender for streaming audio chunks to transcriber
 ///
 /// # Errors
 /// Returns an error string if:
@@ -53,8 +54,9 @@ pub fn start_recording_impl(
     state: &Mutex<RecordingManager>,
     audio_thread: Option<&AudioThreadHandle>,
     model_available: bool,
+    streaming_sender: Option<StreamingAudioSender>,
 ) -> Result<(), String> {
-    debug!("start_recording_impl called, model_available={}", model_available);
+    debug!("start_recording_impl called, model_available={}, streaming={}", model_available, streaming_sender.is_some());
 
     // Check model availability first
     if !model_available {
@@ -87,7 +89,7 @@ pub fn start_recording_impl(
 
     // Start audio capture if audio thread is available
     if let Some(audio_thread) = audio_thread {
-        match audio_thread.start(buffer, None) {
+        match audio_thread.start(buffer, streaming_sender) {
             Ok(sample_rate) => {
                 // Update with actual sample rate from device
                 manager.set_sample_rate(sample_rate);

@@ -115,7 +115,9 @@ pub fn start_recording(
             false
         }
     };
-    let result = start_recording_impl(state.as_ref(), Some(audio_thread.as_ref()), model_available);
+    // Note: This Tauri command always uses batch mode (no streaming sender)
+    // Streaming mode is only triggered via hotkey with streaming_transcriber configured
+    let result = start_recording_impl(state.as_ref(), Some(audio_thread.as_ref()), model_available, None);
 
     // Emit event on success for frontend state sync
     if result.is_ok() {
