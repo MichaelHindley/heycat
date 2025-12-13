@@ -249,7 +249,7 @@ describe("TranscriptionSettings", () => {
     it("mode toggle is enabled when model is available", async () => {
       mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
         if (cmd === "check_parakeet_model_status") {
-          const modelType = args?.modelType;
+          const modelType = args?.model_type;
           return Promise.resolve(modelType === "ParakeetTDT");
         }
         if (cmd === "get_transcription_mode") {
@@ -299,8 +299,8 @@ describe("TranscriptionSettings", () => {
       render(<TranscriptionSettings />);
 
       await waitFor(() => {
-        expect(mockInvoke).toHaveBeenCalledWith("check_parakeet_model_status", { modelType: "ParakeetTDT" });
-        expect(mockInvoke).toHaveBeenCalledWith("check_parakeet_model_status", { modelType: "ParakeetEOU" });
+        expect(mockInvoke).toHaveBeenCalledWith("check_parakeet_model_status", { model_type: "ParakeetTDT" });
+        expect(mockInvoke).toHaveBeenCalledWith("check_parakeet_model_status", { model_type: "ParakeetEOU" });
       });
     });
 
