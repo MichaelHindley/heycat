@@ -93,7 +93,7 @@ describe("TranscriptionSettings", () => {
 
       await userEvent.click(downloadButton!);
 
-      expect(mockInvoke).toHaveBeenCalledWith("download_model", { modelType: "tdt" });
+      expect(mockInvoke).toHaveBeenCalledWith("download_model", { modelType: "ParakeetTDT" });
     });
 
     it("EOU download button triggers download_model with model_type='eou'", async () => {
@@ -108,7 +108,7 @@ describe("TranscriptionSettings", () => {
 
       await userEvent.click(downloadButton!);
 
-      expect(mockInvoke).toHaveBeenCalledWith("download_model", { modelType: "eou" });
+      expect(mockInvoke).toHaveBeenCalledWith("download_model", { modelType: "ParakeetEOU" });
     });
 
     it("progress bar updates when model_file_download_progress event is received", async () => {

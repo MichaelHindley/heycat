@@ -41,6 +41,11 @@ export interface UseMultiModelStatusResult {
   refreshStatus: () => Promise<void>;
 }
 
+/** Map frontend model type to Rust enum variant */
+function toRustModelType(modelType: ModelType): string {
+  return modelType === "tdt" ? "ParakeetTDT" : "ParakeetEOU";
+}
+
 const initialModelStatus: ModelStatus = {
   isAvailable: false,
   downloadState: "idle",
@@ -107,7 +112,7 @@ export function useMultiModelStatus(): UseMultiModelStatusResult {
       });
       /* v8 ignore start -- @preserve */
       try {
-        await invoke("download_model", { modelType });
+        await invoke("download_model", { modelType: toRustModelType(modelType) });
         // State will be updated by model_download_completed event
       } catch (e) {
         updateModelStatus(modelType, {

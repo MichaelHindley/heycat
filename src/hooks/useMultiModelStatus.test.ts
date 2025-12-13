@@ -86,7 +86,7 @@ describe("useMultiModelStatus", () => {
       await result.current.downloadModel("tdt");
     });
 
-    expect(mockInvoke).toHaveBeenCalledWith("download_model", { modelType: "tdt" });
+    expect(mockInvoke).toHaveBeenCalledWith("download_model", { modelType: "ParakeetTDT" });
   });
 
   it("sets downloadState to 'downloading' when download starts", async () => {

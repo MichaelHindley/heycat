@@ -1,6 +1,7 @@
 // Shared types for transcription services
 // These types are used by all transcription backends (Parakeet, etc.)
 
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// Transcription state machine states
@@ -20,7 +21,7 @@ pub enum TranscriptionState {
 }
 
 /// Transcription mode - determines which model backend to use
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum TranscriptionMode {
     /// Batch transcription using TDT model (default)
     #[default]
