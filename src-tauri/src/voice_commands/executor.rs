@@ -1,6 +1,6 @@
 // Action executor - dispatches commands to action implementations
 
-use crate::voice_commands::actions::AppLauncherAction;
+use crate::voice_commands::actions::{AppLauncherAction, TextInputAction};
 use crate::voice_commands::registry::{ActionType, CommandDefinition};
 use async_trait::async_trait;
 use serde::Serialize;
@@ -64,25 +64,6 @@ pub struct CommandFailedPayload {
     pub error: ActionError,
 }
 
-
-/// Stub implementation for TypeText action
-pub struct TypeTextAction;
-
-#[async_trait]
-impl Action for TypeTextAction {
-    async fn execute(&self, parameters: &HashMap<String, String>) -> Result<ActionResult, ActionError> {
-        let text = parameters.get("text").ok_or_else(|| ActionError {
-            code: "MISSING_PARAM".to_string(),
-            message: "Missing 'text' parameter".to_string(),
-        })?;
-
-        // Stub implementation - will be replaced by text-input-action spec
-        Ok(ActionResult {
-            message: format!("Would type text: {}", text),
-            data: None,
-        })
-    }
-}
 
 /// Stub implementation for SystemControl action
 pub struct SystemControlAction;
@@ -161,7 +142,7 @@ impl ActionDispatcher {
     pub fn new() -> Self {
         Self {
             open_app: Arc::new(AppLauncherAction::new()),
-            type_text: Arc::new(TypeTextAction),
+            type_text: Arc::new(TextInputAction::new()),
             system_control: Arc::new(SystemControlAction),
             workflow: Arc::new(WorkflowAction),
             custom: Arc::new(CustomAction),

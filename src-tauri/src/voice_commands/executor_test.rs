@@ -1,5 +1,5 @@
 use super::*;
-use crate::voice_commands::actions::AppLauncherAction;
+use crate::voice_commands::actions::{AppLauncherAction, TextInputAction};
 use crate::voice_commands::registry::ActionType;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -67,7 +67,7 @@ async fn test_dispatch_open_app_action() {
     let mock = Arc::new(MockAction::new_success("App opened"));
     let dispatcher = ActionDispatcher::with_actions(
         mock.clone(),
-        Arc::new(TypeTextAction),
+        Arc::new(TextInputAction::new()),
         Arc::new(SystemControlAction),
         Arc::new(WorkflowAction),
         Arc::new(CustomAction),
@@ -105,7 +105,7 @@ async fn test_action_failure_returns_error() {
     let mock = Arc::new(MockAction::new_failure("TEST_ERROR", "Test failure"));
     let dispatcher = ActionDispatcher::with_actions(
         mock.clone(),
-        Arc::new(TypeTextAction),
+        Arc::new(TextInputAction::new()),
         Arc::new(SystemControlAction),
         Arc::new(WorkflowAction),
         Arc::new(CustomAction),
@@ -167,14 +167,14 @@ async fn test_multiple_actions_execute_concurrently() {
 
     let dispatcher1 = ActionDispatcher::with_actions(
         action1,
-        Arc::new(TypeTextAction),
+        Arc::new(TextInputAction::new()),
         Arc::new(SystemControlAction),
         Arc::new(WorkflowAction),
         Arc::new(CustomAction),
     );
     let dispatcher2 = ActionDispatcher::with_actions(
         action2,
-        Arc::new(TypeTextAction),
+        Arc::new(TextInputAction::new()),
         Arc::new(SystemControlAction),
         Arc::new(WorkflowAction),
         Arc::new(CustomAction),
@@ -197,12 +197,11 @@ async fn test_multiple_actions_execute_concurrently() {
 }
 
 #[tokio::test]
-async fn test_all_action_types_dispatch_correctly() {
+async fn test_stub_action_types_dispatch_correctly() {
     let dispatcher = ActionDispatcher::new();
 
-    // Test stub action types with proper parameters (OpenApp is tested separately as it uses real implementation)
+    // Test stub action types only (OpenApp and TypeText use real implementations with system dependencies)
     let test_cases = vec![
-        (ActionType::TypeText, "Would type text"),
         (ActionType::SystemControl, "Would execute system control"),
         (ActionType::Workflow, "Would execute workflow"),
         (ActionType::Custom, "Would execute custom script"),
@@ -226,12 +225,31 @@ async fn test_all_action_types_dispatch_correctly() {
 }
 
 #[tokio::test]
+async fn test_type_text_dispatches_to_text_input() {
+    // TypeText uses real TextInputAction - test with mock for isolation
+    let mock = Arc::new(MockAction::new_success("Text typed"));
+    let dispatcher = ActionDispatcher::with_actions(
+        Arc::new(AppLauncherAction::new()),
+        mock.clone(),
+        Arc::new(SystemControlAction),
+        Arc::new(WorkflowAction),
+        Arc::new(CustomAction),
+    );
+
+    let command = create_test_command(ActionType::TypeText);
+    let result = dispatcher.execute(&command).await;
+
+    assert!(result.is_ok());
+    assert_eq!(mock.count(), 1);
+}
+
+#[tokio::test]
 async fn test_open_app_dispatches_to_app_launcher() {
     // OpenApp uses real AppLauncherAction - test with mock for isolation
     let mock = Arc::new(MockAction::new_success("App launched"));
     let dispatcher = ActionDispatcher::with_actions(
         mock.clone(),
-        Arc::new(TypeTextAction),
+        Arc::new(TextInputAction::new()),
         Arc::new(SystemControlAction),
         Arc::new(WorkflowAction),
         Arc::new(CustomAction),
