@@ -1,5 +1,6 @@
 // Voice commands module - command matching and execution
 
+pub mod executor;
 pub mod registry;
 
 use registry::{ActionType, CommandDefinition, CommandRegistry, RegistryError};

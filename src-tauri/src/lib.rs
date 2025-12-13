@@ -81,6 +81,11 @@ pub fn run() {
                 }
             }
 
+            // Create and manage ExecutorState
+            debug!("Creating ExecutorState...");
+            app.manage(voice_commands::executor::ExecutorState::new());
+            debug!("ExecutorState initialized successfully");
+
             // Eager model loading at startup (if model exists)
             if let Ok(true) = model::check_model_exists() {
                 if let Ok(model_path) = model::download::get_model_path() {
@@ -170,7 +175,8 @@ pub fn run() {
             model::download_model,
             voice_commands::get_commands,
             voice_commands::add_command,
-            voice_commands::remove_command
+            voice_commands::remove_command,
+            voice_commands::executor::test_command
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
