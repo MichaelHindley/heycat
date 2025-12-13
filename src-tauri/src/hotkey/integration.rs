@@ -11,7 +11,7 @@ use crate::events::{
     TranscriptionCompletedPayload, TranscriptionErrorPayload, TranscriptionEventEmitter,
     TranscriptionStartedPayload,
 };
-use crate::model::check_model_exists;
+use crate::model::{check_model_exists_for_type, ModelType};
 use crate::recording::{RecordingManager, RecordingState};
 use crate::voice_commands::executor::ActionDispatcher;
 use crate::voice_commands::matcher::{CommandMatcher, MatchResult};
@@ -206,8 +206,8 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
         match current_state {
             RecordingState::Idle => {
                 info!("Starting recording...");
-                // Check model availability before starting
-                let model_available = check_model_exists().unwrap_or(false);
+                // Check model availability before starting (check Parakeet TDT model)
+                let model_available = check_model_exists_for_type(ModelType::ParakeetTDT).unwrap_or(false);
 
                 // Check transcription mode at recording start (not toggle time) for deterministic behavior
                 let mode = self.transcription_manager.as_ref()

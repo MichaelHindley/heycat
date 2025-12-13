@@ -7,10 +7,37 @@ use crate::events::{
     TranscriptionCompletedPayload, TranscriptionErrorPayload, TranscriptionPartialPayload,
     TranscriptionStartedPayload,
 };
+use crate::model::{ModelManifest, ModelType, get_model_dir};
 use crate::recording::{RecordingManager, RecordingState};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Once};
 use std::thread;
 use std::time::Duration;
+use std::io::Write;
+
+/// Global lock for model directory operations to prevent test races
+static MODEL_DIR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Ensure model files exist for tests (called once per test run)
+static INIT_MODEL_FILES: Once = Once::new();
+
+/// Setup stub model files for tests
+fn ensure_test_model_files() {
+    INIT_MODEL_FILES.call_once(|| {
+        let _lock = MODEL_DIR_LOCK.lock().unwrap();
+        let model_dir = get_model_dir(ModelType::ParakeetTDT).expect("Failed to get model dir");
+
+        // Create directory and stub files if they don't exist
+        if !model_dir.exists() {
+            std::fs::create_dir_all(&model_dir).expect("Failed to create model dir");
+            let manifest = ModelManifest::tdt();
+            for file in &manifest.files {
+                let file_path = model_dir.join(&file.name);
+                let mut f = std::fs::File::create(&file_path).expect("Failed to create stub file");
+                f.write_all(b"test stub").expect("Failed to write stub content");
+            }
+        }
+    });
+}
 
 /// Mock event emitter that records all events
 #[derive(Default, Clone)]
@@ -97,6 +124,7 @@ type TestIntegration = HotkeyIntegration<MockEmitter, MockEmitter, MockEmitter>;
 
 #[test]
 fn test_toggle_from_idle_starts_recording() {
+    ensure_test_model_files();
     let emitter = MockEmitter::new();
     let mut integration: TestIntegration = HotkeyIntegration::new(emitter.clone());
     let state = Mutex::new(RecordingManager::new());
@@ -114,6 +142,7 @@ fn test_toggle_from_idle_starts_recording() {
 
 #[test]
 fn test_toggle_from_recording_stops() {
+    ensure_test_model_files();
     let emitter = MockEmitter::new();
     let mut integration: TestIntegration = HotkeyIntegration::with_debounce(emitter.clone(), 0); // No debounce for test
     let state = Mutex::new(RecordingManager::new());
@@ -136,6 +165,7 @@ fn test_toggle_from_recording_stops() {
 
 #[test]
 fn test_rapid_toggle_debounced() {
+    ensure_test_model_files();
     let emitter = MockEmitter::new();
     let mut integration: TestIntegration = HotkeyIntegration::with_debounce(emitter.clone(), 100);
     let state = Mutex::new(RecordingManager::new());
@@ -159,6 +189,7 @@ fn test_rapid_toggle_debounced() {
 
 #[test]
 fn test_toggle_after_debounce_window() {
+    ensure_test_model_files();
     let emitter = MockEmitter::new();
     let mut integration: TestIntegration = HotkeyIntegration::with_debounce(emitter.clone(), 50);
     let state = Mutex::new(RecordingManager::new());
@@ -177,6 +208,7 @@ fn test_toggle_after_debounce_window() {
 
 #[test]
 fn test_events_emitted_on_each_toggle() {
+    ensure_test_model_files();
     let emitter = MockEmitter::new();
     let mut integration: TestIntegration = HotkeyIntegration::with_debounce(emitter.clone(), 0);
     let state = Mutex::new(RecordingManager::new());
@@ -220,6 +252,7 @@ fn test_toggle_from_processing_ignored() {
 
 #[test]
 fn test_is_debouncing() {
+    ensure_test_model_files();
     let emitter = MockEmitter::new();
     let mut integration: TestIntegration = HotkeyIntegration::with_debounce(emitter, 100);
     let state = Mutex::new(RecordingManager::new());
@@ -243,6 +276,7 @@ fn test_default_debounce_duration() {
 
 #[test]
 fn test_multiple_rapid_toggles_only_first_accepted() {
+    ensure_test_model_files();
     let emitter = MockEmitter::new();
     let mut integration: TestIntegration = HotkeyIntegration::with_debounce(emitter.clone(), 50);
     let state = Mutex::new(RecordingManager::new());
@@ -261,6 +295,7 @@ fn test_multiple_rapid_toggles_only_first_accepted() {
 
 #[test]
 fn test_started_payload_has_timestamp() {
+    ensure_test_model_files();
     let emitter = MockEmitter::new();
     let mut integration: TestIntegration = HotkeyIntegration::new(emitter.clone());
     let state = Mutex::new(RecordingManager::new());
@@ -275,6 +310,7 @@ fn test_started_payload_has_timestamp() {
 
 #[test]
 fn test_stopped_payload_has_metadata() {
+    ensure_test_model_files();
     let emitter = MockEmitter::new();
     let mut integration: TestIntegration = HotkeyIntegration::with_debounce(emitter.clone(), 0);
     let state = Mutex::new(RecordingManager::new());
@@ -296,6 +332,7 @@ fn test_stopped_payload_has_metadata() {
 #[test]
 fn test_toggle_without_audio_thread_still_works() {
     // Regression test: integration without audio thread should still manage state
+    ensure_test_model_files();
     let emitter = MockEmitter::new();
     let mut integration: TestIntegration = HotkeyIntegration::with_debounce(emitter.clone(), 0);
     let state = Mutex::new(RecordingManager::new());
@@ -316,6 +353,7 @@ fn test_toggle_without_audio_thread_still_works() {
 
 #[test]
 fn test_full_cycle_with_audio_thread() {
+    ensure_test_model_files();
     use crate::audio::AudioThreadHandle;
     use std::sync::Arc;
 
@@ -341,6 +379,7 @@ fn test_full_cycle_with_audio_thread() {
 
 #[test]
 fn test_audio_thread_disconnection_rolls_back_state() {
+    ensure_test_model_files();
     use crate::audio::AudioThreadHandle;
     use std::sync::Arc;
 
@@ -373,6 +412,7 @@ fn test_audio_thread_disconnection_rolls_back_state() {
 
 #[test]
 fn test_hotkey_integration_accepts_streaming_transcriber_via_builder() {
+    ensure_test_model_files();
     use crate::parakeet::StreamingTranscriber;
     use std::sync::Arc;
 
@@ -391,6 +431,7 @@ fn test_hotkey_integration_accepts_streaming_transcriber_via_builder() {
 
 #[test]
 fn test_recording_start_in_batch_mode_passes_none_streaming_sender() {
+    ensure_test_model_files();
     use crate::parakeet::{TranscriptionManager, TranscriptionMode};
     use std::sync::Arc;
 
@@ -417,6 +458,7 @@ fn test_recording_start_in_batch_mode_passes_none_streaming_sender() {
 
 #[test]
 fn test_recording_start_in_streaming_mode_creates_streaming_channel() {
+    ensure_test_model_files();
     use crate::parakeet::{TranscriptionManager, TranscriptionMode, StreamingTranscriber};
     use std::sync::Arc;
 
@@ -449,6 +491,7 @@ fn test_recording_start_in_streaming_mode_creates_streaming_channel() {
 
 #[test]
 fn test_recording_stop_in_batch_mode_calls_spawn_transcription() {
+    ensure_test_model_files();
     use crate::parakeet::{TranscriptionManager, TranscriptionMode};
     use std::sync::Arc;
 
@@ -481,6 +524,7 @@ fn test_recording_stop_in_batch_mode_calls_spawn_transcription() {
 
 #[test]
 fn test_recording_stop_in_streaming_mode_calls_finalize() {
+    ensure_test_model_files();
     use crate::parakeet::{TranscriptionManager, TranscriptionMode, StreamingTranscriber};
     use std::sync::Arc;
 

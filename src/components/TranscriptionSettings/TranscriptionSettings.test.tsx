@@ -40,7 +40,7 @@ describe("TranscriptionSettings", () => {
 
     // Default mocks
     mockInvoke.mockImplementation((cmd: string, args?: unknown) => {
-      if (cmd === "check_model_status") {
+      if (cmd === "check_parakeet_model_status") {
         return Promise.resolve(false);
       }
       if (cmd === "get_transcription_mode") {
@@ -167,7 +167,7 @@ describe("TranscriptionSettings", () => {
         if (cmd === "download_model") {
           return Promise.reject(new Error("Download failed: Network error"));
         }
-        if (cmd === "check_model_status") {
+        if (cmd === "check_parakeet_model_status") {
           return Promise.resolve(false);
         }
         if (cmd === "get_transcription_mode") {
@@ -196,7 +196,7 @@ describe("TranscriptionSettings", () => {
         if (cmd === "download_model") {
           return Promise.reject(new Error("Network error"));
         }
-        if (cmd === "check_model_status") {
+        if (cmd === "check_parakeet_model_status") {
           return Promise.resolve(false);
         }
         if (cmd === "get_transcription_mode") {
@@ -224,7 +224,7 @@ describe("TranscriptionSettings", () => {
   describe("Mode toggle functionality", () => {
     it("mode toggle is disabled when selected model is not available", async () => {
       mockInvoke.mockImplementation((cmd: string) => {
-        if (cmd === "check_model_status") {
+        if (cmd === "check_parakeet_model_status") {
           return Promise.resolve(false);
         }
         if (cmd === "get_transcription_mode") {
@@ -248,9 +248,9 @@ describe("TranscriptionSettings", () => {
 
     it("mode toggle is enabled when model is available", async () => {
       mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
-        if (cmd === "check_model_status") {
+        if (cmd === "check_parakeet_model_status") {
           const modelType = args?.modelType;
-          return Promise.resolve(modelType === "tdt");
+          return Promise.resolve(modelType === "ParakeetTDT");
         }
         if (cmd === "get_transcription_mode") {
           return Promise.resolve("batch");
@@ -268,7 +268,7 @@ describe("TranscriptionSettings", () => {
 
     it("mode toggle calls set_transcription_mode command on change", async () => {
       mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
-        if (cmd === "check_model_status") {
+        if (cmd === "check_parakeet_model_status") {
           return Promise.resolve(true);
         }
         if (cmd === "get_transcription_mode") {
@@ -295,18 +295,18 @@ describe("TranscriptionSettings", () => {
   });
 
   describe("Model status check", () => {
-    it("checks model status on component mount via check_model_status command", async () => {
+    it("checks model status on component mount via check_parakeet_model_status command", async () => {
       render(<TranscriptionSettings />);
 
       await waitFor(() => {
-        expect(mockInvoke).toHaveBeenCalledWith("check_model_status", { modelType: "tdt" });
-        expect(mockInvoke).toHaveBeenCalledWith("check_model_status", { modelType: "eou" });
+        expect(mockInvoke).toHaveBeenCalledWith("check_parakeet_model_status", { modelType: "ParakeetTDT" });
+        expect(mockInvoke).toHaveBeenCalledWith("check_parakeet_model_status", { modelType: "ParakeetEOU" });
       });
     });
 
     it("displays 'Model Ready' when model is already available", async () => {
       mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
-        if (cmd === "check_model_status") {
+        if (cmd === "check_parakeet_model_status") {
           return Promise.resolve(true);
         }
         if (cmd === "get_transcription_mode") {

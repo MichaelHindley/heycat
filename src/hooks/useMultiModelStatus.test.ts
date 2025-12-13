@@ -39,7 +39,7 @@ describe("useMultiModelStatus", () => {
 
     // Default mocks
     mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "check_model_status") {
+      if (cmd === "check_parakeet_model_status") {
         return Promise.resolve(false);
       }
       return Promise.resolve();
@@ -57,15 +57,15 @@ describe("useMultiModelStatus", () => {
     renderHook(() => useMultiModelStatus());
 
     await waitFor(() => {
-      expect(mockInvoke).toHaveBeenCalledWith("check_model_status", { modelType: "tdt" });
-      expect(mockInvoke).toHaveBeenCalledWith("check_model_status", { modelType: "eou" });
+      expect(mockInvoke).toHaveBeenCalledWith("check_parakeet_model_status", { modelType: "ParakeetTDT" });
+      expect(mockInvoke).toHaveBeenCalledWith("check_parakeet_model_status", { modelType: "ParakeetEOU" });
     });
   });
 
   it("updates model availability when status check returns true", async () => {
     mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
-      if (cmd === "check_model_status") {
-        return Promise.resolve(args?.modelType === "tdt");
+      if (cmd === "check_parakeet_model_status") {
+        return Promise.resolve(args?.modelType === "ParakeetTDT");
       }
       return Promise.resolve();
     });
@@ -183,7 +183,7 @@ describe("useMultiModelStatus", () => {
 
     // Now model becomes available
     mockInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "check_model_status") {
+      if (cmd === "check_parakeet_model_status") {
         return Promise.resolve(true);
       }
       return Promise.resolve();
