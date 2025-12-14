@@ -7,6 +7,7 @@ mod audio;
 mod commands;
 mod events;
 mod hotkey;
+mod listening;
 mod model;
 mod parakeet;
 mod recording;

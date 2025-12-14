@@ -23,6 +23,23 @@ pub mod command_events {
     pub const COMMAND_AMBIGUOUS: &str = "command_ambiguous";
 }
 
+/// Listening-related event names
+pub mod listening_events {
+    pub const WAKE_WORD_DETECTED: &str = "wake_word_detected";
+
+    /// Payload for wake_word_detected event
+    #[derive(Debug, Clone, serde::Serialize, PartialEq)]
+    #[serde(rename_all = "camelCase")]
+    pub struct WakeWordDetectedPayload {
+        /// Confidence score (0.0 - 1.0)
+        pub confidence: f32,
+        /// The transcribed text that triggered detection
+        pub transcription: String,
+        /// ISO 8601 timestamp when wake word was detected
+        pub timestamp: String,
+    }
+}
+
 /// Model-related event names
 pub mod model_events {
     pub const MODEL_DOWNLOAD_COMPLETED: &str = "model_download_completed";
@@ -757,5 +774,53 @@ mod tests {
         };
         let debug = format!("{:?}", payload);
         assert!(debug.contains("ModelFileDownloadProgressPayload"));
+    }
+
+    // Listening event tests
+
+    #[test]
+    fn test_wake_word_detected_event_name_constant() {
+        use super::listening_events;
+        assert_eq!(listening_events::WAKE_WORD_DETECTED, "wake_word_detected");
+    }
+
+    #[test]
+    fn test_wake_word_detected_payload_serialization() {
+        use super::listening_events::WakeWordDetectedPayload;
+        let payload = WakeWordDetectedPayload {
+            confidence: 0.95,
+            transcription: "hey cat".to_string(),
+            timestamp: "2025-01-01T12:00:00Z".to_string(),
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains("confidence"));
+        assert!(json.contains("0.95"));
+        assert!(json.contains("transcription"));
+        assert!(json.contains("hey cat"));
+        assert!(json.contains("timestamp"));
+    }
+
+    #[test]
+    fn test_wake_word_detected_payload_clone() {
+        use super::listening_events::WakeWordDetectedPayload;
+        let payload = WakeWordDetectedPayload {
+            confidence: 0.95,
+            transcription: "hey cat".to_string(),
+            timestamp: "2025-01-01T12:00:00Z".to_string(),
+        };
+        let cloned = payload.clone();
+        assert_eq!(payload, cloned);
+    }
+
+    #[test]
+    fn test_wake_word_detected_payload_debug() {
+        use super::listening_events::WakeWordDetectedPayload;
+        let payload = WakeWordDetectedPayload {
+            confidence: 0.95,
+            transcription: "hey cat".to_string(),
+            timestamp: "2025-01-01T12:00:00Z".to_string(),
+        };
+        let debug = format!("{:?}", payload);
+        assert!(debug.contains("WakeWordDetectedPayload"));
     }
 }
