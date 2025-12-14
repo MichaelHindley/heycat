@@ -1,6 +1,5 @@
 use super::*;
 use crate::voice_commands::registry::{ActionType, CommandDefinition};
-use std::path::PathBuf;
 use tempfile::TempDir;
 
 fn create_test_registry() -> (CommandRegistry, TempDir) {

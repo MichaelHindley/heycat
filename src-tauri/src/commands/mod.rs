@@ -16,7 +16,7 @@ use crate::events::{
     CommandExecutedPayload, CommandFailedPayload, CommandMatchedPayload, RecordingErrorPayload,
     RecordingEventEmitter, RecordingStartedPayload, RecordingStoppedPayload,
     TranscriptionCompletedPayload, TranscriptionErrorPayload, TranscriptionEventEmitter,
-    TranscriptionPartialPayload, TranscriptionStartedPayload,
+    TranscriptionStartedPayload,
 };
 use crate::audio::AudioThreadHandle;
 use crate::parakeet::TranscriptionManager;
@@ -78,10 +78,6 @@ impl TranscriptionEventEmitter for TauriEventEmitter {
     fn emit_transcription_error(&self, payload: TranscriptionErrorPayload) {
         emit_or_warn!(self.app_handle, event_names::TRANSCRIPTION_ERROR, payload);
     }
-
-    fn emit_transcription_partial(&self, payload: TranscriptionPartialPayload) {
-        emit_or_warn!(self.app_handle, event_names::TRANSCRIPTION_PARTIAL, payload);
-    }
 }
 
 impl CommandEventEmitter for TauriEventEmitter {
@@ -118,9 +114,7 @@ pub fn start_recording(
                 false
             }
         };
-    // Note: This Tauri command always uses batch mode (no streaming sender)
-    // Streaming mode is only triggered via hotkey with streaming_transcriber configured
-    let result = start_recording_impl(state.as_ref(), Some(audio_thread.as_ref()), model_available, None);
+    let result = start_recording_impl(state.as_ref(), Some(audio_thread.as_ref()), model_available);
 
     // Emit event on success for frontend state sync
     if result.is_ok() {

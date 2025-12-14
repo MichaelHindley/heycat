@@ -13,7 +13,6 @@ pub mod event_names {
     pub const TRANSCRIPTION_STARTED: &str = "transcription_started";
     pub const TRANSCRIPTION_COMPLETED: &str = "transcription_completed";
     pub const TRANSCRIPTION_ERROR: &str = "transcription_error";
-    pub const TRANSCRIPTION_PARTIAL: &str = "transcription_partial";
 }
 
 /// Command-related event names
@@ -104,15 +103,6 @@ pub struct TranscriptionErrorPayload {
     pub error: String,
 }
 
-/// Payload for transcription_partial event (streaming transcription)
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct TranscriptionPartialPayload {
-    /// Accumulated partial transcription text so far
-    pub text: String,
-    /// Whether this is the final update before completed event
-    pub is_final: bool,
-}
-
 /// Payload for command_matched event
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct CommandMatchedPayload {
@@ -194,9 +184,6 @@ pub trait TranscriptionEventEmitter: Send + Sync {
 
     /// Emit transcription_error event
     fn emit_transcription_error(&self, payload: TranscriptionErrorPayload);
-
-    /// Emit transcription_partial event (for streaming transcription)
-    fn emit_transcription_partial(&self, payload: TranscriptionPartialPayload);
 }
 
 /// Trait for emitting command events
@@ -234,7 +221,6 @@ mod tests {
         pub transcription_started_events: Arc<Mutex<Vec<TranscriptionStartedPayload>>>,
         pub transcription_completed_events: Arc<Mutex<Vec<TranscriptionCompletedPayload>>>,
         pub transcription_error_events: Arc<Mutex<Vec<TranscriptionErrorPayload>>>,
-        pub transcription_partial_events: Arc<Mutex<Vec<TranscriptionPartialPayload>>>,
         pub command_matched_events: Arc<Mutex<Vec<CommandMatchedPayload>>>,
         pub command_executed_events: Arc<Mutex<Vec<CommandExecutedPayload>>>,
         pub command_failed_events: Arc<Mutex<Vec<CommandFailedPayload>>>,
@@ -272,10 +258,6 @@ mod tests {
 
         fn emit_transcription_error(&self, payload: TranscriptionErrorPayload) {
             self.transcription_error_events.lock().unwrap().push(payload);
-        }
-
-        fn emit_transcription_partial(&self, payload: TranscriptionPartialPayload) {
-            self.transcription_partial_events.lock().unwrap().push(payload);
         }
     }
 
@@ -569,58 +551,6 @@ mod tests {
         };
         let debug = format!("{:?}", error);
         assert!(debug.contains("TranscriptionErrorPayload"));
-    }
-
-    #[test]
-    fn test_transcription_partial_event_name_constant() {
-        assert_eq!(event_names::TRANSCRIPTION_PARTIAL, "transcription_partial");
-    }
-
-    #[test]
-    fn test_transcription_partial_payload_serialization() {
-        let payload = TranscriptionPartialPayload {
-            text: "Hello world".to_string(),
-            is_final: false,
-        };
-        let json = serde_json::to_string(&payload).unwrap();
-        assert!(json.contains("text"));
-        assert!(json.contains("Hello world"));
-        assert!(json.contains("is_final"));
-        assert!(json.contains("false"));
-    }
-
-    #[test]
-    fn test_transcription_partial_payload_clone() {
-        let payload = TranscriptionPartialPayload {
-            text: "Test".to_string(),
-            is_final: true,
-        };
-        let cloned = payload.clone();
-        assert_eq!(payload, cloned);
-    }
-
-    #[test]
-    fn test_transcription_partial_payload_debug() {
-        let payload = TranscriptionPartialPayload {
-            text: "Test".to_string(),
-            is_final: false,
-        };
-        let debug = format!("{:?}", payload);
-        assert!(debug.contains("TranscriptionPartialPayload"));
-    }
-
-    #[test]
-    fn test_mock_emitter_records_partial_event() {
-        let emitter = MockEventEmitter::new();
-        let payload = TranscriptionPartialPayload {
-            text: "Hello".to_string(),
-            is_final: false,
-        };
-        emitter.emit_transcription_partial(payload.clone());
-
-        let events = emitter.transcription_partial_events.lock().unwrap();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0], payload);
     }
 
     // Command event tests

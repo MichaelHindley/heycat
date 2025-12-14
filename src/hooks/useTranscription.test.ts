@@ -34,7 +34,7 @@ describe("useTranscription", () => {
     renderHook(() => useTranscription());
 
     await waitFor(() => {
-      expect(mockListen).toHaveBeenCalledTimes(4);
+      expect(mockListen).toHaveBeenCalledTimes(3);
     });
 
     expect(mockListen).toHaveBeenCalledWith(
@@ -47,10 +47,6 @@ describe("useTranscription", () => {
     );
     expect(mockListen).toHaveBeenCalledWith(
       "transcription_error",
-      expect.any(Function)
-    );
-    expect(mockListen).toHaveBeenCalledWith(
-      "transcription_partial",
       expect.any(Function)
     );
   });
@@ -176,13 +172,13 @@ describe("useTranscription", () => {
     const { unmount } = renderHook(() => useTranscription());
 
     await waitFor(() => {
-      expect(mockListen).toHaveBeenCalledTimes(4);
+      expect(mockListen).toHaveBeenCalledTimes(3);
     });
 
     unmount();
 
     // Each listener's unlisten function should be called
-    expect(mockUnlisten).toHaveBeenCalledTimes(4);
+    expect(mockUnlisten).toHaveBeenCalledTimes(3);
   });
 
   it("clears previous state when new transcription starts", async () => {

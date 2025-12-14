@@ -49,15 +49,6 @@ impl Clone for AudioBuffer {
 /// Target sample rate for audio capture (16 kHz for speech recognition models)
 pub const TARGET_SAMPLE_RATE: u32 = 16000;
 
-/// Chunk size for streaming transcription (160ms at 16kHz)
-/// EOU model processes audio in 160ms chunks for real-time transcription
-pub const STREAMING_CHUNK_SIZE: usize = 2560; // 160ms * 16kHz
-
-/// Sender for streaming audio chunks to transcriber
-pub type StreamingAudioSender = std::sync::mpsc::SyncSender<Vec<f32>>;
-/// Receiver for streaming audio chunks
-pub type StreamingAudioReceiver = std::sync::mpsc::Receiver<Vec<f32>>;
-
 /// Maximum buffer size in samples (~10 minutes at 16kHz = 9.6M samples)
 /// This prevents unlimited memory growth during long recordings.
 /// At 16kHz mono, this is approximately 38MB of f32 data.
@@ -128,14 +119,10 @@ pub trait AudioCaptureBackend {
     ///
     /// The optional `stop_signal` sender can be used by callbacks to signal
     /// that recording should stop (e.g., buffer full, lock error).
-    ///
-    /// The optional `streaming_sender` can be used to receive 160ms audio chunks
-    /// in real-time for streaming transcription.
     fn start(
         &mut self,
         buffer: AudioBuffer,
         stop_signal: Option<std::sync::mpsc::Sender<StopReason>>,
-        streaming_sender: Option<StreamingAudioSender>,
     ) -> Result<u32, AudioCaptureError>;
 
     /// Stop capturing audio

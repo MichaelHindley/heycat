@@ -14,9 +14,6 @@ pub enum ModelType {
     /// Parakeet TDT model for batch transcription
     #[serde(rename = "tdt")]
     ParakeetTDT,
-    /// Parakeet EOU model for streaming transcription
-    #[serde(rename = "eou")]
-    ParakeetEOU,
 }
 
 impl ModelType {
@@ -24,7 +21,6 @@ impl ModelType {
     pub fn dir_name(&self) -> &'static str {
         match self {
             ModelType::ParakeetTDT => "parakeet-tdt",
-            ModelType::ParakeetEOU => "parakeet-eou",
         }
     }
 }
@@ -33,7 +29,6 @@ impl std::fmt::Display for ModelType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ModelType::ParakeetTDT => write!(f, "tdt"),
-            ModelType::ParakeetEOU => write!(f, "eou"),
         }
     }
 }
@@ -81,30 +76,6 @@ impl ModelManifest {
                 ModelFile {
                     name: "vocab.txt".into(),
                     size_bytes: 96_154,
-                },
-            ],
-        }
-    }
-
-    /// Create manifest for Parakeet EOU model
-    /// Uses community ONNX conversion from altunenes/parakeet-rs
-    pub fn eou() -> Self {
-        Self {
-            model_type: ModelType::ParakeetEOU,
-            base_url:
-                "https://huggingface.co/altunenes/parakeet-rs/resolve/main/realtime_eou_120m-v1-onnx/".into(),
-            files: vec![
-                ModelFile {
-                    name: "encoder.onnx".into(),
-                    size_bytes: 481_296_384, // ~459 MB
-                },
-                ModelFile {
-                    name: "decoder_joint.onnx".into(),
-                    size_bytes: 22_334_054, // ~21.3 MB
-                },
-                ModelFile {
-                    name: "tokenizer.json".into(),
-                    size_bytes: 20_582, // ~20.1 KB
                 },
             ],
         }
@@ -168,7 +139,6 @@ pub fn check_model_exists_for_type(model_type: ModelType) -> Result<bool, ModelE
     let model_dir = get_model_dir(model_type)?;
     let manifest = match model_type {
         ModelType::ParakeetTDT => ModelManifest::tdt(),
-        ModelType::ParakeetEOU => ModelManifest::eou(),
     };
     Ok(check_model_files_exist_in_dir(&model_dir, &manifest))
 }
@@ -443,13 +413,11 @@ mod tests {
     #[test]
     fn test_model_type_dir_name() {
         assert_eq!(ModelType::ParakeetTDT.dir_name(), "parakeet-tdt");
-        assert_eq!(ModelType::ParakeetEOU.dir_name(), "parakeet-eou");
     }
 
     #[test]
     fn test_model_type_display() {
         assert_eq!(format!("{}", ModelType::ParakeetTDT), "tdt");
-        assert_eq!(format!("{}", ModelType::ParakeetEOU), "eou");
     }
 
     #[test]
@@ -463,9 +431,6 @@ mod tests {
         let a = ModelType::ParakeetTDT;
         let b = a;
         assert_eq!(a, b);
-
-        let c = ModelType::ParakeetEOU;
-        assert_ne!(a, c);
     }
 
     #[test]
@@ -476,14 +441,6 @@ mod tests {
 
         let deserialized: ModelType = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized, ModelType::ParakeetTDT);
-
-        // Test EOU variant
-        let eou_type = ModelType::ParakeetEOU;
-        let eou_json = serde_json::to_string(&eou_type).unwrap();
-        assert_eq!(eou_json, "\"eou\"");
-
-        let eou_deserialized: ModelType = serde_json::from_str(&eou_json).unwrap();
-        assert_eq!(eou_deserialized, ModelType::ParakeetEOU);
     }
 
     // ModelManifest tests
@@ -502,20 +459,6 @@ mod tests {
         assert!(file_names.contains(&"encoder-model.onnx.data"));
         assert!(file_names.contains(&"decoder_joint-model.onnx"));
         assert!(file_names.contains(&"vocab.txt"));
-    }
-
-    #[test]
-    fn test_model_manifest_eou_returns_correct_file_list() {
-        let manifest = ModelManifest::eou();
-        assert_eq!(manifest.model_type, ModelType::ParakeetEOU);
-        assert_eq!(manifest.files.len(), 3);
-        assert!(manifest.base_url.contains("huggingface.co"));
-
-        // Verify expected files
-        let file_names: Vec<&str> = manifest.files.iter().map(|f| f.name.as_str()).collect();
-        assert!(file_names.contains(&"encoder.onnx"));
-        assert!(file_names.contains(&"decoder_joint.onnx"));
-        assert!(file_names.contains(&"tokenizer.json"));
     }
 
     #[test]
@@ -544,17 +487,6 @@ mod tests {
         assert!(
             path.ends_with("heycat/models/parakeet-tdt")
                 || path.ends_with("heycat\\models\\parakeet-tdt")
-        );
-    }
-
-    #[test]
-    fn test_get_model_dir_eou_returns_correct_path() {
-        let result = get_model_dir(ModelType::ParakeetEOU);
-        assert!(result.is_ok());
-        let path = result.unwrap();
-        assert!(
-            path.ends_with("heycat/models/parakeet-eou")
-                || path.ends_with("heycat\\models\\parakeet-eou")
         );
     }
 

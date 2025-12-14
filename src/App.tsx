@@ -5,9 +5,11 @@ import { TranscriptionIndicator } from "./components/TranscriptionIndicator";
 import { TranscriptionNotification } from "./components/TranscriptionNotification";
 import { Sidebar } from "./components/Sidebar";
 import { useTranscription } from "./hooks/useTranscription";
+import { useCatOverlay } from "./hooks/useCatOverlay";
 
 function App() {
   const { isTranscribing } = useTranscription();
+  useCatOverlay();
 
   return (
     <div className="app-layout">

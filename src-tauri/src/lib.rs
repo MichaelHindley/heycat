@@ -10,7 +10,6 @@ mod hotkey;
 mod model;
 mod parakeet;
 mod recording;
-mod settings;
 mod voice_commands;
 
 use std::sync::{Arc, Mutex};
@@ -68,19 +67,9 @@ pub fn run() {
             // Manage audio thread state for Tauri commands
             app.manage(audio_thread.clone());
 
-            // Load settings from disk
-            debug!("Loading settings...");
-            let app_settings = settings::load_settings();
-            info!("Loaded transcription mode from settings: {:?}", app_settings.transcription_mode);
-
             // Create and manage TranscriptionManager for transcription
             debug!("Creating TranscriptionManager...");
             let transcription_manager = Arc::new(parakeet::TranscriptionManager::new());
-
-            // Apply saved transcription mode from settings
-            if let Err(e) = transcription_manager.set_mode(app_settings.transcription_mode) {
-                warn!("Failed to apply saved transcription mode: {}", e);
-            }
 
             app.manage(transcription_manager.clone());
 
@@ -123,50 +112,6 @@ pub fn run() {
                 info!("TDT model not found, batch transcription will require download first");
             }
 
-            // Load EOU model if available
-            if let Ok(true) = model::check_model_exists_for_type(model::download::ModelType::ParakeetEOU) {
-                if let Ok(model_dir) = model::download::get_model_dir(model::download::ModelType::ParakeetEOU) {
-                    info!("Loading Parakeet EOU model from {:?}...", model_dir);
-                    match transcription_manager.load_eou_model(&model_dir) {
-                        Ok(()) => info!("Parakeet EOU model loaded successfully"),
-                        Err(e) => warn!("Failed to load Parakeet EOU model: {}", e),
-                    }
-                }
-            } else {
-                info!("EOU model not found, streaming transcription will require download first");
-            }
-
-            // Create streaming transcriber for real-time transcription
-            debug!("Creating StreamingTranscriber...");
-            let streaming_emitter = Arc::new(commands::TauriEventEmitter::new(app.handle().clone()));
-            let streaming_transcriber = Arc::new(Mutex::new(
-                parakeet::StreamingTranscriber::new(streaming_emitter)
-            ));
-
-            // Load EOU model into streaming transcriber if available
-            match model::check_model_exists_for_type(model::download::ModelType::ParakeetEOU) {
-                Ok(true) => {
-                    if let Ok(model_dir) = model::download::get_model_dir(model::download::ModelType::ParakeetEOU) {
-                        info!("Loading Parakeet EOU model from {:?} into StreamingTranscriber...", model_dir);
-                        match streaming_transcriber.lock().unwrap().load_model(&model_dir) {
-                            Ok(()) => info!("StreamingTranscriber EOU model loaded successfully"),
-                            Err(e) => warn!("Failed to load EOU model into StreamingTranscriber: {}", e),
-                        }
-                    } else {
-                        warn!("EOU model exists but couldn't get model directory");
-                    }
-                }
-                Ok(false) => {
-                    warn!("EOU model not available (check_model_exists_for_type returned false) - streaming transcription will not work!");
-                }
-                Err(e) => {
-                    warn!("Error checking EOU model availability: {} - streaming transcription will not work!", e);
-                }
-            }
-
-            // Register streaming_transcriber as Tauri state so download_model command can access it
-            app.manage(streaming_transcriber.clone());
-
             // Create a wrapper to pass to HotkeyIntegration (it needs owned value, not Arc)
             let recording_emitter = commands::TauriEventEmitter::new(app.handle().clone());
             let command_emitter = Arc::new(commands::TauriEventEmitter::new(app.handle().clone()));
@@ -180,8 +125,7 @@ pub fn run() {
                 .with_transcription_manager(transcription_manager)
                 .with_transcription_emitter(emitter)
                 .with_recording_state(recording_state.clone())
-                .with_command_emitter(command_emitter)
-                .with_streaming_transcriber(streaming_transcriber);
+                .with_command_emitter(command_emitter);
 
             // Wire up voice command integration if available
             if let (Some(registry), Some(matcher), Some(dispatcher)) = (command_registry, command_matcher, action_dispatcher) {
@@ -256,8 +200,6 @@ pub fn run() {
             commands::transcribe_file,
             model::check_parakeet_model_status,
             model::download_model,
-            parakeet::get_transcription_mode,
-            parakeet::set_transcription_mode,
             voice_commands::get_commands,
             voice_commands::add_command,
             voice_commands::update_command,

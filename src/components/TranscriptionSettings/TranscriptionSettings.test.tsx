@@ -51,7 +51,7 @@ describe("TranscriptionSettings", () => {
   });
 
   describe("Component rendering", () => {
-    it("renders with both model sections visible", async () => {
+    it("renders with TDT model section visible", async () => {
       render(<TranscriptionSettings />);
 
       await waitFor(() => {
@@ -59,16 +59,14 @@ describe("TranscriptionSettings", () => {
       });
 
       expect(screen.getByText("Batch (TDT)")).toBeDefined();
-      expect(screen.getByText("Streaming (EOU)")).toBeDefined();
     });
 
-    it("displays model descriptions", async () => {
+    it("displays model description", async () => {
       render(<TranscriptionSettings />);
 
       await waitFor(() => {
         expect(screen.getByText("High-accuracy transcription after recording completes")).toBeDefined();
       });
-      expect(screen.getByText("Real-time transcription as you speak")).toBeDefined();
     });
 
     it("applies custom className", async () => {
@@ -94,21 +92,6 @@ describe("TranscriptionSettings", () => {
       await userEvent.click(downloadButton!);
 
       expect(mockInvoke).toHaveBeenCalledWith("download_model", { modelType: "tdt" });
-    });
-
-    it("EOU download button triggers download_model with model_type='eou'", async () => {
-      render(<TranscriptionSettings />);
-
-      await waitFor(() => {
-        expect(screen.getByText("Streaming (EOU)")).toBeDefined();
-      });
-
-      const eouCard = screen.getByText("Streaming (EOU)").closest(".transcription-settings__model-card");
-      const downloadButton = eouCard?.querySelector("button");
-
-      await userEvent.click(downloadButton!);
-
-      expect(mockInvoke).toHaveBeenCalledWith("download_model", { modelType: "eou" });
     });
 
     it("progress bar updates when model_file_download_progress event is received", async () => {
@@ -170,10 +153,7 @@ describe("TranscriptionSettings", () => {
         if (cmd === "check_parakeet_model_status") {
           return Promise.resolve(false);
         }
-        if (cmd === "get_transcription_mode") {
-          return Promise.resolve("batch");
-        }
-        return Promise.resolve();
+          return Promise.resolve();
       });
 
       render(<TranscriptionSettings />);
@@ -199,10 +179,7 @@ describe("TranscriptionSettings", () => {
         if (cmd === "check_parakeet_model_status") {
           return Promise.resolve(false);
         }
-        if (cmd === "get_transcription_mode") {
-          return Promise.resolve("batch");
-        }
-        return Promise.resolve();
+          return Promise.resolve();
       });
 
       render(<TranscriptionSettings />);
@@ -221,86 +198,12 @@ describe("TranscriptionSettings", () => {
     });
   });
 
-  describe("Mode toggle functionality", () => {
-    it("mode toggle is disabled when selected model is not available", async () => {
-      mockInvoke.mockImplementation((cmd: string) => {
-        if (cmd === "check_parakeet_model_status") {
-          return Promise.resolve(false);
-        }
-        if (cmd === "get_transcription_mode") {
-          return Promise.resolve("batch");
-        }
-        return Promise.resolve();
-      });
-
-      render(<TranscriptionSettings />);
-
-      await waitFor(() => {
-        expect(screen.getByText("Mode")).toBeDefined();
-      });
-
-      const batchRadio = screen.getByRole("radio", { name: /batch/i });
-      const streamingRadio = screen.getByRole("radio", { name: /streaming/i });
-
-      expect(batchRadio).toHaveProperty("disabled", true);
-      expect(streamingRadio).toHaveProperty("disabled", true);
-    });
-
-    it("mode toggle is enabled when model is available", async () => {
-      mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
-        if (cmd === "check_parakeet_model_status") {
-          const modelType = args?.modelType;
-          return Promise.resolve(modelType === "tdt");
-        }
-        if (cmd === "get_transcription_mode") {
-          return Promise.resolve("batch");
-        }
-        return Promise.resolve();
-      });
-
-      render(<TranscriptionSettings />);
-
-      await waitFor(() => {
-        const batchRadio = screen.getByRole("radio", { name: /batch/i });
-        expect(batchRadio).toHaveProperty("disabled", false);
-      });
-    });
-
-    it("mode toggle calls set_transcription_mode command on change", async () => {
-      mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
-        if (cmd === "check_parakeet_model_status") {
-          return Promise.resolve(true);
-        }
-        if (cmd === "get_transcription_mode") {
-          return Promise.resolve("batch");
-        }
-        if (cmd === "set_transcription_mode") {
-          return Promise.resolve();
-        }
-        return Promise.resolve();
-      });
-
-      render(<TranscriptionSettings />);
-
-      await waitFor(() => {
-        const streamingRadio = screen.getByRole("radio", { name: /streaming/i });
-        expect(streamingRadio).toHaveProperty("disabled", false);
-      });
-
-      const streamingRadio = screen.getByRole("radio", { name: /streaming/i });
-      await userEvent.click(streamingRadio);
-
-      expect(mockInvoke).toHaveBeenCalledWith("set_transcription_mode", { mode: "streaming" });
-    });
-  });
-
   describe("Model status check", () => {
     it("checks model status on component mount via check_parakeet_model_status command", async () => {
       render(<TranscriptionSettings />);
 
       await waitFor(() => {
         expect(mockInvoke).toHaveBeenCalledWith("check_parakeet_model_status", { modelType: "tdt" });
-        expect(mockInvoke).toHaveBeenCalledWith("check_parakeet_model_status", { modelType: "eou" });
       });
     });
 
@@ -309,17 +212,13 @@ describe("TranscriptionSettings", () => {
         if (cmd === "check_parakeet_model_status") {
           return Promise.resolve(true);
         }
-        if (cmd === "get_transcription_mode") {
-          return Promise.resolve("batch");
-        }
-        return Promise.resolve();
+          return Promise.resolve();
       });
 
       render(<TranscriptionSettings />);
 
       await waitFor(() => {
-        const readyButtons = screen.getAllByText("Model Ready");
-        expect(readyButtons.length).toBe(2);
+        expect(screen.getByText("Model Ready")).toBeDefined();
       });
     });
   });
@@ -333,7 +232,6 @@ describe("TranscriptionSettings", () => {
       });
 
       expect(screen.getByLabelText("Click to download Batch (TDT) model")).toBeDefined();
-      expect(screen.getByLabelText("Click to download Streaming (EOU) model")).toBeDefined();
     });
 
     it("has proper role and aria-label for the settings region", async () => {
@@ -341,14 +239,6 @@ describe("TranscriptionSettings", () => {
 
       await waitFor(() => {
         expect(screen.getByRole("region", { name: "Transcription settings" })).toBeDefined();
-      });
-    });
-
-    it("mode toggle has proper radiogroup role", async () => {
-      render(<TranscriptionSettings />);
-
-      await waitFor(() => {
-        expect(screen.getByRole("radiogroup", { name: "Transcription mode" })).toBeDefined();
       });
     });
 

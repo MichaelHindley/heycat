@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 
 /** Types of models that can be downloaded */
-export type ModelType = "tdt" | "eou";
+export type ModelType = "tdt";
 
 /** Download state for a model */
 export type DownloadState = "idle" | "downloading" | "completed" | "error";
@@ -33,11 +33,11 @@ interface ModelDownloadCompletedPayload {
 
 /** Return type of the useMultiModelStatus hook */
 export interface UseMultiModelStatusResult {
-  /** Status for each model type */
-  models: Record<ModelType, ModelStatus>;
-  /** Function to start downloading a specific model */
+  /** Status for the TDT model */
+  models: ModelStatus;
+  /** Function to start downloading the model */
   downloadModel: (modelType: ModelType) => Promise<void>;
-  /** Function to refresh status for all models */
+  /** Function to refresh model status */
   refreshStatus: () => Promise<void>;
 }
 
@@ -49,20 +49,17 @@ const initialModelStatus: ModelStatus = {
 };
 
 /**
- * Custom hook for managing multiple model statuses (TDT and EOU)
- * Provides methods to check availability and trigger downloads for each model type
+ * Custom hook for managing TDT model status
+ * Provides methods to check availability and trigger download
  */
 export function useMultiModelStatus(): UseMultiModelStatusResult {
-  const [models, setModels] = useState<Record<ModelType, ModelStatus>>({
-    tdt: { ...initialModelStatus },
-    eou: { ...initialModelStatus },
-  });
+  const [models, setModels] = useState<ModelStatus>({ ...initialModelStatus });
 
   const updateModelStatus = useCallback(
-    (modelType: ModelType, updates: Partial<ModelStatus>) => {
+    (_modelType: ModelType, updates: Partial<ModelStatus>) => {
       setModels((prev) => ({
         ...prev,
-        [modelType]: { ...prev[modelType], ...updates },
+        ...updates,
       }));
     },
     []
@@ -71,28 +68,18 @@ export function useMultiModelStatus(): UseMultiModelStatusResult {
   const refreshStatus = useCallback(async () => {
     /* v8 ignore start -- @preserve */
     try {
-      const [tdtAvailable, eouAvailable] = await Promise.all([
-        invoke<boolean>("check_parakeet_model_status", { modelType: "tdt" }),
-        invoke<boolean>("check_parakeet_model_status", { modelType: "eou" }),
-      ]);
+      const tdtAvailable = await invoke<boolean>("check_parakeet_model_status", { modelType: "tdt" });
 
       setModels((prev) => ({
-        tdt: {
-          ...prev.tdt,
-          isAvailable: tdtAvailable,
-          downloadState: tdtAvailable ? "completed" : prev.tdt.downloadState,
-        },
-        eou: {
-          ...prev.eou,
-          isAvailable: eouAvailable,
-          downloadState: eouAvailable ? "completed" : prev.eou.downloadState,
-        },
+        ...prev,
+        isAvailable: tdtAvailable,
+        downloadState: tdtAvailable ? "completed" : prev.downloadState,
       }));
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : String(e);
       setModels((prev) => ({
-        tdt: { ...prev.tdt, error: errorMsg },
-        eou: { ...prev.eou, error: errorMsg },
+        ...prev,
+        error: errorMsg,
       }));
     }
     /* v8 ignore stop */
@@ -133,7 +120,7 @@ export function useMultiModelStatus(): UseMultiModelStatusResult {
         "model_file_download_progress",
         (event) => {
           const modelType = event.payload.modelType as ModelType;
-          if (modelType === "tdt" || modelType === "eou") {
+          if (modelType === "tdt") {
             updateModelStatus(modelType, {
               progress: event.payload.percent,
             });
@@ -147,7 +134,7 @@ export function useMultiModelStatus(): UseMultiModelStatusResult {
         "model_download_completed",
         (event) => {
           const modelType = event.payload.modelType as ModelType;
-          if (modelType === "tdt" || modelType === "eou") {
+          if (modelType === "tdt") {
             updateModelStatus(modelType, {
               isAvailable: true,
               downloadState: "completed",

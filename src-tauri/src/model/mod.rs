@@ -9,13 +9,11 @@ pub use download::{
     ModelManifest, ModelType,
 };
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 
-use crate::commands::TauriEventEmitter;
 use crate::events::model_events;
-use crate::parakeet::{StreamingTranscriber, TranscriptionManager};
-use crate::{info, warn};
+use crate::parakeet::TranscriptionManager;
 
 /// Check if a Parakeet model (TDT or EOU) is available
 /// model_type: "ParakeetTDT" or "ParakeetEOU"
@@ -57,7 +55,7 @@ impl ModelDownloadEventEmitter for TauriEmitter {
     }
 }
 
-/// Download a Parakeet model (TDT or EOU) from HuggingFace
+/// Download a Parakeet model (TDT) from HuggingFace
 /// Emits progress events during download and completion event when done
 /// Automatically loads the model into memory after download
 #[tauri::command]
@@ -65,12 +63,8 @@ pub async fn download_model(
     app_handle: AppHandle,
     model_type: ModelType,
     transcription_manager: State<'_, Arc<TranscriptionManager>>,
-    streaming_transcriber: State<'_, Arc<Mutex<StreamingTranscriber<TauriEventEmitter>>>>,
 ) -> Result<String, String> {
-    let manifest = match model_type {
-        ModelType::ParakeetTDT => ModelManifest::tdt(),
-        ModelType::ParakeetEOU => ModelManifest::eou(),
-    };
+    let manifest = ModelManifest::tdt();
 
     let model_type_str = model_type.to_string();
     let emitter = TauriEmitter(app_handle.clone());
@@ -79,28 +73,11 @@ pub async fn download_model(
         .await
         .map_err(|e| e.to_string())?;
 
-    // Load the model into memory
+    // Load the TDT model into memory
     let model_dir = get_model_dir(model_type).map_err(|e| e.to_string())?;
-    match model_type {
-        ModelType::ParakeetTDT => {
-            transcription_manager
-                .load_tdt_model(&model_dir)
-                .map_err(|e| format!("Model downloaded but failed to load: {}", e))?;
-        }
-        ModelType::ParakeetEOU => {
-            transcription_manager
-                .load_eou_model(&model_dir)
-                .map_err(|e| format!("Model downloaded but failed to load: {}", e))?;
-
-            // Also load into StreamingTranscriber for streaming mode
-            if let Ok(mut transcriber) = streaming_transcriber.lock() {
-                match transcriber.load_model(&model_dir) {
-                    Ok(()) => info!("EOU model loaded into StreamingTranscriber"),
-                    Err(e) => warn!("Failed to load EOU into StreamingTranscriber: {}", e),
-                }
-            }
-        }
-    }
+    transcription_manager
+        .load_tdt_model(&model_dir)
+        .map_err(|e| format!("Model downloaded but failed to load: {}", e))?;
 
     // Emit completion event
     let _ = app_handle.emit(

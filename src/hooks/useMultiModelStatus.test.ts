@@ -46,26 +46,24 @@ describe("useMultiModelStatus", () => {
     });
   });
 
-  it("initializes with both models as unavailable", async () => {
+  it("initializes with model as unavailable", async () => {
     const { result } = renderHook(() => useMultiModelStatus());
 
-    expect(result.current.models.tdt.isAvailable).toBe(false);
-    expect(result.current.models.eou.isAvailable).toBe(false);
+    expect(result.current.models.isAvailable).toBe(false);
   });
 
-  it("checks both model statuses on mount", async () => {
+  it("checks model status on mount", async () => {
     renderHook(() => useMultiModelStatus());
 
     await waitFor(() => {
       expect(mockInvoke).toHaveBeenCalledWith("check_parakeet_model_status", { modelType: "tdt" });
-      expect(mockInvoke).toHaveBeenCalledWith("check_parakeet_model_status", { modelType: "eou" });
     });
   });
 
   it("updates model availability when status check returns true", async () => {
-    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+    mockInvoke.mockImplementation((cmd: string) => {
       if (cmd === "check_parakeet_model_status") {
-        return Promise.resolve(args?.modelType === "tdt");
+        return Promise.resolve(true);
       }
       return Promise.resolve();
     });
@@ -73,9 +71,8 @@ describe("useMultiModelStatus", () => {
     const { result } = renderHook(() => useMultiModelStatus());
 
     await waitFor(() => {
-      expect(result.current.models.tdt.isAvailable).toBe(true);
-      expect(result.current.models.tdt.downloadState).toBe("completed");
-      expect(result.current.models.eou.isAvailable).toBe(false);
+      expect(result.current.models.isAvailable).toBe(true);
+      expect(result.current.models.downloadState).toBe("completed");
     });
   });
 
@@ -100,7 +97,7 @@ describe("useMultiModelStatus", () => {
     const { result } = renderHook(() => useMultiModelStatus());
 
     await waitFor(() => {
-      expect(result.current.models.tdt.downloadState).toBe("idle");
+      expect(result.current.models.downloadState).toBe("idle");
     });
 
     act(() => {
@@ -108,7 +105,7 @@ describe("useMultiModelStatus", () => {
     });
 
     await waitFor(() => {
-      expect(result.current.models.tdt.downloadState).toBe("downloading");
+      expect(result.current.models.downloadState).toBe("downloading");
     });
   });
 
@@ -129,7 +126,7 @@ describe("useMultiModelStatus", () => {
       });
     });
 
-    expect(result.current.models.tdt.progress).toBe(50);
+    expect(result.current.models.progress).toBe(50);
   });
 
   it("sets downloadState to 'completed' when model_download_completed event is received", async () => {
@@ -141,14 +138,14 @@ describe("useMultiModelStatus", () => {
 
     act(() => {
       emitEvent("model_download_completed", {
-        modelType: "eou",
+        modelType: "tdt",
         modelPath: "/path/to/model",
       });
     });
 
-    expect(result.current.models.eou.isAvailable).toBe(true);
-    expect(result.current.models.eou.downloadState).toBe("completed");
-    expect(result.current.models.eou.progress).toBe(100);
+    expect(result.current.models.isAvailable).toBe(true);
+    expect(result.current.models.downloadState).toBe("completed");
+    expect(result.current.models.progress).toBe(100);
   });
 
   it("sets downloadState to 'error' when download fails", async () => {
@@ -162,23 +159,23 @@ describe("useMultiModelStatus", () => {
     const { result } = renderHook(() => useMultiModelStatus());
 
     await waitFor(() => {
-      expect(result.current.models.tdt.downloadState).toBe("idle");
+      expect(result.current.models.downloadState).toBe("idle");
     });
 
     await act(async () => {
       await result.current.downloadModel("tdt");
     });
 
-    expect(result.current.models.tdt.downloadState).toBe("error");
-    expect(result.current.models.tdt.error).toBe("Download failed");
+    expect(result.current.models.downloadState).toBe("error");
+    expect(result.current.models.error).toBe("Download failed");
   });
 
-  it("refreshStatus updates both model availabilities", async () => {
+  it("refreshStatus updates model availability", async () => {
     const { result } = renderHook(() => useMultiModelStatus());
 
-    // Initial check shows both unavailable
+    // Initial check shows unavailable
     await waitFor(() => {
-      expect(result.current.models.tdt.isAvailable).toBe(false);
+      expect(result.current.models.isAvailable).toBe(false);
     });
 
     // Now model becomes available
@@ -193,8 +190,7 @@ describe("useMultiModelStatus", () => {
       await result.current.refreshStatus();
     });
 
-    expect(result.current.models.tdt.isAvailable).toBe(true);
-    expect(result.current.models.eou.isAvailable).toBe(true);
+    expect(result.current.models.isAvailable).toBe(true);
   });
 
   it("cleans up event listeners on unmount", async () => {
