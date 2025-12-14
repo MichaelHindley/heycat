@@ -1,18 +1,61 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import catVideo from "../../assets/video/cat_listening.webm";
 import "./CatOverlay.css";
 
+/** Overlay visual mode */
+type OverlayMode = "hidden" | "listening" | "recording";
+
+/** Payload for overlay-mode event from main window */
+interface OverlayModePayload {
+  mode: OverlayMode;
+  isMicUnavailable: boolean;
+}
+
 export function CatOverlay() {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [mode, setMode] = useState<OverlayMode>("recording");
+  const [isMicUnavailable, setIsMicUnavailable] = useState(false);
 
   useEffect(() => {
     if (videoRef.current) {
-      videoRef.current.play().catch(console.error);
+      // play() may return undefined in test environments
+      const playPromise = videoRef.current.play();
+      if (playPromise) {
+        playPromise.catch(console.error);
+      }
     }
   }, []);
 
+  // Listen for mode updates from main window
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+
+    const setupListener = async () => {
+      unlisten = await listen<OverlayModePayload>("overlay-mode", (event) => {
+        setMode(event.payload.mode);
+        setIsMicUnavailable(event.payload.isMicUnavailable);
+      });
+    };
+
+    setupListener();
+
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
+  // Build CSS class names based on state
+  const containerClasses = [
+    "cat-overlay",
+    `cat-overlay--${mode}`,
+    isMicUnavailable ? "cat-overlay--unavailable" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <div className="cat-overlay">
+    <div className={containerClasses}>
       <video
         ref={videoRef}
         className="cat-overlay__video"
@@ -22,6 +65,12 @@ export function CatOverlay() {
         playsInline
         autoPlay
       />
+      {mode === "listening" && (
+        <div className="cat-overlay__indicator cat-overlay__indicator--listening" />
+      )}
+      {isMicUnavailable && (
+        <div className="cat-overlay__indicator cat-overlay__indicator--unavailable" />
+      )}
     </div>
   );
 }
