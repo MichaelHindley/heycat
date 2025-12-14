@@ -2,6 +2,7 @@
 // Provides TDT (batch) and EOU (streaming) transcription using NVIDIA Parakeet models
 
 use super::types::{TranscriptionError, TranscriptionMode, TranscriptionResult, TranscriptionService, TranscriptionState};
+use crate::info;
 use parakeet_rs::{ParakeetEOU, ParakeetTDT};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -200,9 +201,28 @@ impl TranscriptionService for TranscriptionManager {
             let tdt = guard.as_mut().ok_or(TranscriptionError::ModelNotLoaded)?;
 
             // Use transcribe_file - parakeet-rs handles audio loading and preprocessing
-            tdt.transcribe_file(file_path, None)
-                .map(|result| result.text)
-                .map_err(|e| TranscriptionError::TranscriptionFailed(e.to_string()))
+            match tdt.transcribe_file(file_path, None) {
+                Ok(transcribe_result) => {
+                    // WORKAROUND for parakeet-rs v0.2.5 bug:
+                    // result.text incorrectly joins tokens with spaces (`.join(" ")`)
+                    // Instead, concatenate tokens directly - they already have leading
+                    // spaces at word boundaries (from SentencePiece ▁ marker)
+                    let fixed_text: String = transcribe_result.tokens
+                        .iter()
+                        .map(|t| t.text.as_str())
+                        .collect();
+                    let fixed_text = fixed_text.trim().to_string();
+
+                    // Log for debugging
+                    info!("=== parakeet-rs transcribe_file result ===");
+                    info!("result.text (broken): {:?}", transcribe_result.text);
+                    info!("fixed_text: {:?}", fixed_text);
+                    info!("=== end parakeet-rs result ===");
+
+                    Ok(fixed_text)
+                }
+                Err(e) => Err(TranscriptionError::TranscriptionFailed(e.to_string()))
+            }
         };
 
         // Update state to Completed or Error based on result

@@ -45,6 +45,10 @@ core-graphics = "0.24"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
+[[example]]
+name = "test_transcribe"
+path = "examples/test_transcribe.rs"
+
 [lints.rust]
 # Allow coverage and coverage_nightly cfg flags used by cargo-llvm-cov
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage,coverage_nightly)'] }

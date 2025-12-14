@@ -405,6 +405,9 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
                 duration_ms,
                 text.len()
             );
+            info!("=== spawn_transcription received text ===");
+            info!("text content: {:?}", text);
+            info!("=== end spawn_transcription text ===");
 
             // Try voice command matching if configured
             // Note: We extract all data from the lock before any await to ensure Send safety
@@ -540,13 +543,17 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
                 } else {
                     warn!("Clipboard unavailable: no app handle configured");
                 }
-
-                // Emit transcription_completed event
-                transcription_emitter.emit_transcription_completed(TranscriptionCompletedPayload {
-                    text,
-                    duration_ms,
-                });
             }
+
+            // Always emit transcription_completed (whether command handled or not)
+            // This ensures the frontend clears the "Transcribing..." state
+            info!("=== Emitting transcription_completed ===");
+            info!("text to emit: {:?}", text);
+            info!("=== end emit ===");
+            transcription_emitter.emit_transcription_completed(TranscriptionCompletedPayload {
+                text,
+                duration_ms,
+            });
 
             // Reset transcription state to idle
             if let Err(e) = transcription_manager.reset_to_idle() {
