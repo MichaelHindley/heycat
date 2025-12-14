@@ -11,6 +11,13 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn().mockResolvedValue(() => {}),
 }));
 
+vi.mock("@tauri-apps/plugin-store", () => ({
+  load: vi.fn().mockResolvedValue({
+    get: vi.fn().mockResolvedValue(false),
+    set: vi.fn().mockResolvedValue(undefined),
+  }),
+}));
+
 describe("Sidebar", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -89,6 +96,37 @@ describe("Sidebar", () => {
       // Wait for TranscriptionSettings to render
       await waitFor(() => {
         expect(screen.getByText("Models")).toBeDefined();
+      });
+    });
+  });
+
+  describe("Listening tab", () => {
+    it("Listening tab is present in sidebar", async () => {
+      render(<Sidebar />);
+
+      expect(await screen.findByRole("tab", { name: "Listening" })).toBeDefined();
+    });
+
+    it("Listening tab switches panel content when clicked", async () => {
+      render(<Sidebar />);
+
+      const listeningTab = screen.getByRole("tab", { name: "Listening" });
+      await userEvent.click(listeningTab);
+
+      expect(listeningTab.getAttribute("aria-selected")).toBe("true");
+      expect(
+        screen.getByRole("tab", { name: "History" }).getAttribute("aria-selected")
+      ).toBe("false");
+    });
+
+    it("can start on Listening tab via defaultTab prop", async () => {
+      render(<Sidebar defaultTab="listening" />);
+
+      const listeningTab = await screen.findByRole("tab", { name: "Listening" });
+      expect(listeningTab.getAttribute("aria-selected")).toBe("true");
+      // Wait for ListeningSettings to render
+      await waitFor(() => {
+        expect(screen.getByText("Always Listening")).toBeDefined();
       });
     });
   });

@@ -6,10 +6,12 @@ import { TranscriptionNotification } from "./components/TranscriptionNotificatio
 import { Sidebar } from "./components/Sidebar";
 import { useTranscription } from "./hooks/useTranscription";
 import { useCatOverlay } from "./hooks/useCatOverlay";
+import { useAutoStartListening } from "./hooks/useAutoStartListening";
 
 function App() {
   const { isTranscribing } = useTranscription();
   useCatOverlay();
+  useAutoStartListening();
 
   return (
     <div className="app-layout">
