@@ -321,6 +321,9 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
         // Clone app_handle for clipboard access
         let app_handle = self.app_handle.clone();
 
+        // Clone recording_state for buffer cleanup after transcription
+        let recording_state = self.recording_state.clone();
+
         // Check if model is loaded
         if !transcription_manager.is_loaded() {
             info!("Transcription skipped: transcription model not loaded");
@@ -334,6 +337,16 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
 
         // Spawn async task using Tauri's async runtime
         tauri::async_runtime::spawn(async move {
+            // Helper to clear recording buffer - call this in all exit paths to prevent memory leaks
+            let clear_recording_buffer = || {
+                if let Some(ref state) = recording_state {
+                    if let Ok(mut manager) = state.lock() {
+                        manager.clear_last_recording();
+                        debug!("Cleared recording buffer");
+                    }
+                }
+            };
+
             // Acquire semaphore permit to limit concurrent transcriptions
             let _permit = match semaphore.try_acquire() {
                 Ok(permit) => permit,
@@ -343,6 +356,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
                     transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
                         error: "Too many transcriptions in progress. Please wait and try again.".to_string(),
                     });
+                    clear_recording_buffer();
                     return;
                 }
             };
@@ -371,6 +385,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
                     if let Err(reset_err) = transcription_manager.reset_to_idle() {
                         warn!("Failed to reset transcription state: {}", reset_err);
                     }
+                    clear_recording_buffer();
                     return;
                 }
                 Err(e) => {
@@ -381,6 +396,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
                     if let Err(reset_err) = transcription_manager.reset_to_idle() {
                         warn!("Failed to reset transcription state: {}", reset_err);
                     }
+                    clear_recording_buffer();
                     return;
                 }
             };
@@ -420,6 +436,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
                             transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
                                 error: "Internal error: command registry unavailable. Please restart the application.".to_string(),
                             });
+                            clear_recording_buffer();
                             return;
                         }
                     };
@@ -551,6 +568,9 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
             if let Err(e) = transcription_manager.reset_to_idle() {
                 warn!("Failed to reset transcription state: {}", e);
             }
+
+            // Clear recording buffer to free memory
+            clear_recording_buffer();
         });
     }
 
