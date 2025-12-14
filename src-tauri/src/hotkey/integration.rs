@@ -30,6 +30,41 @@ const MAX_CONCURRENT_TRANSCRIPTIONS: usize = 2;
 /// Debounce duration for hotkey presses (200ms)
 pub const DEBOUNCE_DURATION_MS: u64 = 200;
 
+/// Simulate Cmd+V paste keystroke on macOS using CoreGraphics
+#[cfg(target_os = "macos")]
+fn simulate_paste() -> Result<(), String> {
+    use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, CGKeyCode};
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| "Failed to create event source")?;
+
+    // V key = keycode 9
+    let key_v: CGKeyCode = 9;
+
+    // Key down with Command modifier
+    let event_down = CGEvent::new_keyboard_event(source.clone(), key_v, true)
+        .map_err(|_| "Failed to create key down event")?;
+    event_down.set_flags(CGEventFlags::CGEventFlagCommand);
+    event_down.post(CGEventTapLocation::HID);
+
+    // Small delay for event processing
+    std::thread::sleep(std::time::Duration::from_millis(10));
+
+    // Key up
+    let event_up = CGEvent::new_keyboard_event(source, key_v, false)
+        .map_err(|_| "Failed to create key up event")?;
+    event_up.set_flags(CGEventFlags::CGEventFlagCommand);
+    event_up.post(CGEventTapLocation::HID);
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn simulate_paste() -> Result<(), String> {
+    Err("Paste simulation only supported on macOS".to_string())
+}
+
 /// Handles hotkey toggle with debouncing and event emission
 pub struct HotkeyIntegration<R: RecordingEventEmitter, T: TranscriptionEventEmitter, C: CommandEventEmitter> {
     last_toggle_time: Option<Instant>,
@@ -490,6 +525,12 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
                         warn!("Failed to copy to clipboard: {}", e);
                     } else {
                         debug!("Transcribed text copied to clipboard");
+                        // Auto-paste the clipboard content
+                        if let Err(e) = simulate_paste() {
+                            warn!("Failed to auto-paste: {}", e);
+                        } else {
+                            debug!("Auto-pasted transcribed text");
+                        }
                     }
                 } else {
                     warn!("Clipboard unavailable: no app handle configured");

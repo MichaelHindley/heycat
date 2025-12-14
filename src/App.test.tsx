@@ -4,8 +4,10 @@ import { render, screen, waitFor } from "@testing-library/react";
 import App from "./App";
 import * as useRecordingModule from "./hooks/useRecording";
 import * as useTranscriptionModule from "./hooks/useTranscription";
+import * as useCatOverlayModule from "./hooks/useCatOverlay";
 
 vi.mock("./hooks/useRecording");
+vi.mock("./hooks/useCatOverlay");
 vi.mock("./hooks/useTranscription");
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockResolvedValue([]),
@@ -13,6 +15,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 const mockUseRecording = vi.mocked(useRecordingModule.useRecording);
 const mockUseTranscription = vi.mocked(useTranscriptionModule.useTranscription);
+const mockUseCatOverlay = vi.mocked(useCatOverlayModule.useCatOverlay);
 
 describe("App Integration", () => {
   const defaultRecordingMock: useRecordingModule.UseRecordingResult = {
@@ -34,6 +37,7 @@ describe("App Integration", () => {
     vi.clearAllMocks();
     mockUseRecording.mockReturnValue(defaultRecordingMock);
     mockUseTranscription.mockReturnValue(defaultTranscriptionMock);
+    mockUseCatOverlay.mockReturnValue({ isRecording: false });
   });
 
   it("renders RecordingIndicator component without errors", async () => {
