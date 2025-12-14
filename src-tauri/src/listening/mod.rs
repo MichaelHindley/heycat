@@ -5,7 +5,9 @@
 mod buffer;
 mod detector;
 mod manager;
+mod pipeline;
 
 pub use buffer::CircularBuffer;
-pub use detector::{WakeWordDetector, WakeWordDetectorConfig, WakeWordResult};
+pub use detector::{WakeWordDetector, WakeWordDetectorConfig, WakeWordError, WakeWordResult};
 pub use manager::{ListeningError, ListeningManager, ListeningStatus};
+pub use pipeline::{ListeningPipeline, PipelineConfig, PipelineError};

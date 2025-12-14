@@ -25,7 +25,8 @@ impl Default for WakeWordDetectorConfig {
         Self {
             wake_phrase: "hey cat".to_string(),
             confidence_threshold: 0.8,
-            window_duration_secs: 2.0,
+            // ~3 seconds at 16kHz = 48000 samples = ~192KB memory
+            window_duration_secs: 3.0,
             sample_rate: 16000,
         }
     }
@@ -289,7 +290,8 @@ mod tests {
         let config = WakeWordDetectorConfig::default();
         assert_eq!(config.wake_phrase, "hey cat");
         assert_eq!(config.confidence_threshold, 0.8);
-        assert_eq!(config.window_duration_secs, 2.0);
+        // 3 seconds window for ~192KB memory at 16kHz
+        assert_eq!(config.window_duration_secs, 3.0);
         assert_eq!(config.sample_rate, 16000);
     }
 
