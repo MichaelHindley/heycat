@@ -12,7 +12,7 @@ use logic::{
     list_recordings_impl, start_recording_impl, stop_recording_impl, transcribe_file_impl,
 };
 
-use crate::listening::{ListeningManager, ListeningPipeline, ListeningStatus};
+use crate::listening::{ListeningManager, ListeningPipeline, ListeningStatus, WakeWordEvent};
 
 use crate::events::{
     command_events, event_names, listening_events, CommandAmbiguousPayload, CommandEventEmitter,
@@ -311,125 +311,38 @@ pub fn enable_listening(
 ) -> Result<(), String> {
     let emitter = Arc::new(TauriEventEmitter::new(app_handle.clone()));
 
-    // Set wake word callback to start recording when "Hey Cat" is detected
-    // The callback captures Arc clones so the original references can be dropped
-    let listening_pipeline_for_callback = listening_pipeline.inner().clone();
-    let recording_for_callback = recording_state.inner().clone();
-    let detectors_for_callback = recording_detectors.inner().clone();
-    let audio_thread_for_callback = audio_thread.inner().clone();
-    let app_handle_for_callback = app_handle.clone();
-    let emitter_for_callback = Arc::new(TauriEventEmitter::new(app_handle.clone()));
-    let hotkey_for_callback = hotkey_integration.inner().clone();
+    // Subscribe to wake word events before starting the pipeline
+    // This replaces the callback mechanism with a safer async event channel
+    let event_rx = {
+        let mut pipeline = listening_pipeline.lock().map_err(|_| {
+            crate::error!("Failed to lock listening pipeline for event subscription");
+            "Unable to access listening pipeline."
+        })?;
+        pipeline.subscribe_events()
+    };
 
-    if let Ok(pipeline_guard) = listening_pipeline.lock() {
-        pipeline_guard.set_wake_word_callback(Box::new(move || {
-            crate::info!("Wake word detected! Stopping pipeline and starting recording...");
+    // Spawn an async task to handle wake word events
+    // This runs separately from the analysis thread, eliminating deadlock risk
+    let listening_pipeline_for_handler = listening_pipeline.inner().clone();
+    let recording_for_handler = recording_state.inner().clone();
+    let detectors_for_handler = recording_detectors.inner().clone();
+    let audio_thread_for_handler = audio_thread.inner().clone();
+    let app_handle_for_handler = app_handle.clone();
+    let emitter_for_handler = Arc::new(TauriEventEmitter::new(app_handle.clone()));
+    let hotkey_for_handler = hotkey_integration.inner().clone();
 
-            // 1. Stop the listening pipeline and get the buffer for handoff
-            let shared_buffer = {
-                // Use try_lock to avoid deadlock with hotkey recording flow:
-                // If hotkey is stopping the pipeline, it holds the lock and waits for us.
-                // If we block on lock(), we'd deadlock. try_lock fails gracefully instead.
-                let mut pipeline = match listening_pipeline_for_callback.try_lock() {
-                    Ok(p) => p,
-                    Err(_) => {
-                        crate::warn!("Pipeline busy (likely hotkey recording), skipping wake word callback");
-                        return;
-                    }
-                };
-
-                match pipeline.stop_and_get_buffer(&audio_thread_for_callback) {
-                    Ok(Some(buffer)) => buffer,
-                    Ok(None) => {
-                        crate::error!("Pipeline had no buffer to hand off");
-                        return;
-                    }
-                    Err(e) => {
-                        crate::error!("Failed to stop pipeline: {:?}", e);
-                        return;
-                    }
-                }
-            };
-
-            // 2. Clear the buffer to prevent old audio bleeding into new recording
-            if let Ok(mut guard) = shared_buffer.lock() {
-                crate::debug!("[callback] Clearing buffer before recording ({} samples)", guard.len());
-                guard.clear();
-            }
-
-            // 3. Start recording with the cleared buffer
-            let recording_started = {
-                let mut manager = match recording_for_callback.lock() {
-                    Ok(m) => m,
-                    Err(_) => {
-                        crate::error!("Failed to lock recording manager");
-                        return;
-                    }
-                };
-
-                match manager.start_recording_with_buffer(16000, shared_buffer.clone()) {
-                    Ok(_) => {
-                        // Restart audio capture with the shared buffer
-                        match audio_thread_for_callback.start(shared_buffer.clone()) {
-                            Ok(_) => {
-                                crate::info!("Recording started with shared buffer");
-                                true
-                            }
-                            Err(e) => {
-                                crate::error!("Failed to restart audio capture: {:?}", e);
-                                let _ = manager.abort_recording(RecordingState::Idle);
-                                false
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        crate::error!("Failed to start recording: {:?}", e);
-                        false
-                    }
-                }
-            };
-
-            // 4. If recording started, emit event and start detection
-            if recording_started {
-                // Emit recording_started event
-                emit_or_warn!(
-                    app_handle_for_callback,
-                    event_names::RECORDING_STARTED,
-                    RecordingStartedPayload {
-                        timestamp: crate::events::current_timestamp(),
-                    }
-                );
-
-                // Start silence/cancel detection (return_to_listening=true)
-                // Create transcription callback that calls HotkeyIntegration.spawn_transcription()
-                let hotkey_for_transcription = hotkey_for_callback.clone();
-                let transcription_callback: Box<dyn Fn(String) + Send + 'static> = Box::new(move |file_path: String| {
-                    if let Ok(integration) = hotkey_for_transcription.lock() {
-                        crate::info!("[callback] Spawning transcription via HotkeyIntegration");
-                        integration.spawn_transcription(file_path);
-                    } else {
-                        crate::error!("[callback] Failed to lock HotkeyIntegration for transcription");
-                    }
-                });
-
-                if let Ok(mut det) = detectors_for_callback.lock() {
-                    if let Err(e) = det.start_monitoring(
-                        shared_buffer,
-                        recording_for_callback.clone(),
-                        audio_thread_for_callback.clone(),
-                        emitter_for_callback.clone(),
-                        true, // Auto-restart listening after wake word recording
-                        Some(listening_pipeline_for_callback.clone()), // Pass pipeline for restart
-                        Some(transcription_callback), // Transcription callback
-                    ) {
-                        crate::warn!("Failed to start recording detectors: {}", e);
-                    } else {
-                        crate::info!("Recording detectors started");
-                    }
-                }
-            }
-        }));
-    }
+    tauri::async_runtime::spawn(async move {
+        handle_wake_word_events(
+            event_rx,
+            listening_pipeline_for_handler,
+            recording_for_handler,
+            detectors_for_handler,
+            audio_thread_for_handler,
+            app_handle_for_handler,
+            emitter_for_handler,
+            hotkey_for_handler,
+        ).await;
+    });
 
     let result = enable_listening_impl(
         listening_state.as_ref(),
@@ -451,6 +364,174 @@ pub fn enable_listening(
     }
 
     result
+}
+
+/// Handle wake word events from the listening pipeline
+///
+/// This async function processes events from the wake word event channel,
+/// running separately from the analysis thread to eliminate deadlock risk.
+/// It replaces the direct callback invocation with a safe async pattern.
+async fn handle_wake_word_events(
+    mut event_rx: tokio::sync::mpsc::Receiver<WakeWordEvent>,
+    listening_pipeline: ListeningPipelineState,
+    recording_state: ProductionState,
+    recording_detectors: RecordingDetectorsState,
+    audio_thread: AudioThreadState,
+    app_handle: AppHandle,
+    emitter: Arc<TauriEventEmitter>,
+    hotkey_integration: HotkeyIntegrationState,
+) {
+    crate::info!("[event_handler] Wake word event handler started");
+
+    while let Some(event) = event_rx.recv().await {
+        match event {
+            WakeWordEvent::Detected { text, confidence } => {
+                crate::info!(
+                    "[event_handler] Wake word detected: '{}' (confidence: {:.2})",
+                    text, confidence
+                );
+                handle_wake_word_detected(
+                    &listening_pipeline,
+                    &recording_state,
+                    &recording_detectors,
+                    &audio_thread,
+                    &app_handle,
+                    &emitter,
+                    &hotkey_integration,
+                );
+            }
+            WakeWordEvent::Unavailable { reason } => {
+                crate::warn!("[event_handler] Listening became unavailable: {}", reason);
+                // The pipeline already emits the frontend event, we just log here
+            }
+            WakeWordEvent::Error { message } => {
+                crate::warn!("[event_handler] Wake word detection error: {}", message);
+                // Errors are transient, the pipeline continues
+            }
+        }
+    }
+
+    crate::info!("[event_handler] Wake word event handler exiting (channel closed)");
+}
+
+/// Handle a wake word detected event - start recording
+///
+/// This function contains the logic previously in the wake word callback,
+/// now safely executing in an async context outside the analysis thread.
+fn handle_wake_word_detected(
+    listening_pipeline: &ListeningPipelineState,
+    recording_state: &ProductionState,
+    recording_detectors: &RecordingDetectorsState,
+    audio_thread: &AudioThreadState,
+    app_handle: &AppHandle,
+    emitter: &Arc<TauriEventEmitter>,
+    hotkey_integration: &HotkeyIntegrationState,
+) {
+    crate::info!("Wake word detected! Stopping pipeline and starting recording...");
+
+    // 1. Stop the listening pipeline and get the buffer for handoff
+    let shared_buffer = {
+        // Use try_lock to avoid deadlock with hotkey recording flow:
+        // If hotkey is stopping the pipeline, it holds the lock and waits for us.
+        // If we block on lock(), we'd deadlock. try_lock fails gracefully instead.
+        let mut pipeline = match listening_pipeline.try_lock() {
+            Ok(p) => p,
+            Err(_) => {
+                crate::warn!("Pipeline busy (likely hotkey recording), skipping wake word event");
+                return;
+            }
+        };
+
+        match pipeline.stop_and_get_buffer(audio_thread.as_ref()) {
+            Ok(Some(buffer)) => buffer,
+            Ok(None) => {
+                crate::error!("Pipeline had no buffer to hand off");
+                return;
+            }
+            Err(e) => {
+                crate::error!("Failed to stop pipeline: {:?}", e);
+                return;
+            }
+        }
+    };
+
+    // 2. Clear the buffer to prevent old audio bleeding into new recording
+    if let Ok(mut guard) = shared_buffer.lock() {
+        crate::debug!("[event_handler] Clearing buffer before recording ({} samples)", guard.len());
+        guard.clear();
+    }
+
+    // 3. Start recording with the cleared buffer
+    let recording_started = {
+        let mut manager = match recording_state.lock() {
+            Ok(m) => m,
+            Err(_) => {
+                crate::error!("Failed to lock recording manager");
+                return;
+            }
+        };
+
+        match manager.start_recording_with_buffer(16000, shared_buffer.clone()) {
+            Ok(_) => {
+                // Restart audio capture with the shared buffer
+                match audio_thread.start(shared_buffer.clone()) {
+                    Ok(_) => {
+                        crate::info!("Recording started with shared buffer");
+                        true
+                    }
+                    Err(e) => {
+                        crate::error!("Failed to restart audio capture: {:?}", e);
+                        let _ = manager.abort_recording(RecordingState::Idle);
+                        false
+                    }
+                }
+            }
+            Err(e) => {
+                crate::error!("Failed to start recording: {:?}", e);
+                false
+            }
+        }
+    };
+
+    // 4. If recording started, emit event and start detection
+    if recording_started {
+        // Emit recording_started event
+        emit_or_warn!(
+            app_handle,
+            event_names::RECORDING_STARTED,
+            RecordingStartedPayload {
+                timestamp: crate::events::current_timestamp(),
+            }
+        );
+
+        // Start silence/cancel detection (return_to_listening=true)
+        // Create transcription callback that calls HotkeyIntegration.spawn_transcription()
+        let hotkey_for_transcription = hotkey_integration.clone();
+        let transcription_callback: Box<dyn Fn(String) + Send + 'static> = Box::new(move |file_path: String| {
+            if let Ok(integration) = hotkey_for_transcription.lock() {
+                crate::info!("[event_handler] Spawning transcription via HotkeyIntegration");
+                integration.spawn_transcription(file_path);
+            } else {
+                crate::error!("[event_handler] Failed to lock HotkeyIntegration for transcription");
+            }
+        });
+
+        if let Ok(mut det) = recording_detectors.lock() {
+            if let Err(e) = det.start_monitoring(
+                shared_buffer,
+                recording_state.clone(),
+                audio_thread.clone(),
+                emitter.clone(),
+                true, // Auto-restart listening after wake word recording
+                Some(listening_pipeline.clone()), // Pass pipeline for restart
+                Some(transcription_callback), // Transcription callback
+            ) {
+                crate::warn!("Failed to start recording detectors: {}", e);
+            } else {
+                crate::info!("Recording detectors started");
+            }
+        }
+    }
 }
 
 /// Disable listening mode

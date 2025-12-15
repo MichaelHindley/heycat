@@ -1,17 +1,23 @@
 // Listening audio pipeline for continuous wake word detection
 // Manages audio capture in listening mode, routing samples to the wake word detector
 
+use super::events::WakeWordEvent;
 use super::{WakeWordDetector, WakeWordDetectorConfig, WakeWordError};
 use crate::audio::{AudioBuffer, AudioCaptureError, AudioThreadHandle};
 use crate::events::{current_timestamp, listening_events, ListeningEventEmitter};
+use crate::parakeet::SharedTranscriptionModel;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
+use tokio::sync::mpsc as tokio_mpsc;
 
-/// Callback type for wake word detection
+/// Callback type for wake word detection (DEPRECATED)
 /// Called when "Hey Cat" is detected - should start recording
+/// Use subscribe_events() and WakeWordEvent instead for safer async handling.
+#[deprecated(note = "Use subscribe_events() and WakeWordEvent instead")]
+#[allow(dead_code)]
 pub type WakeWordCallback = Box<dyn Fn() + Send + Sync>;
 
 /// Errors that can occur in the listening pipeline
@@ -89,9 +95,13 @@ struct AnalysisState {
     buffer: AudioBuffer,
     /// Flag indicating microphone is available
     mic_available: Arc<AtomicBool>,
-    /// Callback to invoke when wake word is detected
-    wake_word_callback: Option<Arc<WakeWordCallback>>,
+    /// Event channel sender for wake word events (replaces direct callback)
+    event_tx: tokio_mpsc::Sender<WakeWordEvent>,
 }
+
+/// Default channel buffer size for wake word events
+/// Small buffer since events should be processed quickly
+const EVENT_CHANNEL_BUFFER_SIZE: usize = 16;
 
 /// Listening audio pipeline
 ///
@@ -102,6 +112,8 @@ pub struct ListeningPipeline {
     config: PipelineConfig,
     /// Wake word detector configuration
     detector_config: WakeWordDetectorConfig,
+    /// Shared transcription model for the wake word detector
+    shared_model: Option<SharedTranscriptionModel>,
     /// Analysis thread handle
     analysis_thread: Option<JoinHandle<()>>,
     /// Flag to signal analysis thread to stop
@@ -112,8 +124,8 @@ pub struct ListeningPipeline {
     detector: Option<Arc<WakeWordDetector>>,
     /// Current audio buffer
     buffer: Option<AudioBuffer>,
-    /// Wake word callback - called when "Hey Cat" is detected
-    wake_word_callback: Arc<Mutex<Option<Arc<WakeWordCallback>>>>,
+    /// Event channel sender for wake word events (kept to create new senders for subscribers)
+    event_tx: Option<tokio_mpsc::Sender<WakeWordEvent>>,
     /// Receiver for analysis thread exit notification
     /// Used to wait for previous thread to exit before starting a new one
     thread_exit_rx: Option<Receiver<()>>,
@@ -130,32 +142,61 @@ impl ListeningPipeline {
         Self {
             config,
             detector_config,
+            shared_model: None,
             analysis_thread: None,
             should_stop: Arc::new(AtomicBool::new(false)),
             mic_available: Arc::new(AtomicBool::new(true)),
             detector: None,
             buffer: None,
-            wake_word_callback: Arc::new(Mutex::new(None)),
+            event_tx: None,
             thread_exit_rx: None,
         }
     }
 
+    /// Set the shared transcription model for the wake word detector
+    ///
+    /// This should be called with the same model used by TranscriptionManager
+    /// to share the ~3GB Parakeet model and save memory.
+    pub fn set_shared_model(&mut self, model: SharedTranscriptionModel) {
+        self.shared_model = Some(model);
+    }
+
     /// Set the callback to be invoked when wake word is detected
     ///
+    /// DEPRECATED: Use subscribe_events() instead for safer async event handling.
     /// This callback is called from the analysis thread when "Hey Cat" is detected.
     /// The callback should start recording (e.g., call handle_toggle on HotkeyIntegration).
-    pub fn set_wake_word_callback(&self, callback: WakeWordCallback) {
-        if let Ok(mut guard) = self.wake_word_callback.lock() {
-            *guard = Some(Arc::new(callback));
-        }
+    #[deprecated(note = "Use subscribe_events() instead for safer async event handling")]
+    #[allow(deprecated)]
+    #[allow(dead_code)]
+    pub fn set_wake_word_callback(&self, _callback: WakeWordCallback) {
+        crate::warn!("[pipeline] set_wake_word_callback is deprecated, use subscribe_events() instead");
+        // No-op: callbacks are replaced by event channel
     }
 
     /// Clear the wake word callback
+    #[deprecated(note = "Use subscribe_events() instead for safer async event handling")]
     #[allow(dead_code)] // Utility method for cleanup
     pub fn clear_wake_word_callback(&self) {
-        if let Ok(mut guard) = self.wake_word_callback.lock() {
-            *guard = None;
-        }
+        // No-op: callbacks are replaced by event channel
+    }
+
+    /// Subscribe to wake word events
+    ///
+    /// Returns a receiver for wake word events. Events are sent when:
+    /// - Wake word is detected (WakeWordEvent::Detected)
+    /// - Listening becomes unavailable (WakeWordEvent::Unavailable)
+    /// - An error occurs (WakeWordEvent::Error)
+    ///
+    /// The channel has a bounded buffer to handle backpressure gracefully.
+    /// If the receiver falls behind, older events may be dropped (try_send).
+    ///
+    /// NOTE: This must be called before start() to receive events from the pipeline.
+    /// Each call creates a new channel; only the most recent receiver will get events.
+    pub fn subscribe_events(&mut self) -> tokio_mpsc::Receiver<WakeWordEvent> {
+        let (tx, rx) = tokio_mpsc::channel(EVENT_CHANNEL_BUFFER_SIZE);
+        self.event_tx = Some(tx);
+        rx
     }
 
     /// Check if the pipeline is currently running
@@ -200,9 +241,25 @@ impl ListeningPipeline {
 
         crate::info!("[pipeline] Starting listening pipeline...");
 
-        // Create detector and load model
-        let detector = Arc::new(WakeWordDetector::with_config(self.detector_config.clone()));
-        detector.load_model()?;
+        // Create detector with shared model
+        let shared_model = self.shared_model.clone().ok_or_else(|| {
+            PipelineError::DetectorError("No shared transcription model configured".to_string())
+        })?;
+
+        // Verify model is loaded before creating detector
+        if !shared_model.is_loaded() {
+            return Err(PipelineError::DetectorError(
+                "Shared transcription model not loaded".to_string(),
+            ));
+        }
+
+        let detector = Arc::new(WakeWordDetector::with_shared_model_and_config(
+            shared_model,
+            self.detector_config.clone(),
+        ));
+
+        // Initialize VAD for the detector (model is already loaded via shared model)
+        detector.init_vad()?;
 
         // Create audio buffer for capture
         let buffer = AudioBuffer::new();
@@ -217,10 +274,14 @@ impl ListeningPipeline {
         self.should_stop.store(false, Ordering::SeqCst);
         self.mic_available.store(true, Ordering::SeqCst);
 
-        // Get wake word callback if set
-        let wake_word_callback = self.wake_word_callback.lock()
-            .ok()
-            .and_then(|guard| guard.clone());
+        // Get or create event channel for wake word events
+        // If subscribe_events() wasn't called, create a channel anyway
+        // (events will just be dropped if no one is listening)
+        let event_tx = self.event_tx.clone().unwrap_or_else(|| {
+            crate::warn!("[pipeline] No event subscriber configured, events will be dropped");
+            let (tx, _rx) = tokio_mpsc::channel(EVENT_CHANNEL_BUFFER_SIZE);
+            tx
+        });
 
         // Create analysis state
         let state = AnalysisState {
@@ -228,7 +289,7 @@ impl ListeningPipeline {
             should_stop: self.should_stop.clone(),
             buffer: buffer_clone,
             mic_available: self.mic_available.clone(),
-            wake_word_callback,
+            event_tx,
         };
 
         // Create exit notification channel
@@ -411,12 +472,15 @@ fn analysis_thread_main<E: ListeningEventEmitter>(
                     }
                 }
                 Err(_) => {
-                    // Lock poisoned - emit unavailable event
+                    // Lock poisoned - emit unavailable event and send through channel
                     crate::error!("[pipeline] Audio buffer lock poisoned");
+                    let reason = "Audio buffer lock error".to_string();
                     emitter.emit_listening_unavailable(listening_events::ListeningUnavailablePayload {
-                        reason: "Audio buffer lock error".to_string(),
+                        reason: reason.clone(),
                         timestamp: current_timestamp(),
                     });
+                    // Also send through event channel
+                    let _ = state.event_tx.try_send(WakeWordEvent::unavailable(reason));
                     break;
                 }
             }
@@ -447,19 +511,16 @@ fn analysis_thread_main<E: ListeningEventEmitter>(
                 );
 
                 if result.detected {
-                    // Check should_stop BEFORE invoking callback to prevent deadlock:
-                    // If stop() is called while we're here, it holds the pipeline lock
-                    // and waits for us to exit. If we try to invoke the callback which
-                    // locks the pipeline, we'd deadlock.
+                    // Check should_stop BEFORE sending event
                     if state.should_stop.load(Ordering::SeqCst) {
                         crate::debug!(
-                            "[pipeline] Wake word detected but stop requested, skipping callback"
+                            "[pipeline] Wake word detected but stop requested, skipping event"
                         );
                         break;
                     }
 
                     crate::info!(
-                        "[pipeline] WAKE_WORD_DETECTED! confidence={:.2}, transcription='{}', invoking callback",
+                        "[pipeline] WAKE_WORD_DETECTED! confidence={:.2}, transcription='{}', sending event",
                         result.confidence,
                         result.transcription
                     );
@@ -471,9 +532,17 @@ fn analysis_thread_main<E: ListeningEventEmitter>(
                         guard.clear();
                     }
 
-                    // Invoke callback to start recording
-                    if let Some(ref callback) = state.wake_word_callback {
-                        callback();
+                    // Send event through channel instead of invoking callback directly
+                    // Using try_send to avoid blocking the analysis thread
+                    let event = WakeWordEvent::detected(
+                        result.transcription.clone(),
+                        result.confidence,
+                    );
+                    if let Err(e) = state.event_tx.try_send(event) {
+                        crate::warn!(
+                            "[pipeline] Failed to send wake word event: {} (channel full or closed)",
+                            e
+                        );
                     }
                 }
             }
@@ -496,15 +565,19 @@ fn analysis_thread_main<E: ListeningEventEmitter>(
             Err(WakeWordError::ModelNotLoaded) => {
                 // Model not loaded - emit unavailable and stop
                 crate::error!("[pipeline] Wake word model not loaded");
+                let reason = "Wake word model not loaded".to_string();
                 emitter.emit_listening_unavailable(listening_events::ListeningUnavailablePayload {
-                    reason: "Wake word model not loaded".to_string(),
+                    reason: reason.clone(),
                     timestamp: current_timestamp(),
                 });
+                // Also send through event channel
+                let _ = state.event_tx.try_send(WakeWordEvent::unavailable(reason));
                 break;
             }
             Err(e) => {
-                // Other error - log and continue
+                // Other error - log, send error event, and continue
                 crate::warn!("[pipeline] Wake word analysis error: {}", e);
+                let _ = state.event_tx.try_send(WakeWordEvent::error(e.to_string()));
             }
         }
     }
@@ -615,13 +688,14 @@ mod tests {
         let should_stop = Arc::new(AtomicBool::new(false));
         let buffer = AudioBuffer::new();
         let mic_available = Arc::new(AtomicBool::new(true));
+        let (event_tx, _event_rx) = tokio_mpsc::channel(EVENT_CHANNEL_BUFFER_SIZE);
 
         let _state = AnalysisState {
             detector,
             should_stop,
             buffer,
             mic_available,
-            wake_word_callback: None,
+            event_tx,
         };
     }
 
@@ -655,6 +729,72 @@ mod tests {
         // Memory for min_samples: 4000 * 4 bytes = 16KB
         let min_memory = config.min_samples_for_analysis * std::mem::size_of::<f32>();
         assert!(min_memory < 20 * 1024); // Less than 20KB
+    }
+
+    #[test]
+    fn test_subscribe_events_returns_receiver() {
+        let mut pipeline = ListeningPipeline::new();
+        let _rx = pipeline.subscribe_events();
+        // Verify we got a receiver (implicitly tested by compilation)
+        assert!(pipeline.event_tx.is_some());
+    }
+
+    #[test]
+    fn test_subscribe_events_replaces_previous() {
+        let mut pipeline = ListeningPipeline::new();
+        let _rx1 = pipeline.subscribe_events();
+        let _rx2 = pipeline.subscribe_events();
+        // Both receivers should be valid (second replaces first sender)
+        assert!(pipeline.event_tx.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_event_channel_send_receive() {
+        let (tx, mut rx) = tokio_mpsc::channel::<WakeWordEvent>(EVENT_CHANNEL_BUFFER_SIZE);
+
+        // Send a detected event
+        let event = WakeWordEvent::detected("hey cat", 0.95);
+        tx.send(event).await.unwrap();
+
+        // Receive and verify
+        let received = rx.recv().await.unwrap();
+        assert!(received.is_detected());
+        if let WakeWordEvent::Detected { text, confidence } = received {
+            assert_eq!(text, "hey cat");
+            assert!((confidence - 0.95).abs() < f32::EPSILON);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_event_channel_multiple_events() {
+        let (tx, mut rx) = tokio_mpsc::channel::<WakeWordEvent>(EVENT_CHANNEL_BUFFER_SIZE);
+
+        // Send multiple events
+        tx.send(WakeWordEvent::detected("test1", 0.8)).await.unwrap();
+        tx.send(WakeWordEvent::unavailable("mic error")).await.unwrap();
+        tx.send(WakeWordEvent::error("detection failed")).await.unwrap();
+
+        // Receive all events in order
+        let e1 = rx.recv().await.unwrap();
+        let e2 = rx.recv().await.unwrap();
+        let e3 = rx.recv().await.unwrap();
+
+        assert!(matches!(e1, WakeWordEvent::Detected { .. }));
+        assert!(matches!(e2, WakeWordEvent::Unavailable { .. }));
+        assert!(matches!(e3, WakeWordEvent::Error { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_event_channel_try_send_backpressure() {
+        // Create a channel with small buffer
+        let (tx, _rx) = tokio_mpsc::channel::<WakeWordEvent>(2);
+
+        // Fill the buffer
+        assert!(tx.try_send(WakeWordEvent::detected("1", 0.9)).is_ok());
+        assert!(tx.try_send(WakeWordEvent::detected("2", 0.9)).is_ok());
+
+        // Next try_send should fail (buffer full)
+        assert!(tx.try_send(WakeWordEvent::detected("3", 0.9)).is_err());
     }
 
     // Note: Integration tests requiring actual audio hardware are in pipeline_test.rs

@@ -3,10 +3,9 @@
 
 use super::CircularBuffer;
 use crate::events::{current_timestamp, listening_events, ListeningEventEmitter};
-use crate::model::download::{get_model_dir, ModelType};
-use parakeet_rs::ParakeetTDT;
+use crate::parakeet::SharedTranscriptionModel;
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use voice_activity_detector::VoiceActivityDetector;
 
 /// Configuration for wake word detection
@@ -110,7 +109,8 @@ impl AudioFingerprint {
 pub enum WakeWordError {
     /// Model has not been loaded
     ModelNotLoaded,
-    /// Failed to load the model
+    /// Failed to load the model (unused since SharedTranscriptionModel loads externally)
+    #[allow(dead_code)]
     ModelLoadFailed(String),
     /// Failed during transcription
     TranscriptionFailed(String),
@@ -158,11 +158,14 @@ impl std::error::Error for WakeWordError {}
 ///
 /// Processes audio samples in small windows to detect the wake phrase.
 /// Uses on-device speech recognition for privacy.
+///
+/// This detector now uses a SharedTranscriptionModel, allowing it to share
+/// the ~3GB Parakeet model with TranscriptionManager, saving significant memory.
 pub struct WakeWordDetector {
     /// Configuration
     config: WakeWordDetectorConfig,
-    /// TDT model context (thread-safe)
-    model: Arc<Mutex<Option<ParakeetTDT>>>,
+    /// Shared transcription model (wraps ParakeetTDT)
+    shared_model: Option<SharedTranscriptionModel>,
     /// Circular buffer for audio samples
     buffer: Mutex<CircularBuffer>,
     /// Sample count at last analysis (for tracking new samples)
@@ -185,7 +188,7 @@ impl WakeWordDetector {
         let buffer = CircularBuffer::for_duration(config.window_duration_secs, config.sample_rate);
         Self {
             config,
-            model: Arc::new(Mutex::new(None)),
+            shared_model: None,
             buffer: Mutex::new(buffer),
             last_analysis_sample_count: Mutex::new(0),
             recent_fingerprints: Mutex::new(VecDeque::with_capacity(5)),
@@ -193,58 +196,67 @@ impl WakeWordDetector {
         }
     }
 
-    /// Load the Parakeet TDT model
+    /// Create a wake word detector with a shared transcription model
     ///
-    /// Must be called before processing audio.
-    pub fn load_model(&self) -> Result<(), WakeWordError> {
-        crate::debug!("[wake-word] Loading Parakeet TDT model...");
+    /// This is the preferred constructor for production use, as it allows
+    /// sharing a single ~3GB model between WakeWordDetector and TranscriptionManager.
+    #[allow(dead_code)] // Used by ListeningPipeline and in tests
+    pub fn with_shared_model(shared_model: SharedTranscriptionModel) -> Self {
+        Self::with_shared_model_and_config(shared_model, WakeWordDetectorConfig::default())
+    }
 
-        let model_dir = get_model_dir(ModelType::ParakeetTDT)
-            .map_err(|e| {
-                crate::error!("[wake-word] Failed to get model directory: {}", e);
-                WakeWordError::ModelLoadFailed(e.to_string())
-            })?;
-
-        crate::debug!("[wake-word] Model path: {:?}", model_dir);
-
-        let path_str = model_dir.to_str().ok_or_else(|| {
-            crate::error!("[wake-word] Invalid path encoding");
-            WakeWordError::ModelLoadFailed("Invalid path encoding".to_string())
-        })?;
-
-        let tdt = ParakeetTDT::from_pretrained(path_str, None)
-            .map_err(|e| {
-                crate::error!("[wake-word] Failed to load model: {}", e);
-                WakeWordError::ModelLoadFailed(e.to_string())
-            })?;
-
-        let mut guard = self.model.lock().map_err(|_| WakeWordError::LockPoisoned)?;
-        *guard = Some(tdt);
-
-        crate::info!("[wake-word] Model loaded successfully");
-
-        // Initialize VAD if enabled
-        if self.config.vad_enabled {
-            crate::debug!("[wake-word] Initializing VAD detector...");
-            let vad = VoiceActivityDetector::builder()
-                .sample_rate(self.config.sample_rate)
-                .chunk_size(512usize) // Fixed for Silero at 16kHz
-                .build()
-                .map_err(|e| {
-                    crate::error!("[wake-word] Failed to initialize VAD: {}", e);
-                    WakeWordError::VadInitFailed(e.to_string())
-                })?;
-
-            let mut vad_guard = self.vad.lock().map_err(|_| WakeWordError::LockPoisoned)?;
-            *vad_guard = Some(vad);
-
-            crate::info!(
-                "[wake-word] VAD initialized (threshold={})",
-                self.config.vad_speech_threshold
-            );
-        } else {
-            crate::info!("[wake-word] VAD disabled");
+    /// Create a wake word detector with a shared model and custom configuration
+    pub fn with_shared_model_and_config(
+        shared_model: SharedTranscriptionModel,
+        config: WakeWordDetectorConfig,
+    ) -> Self {
+        let buffer = CircularBuffer::for_duration(config.window_duration_secs, config.sample_rate);
+        Self {
+            config,
+            shared_model: Some(shared_model),
+            buffer: Mutex::new(buffer),
+            last_analysis_sample_count: Mutex::new(0),
+            recent_fingerprints: Mutex::new(VecDeque::with_capacity(5)),
+            vad: Mutex::new(None),
         }
+    }
+
+    /// Set the shared transcription model
+    ///
+    /// This allows setting the model after construction (e.g., when the model
+    /// becomes available after async loading).
+    #[allow(dead_code)] // Future use for dynamic model loading
+    pub fn set_shared_model(&mut self, shared_model: SharedTranscriptionModel) {
+        self.shared_model = Some(shared_model);
+    }
+
+    /// Initialize VAD (Voice Activity Detection)
+    ///
+    /// Must be called before processing audio if VAD is enabled.
+    /// The Parakeet model should already be loaded via the shared model.
+    pub fn init_vad(&self) -> Result<(), WakeWordError> {
+        if !self.config.vad_enabled {
+            crate::info!("[wake-word] VAD disabled");
+            return Ok(());
+        }
+
+        crate::debug!("[wake-word] Initializing VAD detector...");
+        let vad = VoiceActivityDetector::builder()
+            .sample_rate(self.config.sample_rate)
+            .chunk_size(512usize) // Fixed for Silero at 16kHz
+            .build()
+            .map_err(|e| {
+                crate::error!("[wake-word] Failed to initialize VAD: {}", e);
+                WakeWordError::VadInitFailed(e.to_string())
+            })?;
+
+        let mut vad_guard = self.vad.lock().map_err(|_| WakeWordError::LockPoisoned)?;
+        *vad_guard = Some(vad);
+
+        crate::info!(
+            "[wake-word] VAD initialized (threshold={})",
+            self.config.vad_speech_threshold
+        );
 
         Ok(())
     }
@@ -252,9 +264,9 @@ impl WakeWordDetector {
     /// Check if the model is loaded
     #[allow(dead_code)] // Utility method for status checks
     pub fn is_loaded(&self) -> bool {
-        self.model
-            .lock()
-            .map(|guard| guard.is_some())
+        self.shared_model
+            .as_ref()
+            .map(|m| m.is_loaded())
             .unwrap_or(false)
     }
 
@@ -338,22 +350,16 @@ impl WakeWordDetector {
             crate::debug!("[wake-word] VAD: Speech detected, proceeding with transcription");
         }
 
-        // Transcribe the audio
+        // Transcribe the audio using the shared model
         let transcribe_start = std::time::Instant::now();
-        let transcription = {
-            let mut guard = self.model.lock().map_err(|_| WakeWordError::LockPoisoned)?;
-            let tdt = guard.as_mut().ok_or(WakeWordError::ModelNotLoaded)?;
+        let shared_model = self
+            .shared_model
+            .as_ref()
+            .ok_or(WakeWordError::ModelNotLoaded)?;
 
-            // Use transcribe_samples for in-memory audio
-            // Signature: transcribe_samples(audio: Vec<f32>, sample_rate: u32, channels: u16, mode: Option<TimestampMode>)
-            let result = tdt
-                .transcribe_samples(samples, self.config.sample_rate, 1, None)
-                .map_err(|e| WakeWordError::TranscriptionFailed(e.to_string()))?;
-
-            // Apply same workaround as TranscriptionManager for token joining
-            let fixed_text: String = result.tokens.iter().map(|t| t.text.as_str()).collect();
-            fixed_text.trim().to_string()
-        };
+        let transcription = shared_model
+            .transcribe_samples(samples, self.config.sample_rate, 1)
+            .map_err(|e| WakeWordError::TranscriptionFailed(e.to_string()))?;
         let transcribe_duration = transcribe_start.elapsed();
 
         // Update sample count and store fingerprint after successful transcription
@@ -857,5 +863,40 @@ mod tests {
         // analyze() will fail because model isn't loaded, but won't crash
         let result = detector.analyze();
         assert!(matches!(result, Err(WakeWordError::ModelNotLoaded)));
+    }
+
+    #[test]
+    fn test_with_shared_model() {
+        let shared = SharedTranscriptionModel::new();
+        let detector = WakeWordDetector::with_shared_model(shared.clone());
+
+        // Shared model is set but not loaded
+        assert!(!detector.is_loaded());
+        assert!(!shared.is_loaded());
+    }
+
+    #[test]
+    fn test_set_shared_model() {
+        let mut detector = WakeWordDetector::new();
+        assert!(!detector.is_loaded());
+
+        let shared = SharedTranscriptionModel::new();
+        detector.set_shared_model(shared);
+
+        // Still not loaded (model not initialized) but shared model is set
+        assert!(!detector.is_loaded());
+    }
+
+    #[test]
+    fn test_with_shared_model_and_config() {
+        let shared = SharedTranscriptionModel::new();
+        let config = WakeWordDetectorConfig {
+            wake_phrase: "hello world".to_string(),
+            ..Default::default()
+        };
+        let detector = WakeWordDetector::with_shared_model_and_config(shared, config);
+
+        assert_eq!(detector.config().wake_phrase, "hello world");
+        assert!(!detector.is_loaded());
     }
 }

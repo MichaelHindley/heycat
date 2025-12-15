@@ -74,8 +74,15 @@ pub fn run() {
             ));
             app.manage(listening_state.clone());
 
-            // Create and manage listening pipeline
-            let listening_pipeline = Arc::new(Mutex::new(listening::ListeningPipeline::new()));
+            // Create shared transcription model (single ~3GB Parakeet model)
+            // This model is shared between TranscriptionManager and WakeWordDetector
+            debug!("Creating SharedTranscriptionModel...");
+            let shared_transcription_model = parakeet::SharedTranscriptionModel::new();
+
+            // Create listening pipeline with shared model
+            let mut pipeline = listening::ListeningPipeline::new();
+            pipeline.set_shared_model(shared_transcription_model.clone());
+            let listening_pipeline = Arc::new(Mutex::new(pipeline));
             app.manage(listening_pipeline.clone());
 
             // Create and manage recording detectors (for silence/cancel detection during recording)
@@ -91,9 +98,12 @@ pub fn run() {
             // Manage audio thread state for Tauri commands
             app.manage(audio_thread.clone());
 
-            // Create and manage TranscriptionManager for transcription
-            debug!("Creating TranscriptionManager...");
-            let transcription_manager = Arc::new(parakeet::TranscriptionManager::new());
+            // Create TranscriptionManager with shared model
+            // This allows TranscriptionManager and WakeWordDetector to share the same Parakeet model
+            debug!("Creating TranscriptionManager with shared model...");
+            let transcription_manager = Arc::new(
+                parakeet::TranscriptionManager::with_shared_model(shared_transcription_model.clone())
+            );
 
             app.manage(transcription_manager.clone());
 
@@ -123,17 +133,18 @@ pub fn run() {
             debug!("ExecutorState initialized successfully");
 
             // Eager model loading at startup (if models exist)
-            // Load TDT model if available
+            // Load TDT model into shared model if available
+            // This single model instance will be shared between TranscriptionManager and WakeWordDetector
             if let Ok(true) = model::check_model_exists_for_type(model::download::ModelType::ParakeetTDT) {
                 if let Ok(model_dir) = model::download::get_model_dir(model::download::ModelType::ParakeetTDT) {
-                    info!("Loading Parakeet TDT model from {:?}...", model_dir);
+                    info!("Loading shared Parakeet TDT model from {:?}...", model_dir);
                     match transcription_manager.load_tdt_model(&model_dir) {
-                        Ok(()) => info!("Parakeet TDT model loaded successfully"),
+                        Ok(()) => info!("Shared Parakeet TDT model loaded successfully (saves ~3GB by sharing)"),
                         Err(e) => warn!("Failed to load Parakeet TDT model: {}", e),
                     }
                 }
             } else {
-                info!("TDT model not found, batch transcription will require download first");
+                info!("TDT model not found, batch transcription and wake word detection will require download first");
             }
 
             // Create a wrapper to pass to HotkeyIntegration (it needs owned value, not Arc)

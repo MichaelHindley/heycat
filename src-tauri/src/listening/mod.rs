@@ -5,6 +5,7 @@
 mod buffer;
 mod coordinator;
 mod detector;
+mod events;
 mod manager;
 mod pipeline;
 mod silence;
@@ -22,6 +23,11 @@ pub use coordinator::RecordingDetectors;
 #[allow(unused_imports)]
 pub use detector::WakeWordResult;
 #[allow(unused_imports)]
-pub use pipeline::{PipelineConfig, PipelineError, WakeWordCallback};
+pub use pipeline::{PipelineConfig, PipelineError};
+#[allow(unused_imports, deprecated)]
+pub use pipeline::WakeWordCallback;
 #[allow(unused_imports)]
 pub use silence::{SilenceConfig, SilenceDetectionResult, SilenceDetector, SilenceStopReason};
+
+// Event channel types for safe async communication
+pub use events::WakeWordEvent;

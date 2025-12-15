@@ -1,19 +1,19 @@
 // TranscriptionManager for Parakeet-based transcription
 // Provides TDT (batch) transcription using NVIDIA Parakeet models
 
-use super::types::{TranscriptionError, TranscriptionResult, TranscriptionService, TranscriptionState};
-use crate::info;
-use parakeet_rs::ParakeetTDT;
+use super::shared::SharedTranscriptionModel;
+use super::types::{TranscriptionResult, TranscriptionService, TranscriptionState};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
 
 /// Thread-safe transcription manager for Parakeet models
 /// Manages TDT (batch) transcription
+///
+/// This manager now wraps a SharedTranscriptionModel internally, allowing the same
+/// model to be shared with other components like WakeWordDetector. This saves ~3GB
+/// of memory by avoiding duplicate model loading.
 pub struct TranscriptionManager {
-    /// TDT context for batch transcription
-    tdt_context: Arc<Mutex<Option<ParakeetTDT>>>,
-    /// Current transcription state
-    state: Arc<Mutex<TranscriptionState>>,
+    /// Shared transcription model (wraps ParakeetTDT)
+    shared_model: SharedTranscriptionModel,
 }
 
 impl Default for TranscriptionManager {
@@ -24,183 +24,68 @@ impl Default for TranscriptionManager {
 
 impl TranscriptionManager {
     /// Create a new TranscriptionManager without a loaded model
+    ///
+    /// This creates its own internal SharedTranscriptionModel. For memory efficiency,
+    /// prefer using `with_shared_model()` to share a model across components.
     pub fn new() -> Self {
         Self {
-            tdt_context: Arc::new(Mutex::new(None)),
-            state: Arc::new(Mutex::new(TranscriptionState::Unloaded)),
+            shared_model: SharedTranscriptionModel::new(),
         }
+    }
+
+    /// Create a TranscriptionManager that uses an existing shared model
+    ///
+    /// This is the preferred constructor for production use, as it allows
+    /// sharing a single ~3GB model between TranscriptionManager and WakeWordDetector.
+    pub fn with_shared_model(shared_model: SharedTranscriptionModel) -> Self {
+        Self { shared_model }
     }
 
     /// Load the TDT model from the given directory path
     pub fn load_tdt_model(&self, model_dir: &Path) -> TranscriptionResult<()> {
-        let path_str = model_dir.to_str().ok_or_else(|| {
-            TranscriptionError::ModelLoadFailed("Invalid path encoding".to_string())
-        })?;
-
-        let tdt = ParakeetTDT::from_pretrained(path_str, None)
-            .map_err(|e| TranscriptionError::ModelLoadFailed(e.to_string()))?;
-
-        {
-            let mut guard = self
-                .tdt_context
-                .lock()
-                .map_err(|_| TranscriptionError::LockPoisoned)?;
-            *guard = Some(tdt);
-        }
-
-        // Update state to Idle if this was the first model loaded
-        {
-            let mut state = self
-                .state
-                .lock()
-                .map_err(|_| TranscriptionError::LockPoisoned)?;
-            if *state == TranscriptionState::Unloaded {
-                *state = TranscriptionState::Idle;
-            }
-        }
-
-        Ok(())
+        self.shared_model.load(model_dir)
     }
 
     /// Check if TDT model is loaded
     pub fn is_tdt_loaded(&self) -> bool {
-        self.tdt_context
-            .lock()
-            .map(|guard| guard.is_some())
-            .unwrap_or(false)
+        self.shared_model.is_loaded()
+    }
+
+    /// Get the underlying shared model (for sharing with other components)
+    #[allow(dead_code)] // Accessor for future use
+    pub fn shared_model(&self) -> SharedTranscriptionModel {
+        self.shared_model.clone()
     }
 }
 
 impl TranscriptionService for TranscriptionManager {
     #[allow(dead_code)]
     fn load_model(&self, path: &Path) -> TranscriptionResult<()> {
-        // Load the TDT model from the given path
-        let tdt = ParakeetTDT::from_pretrained(
-            path.to_str()
-                .ok_or_else(|| TranscriptionError::ModelLoadFailed("Invalid path".to_string()))?,
-            None,
-        )
-        .map_err(|e| TranscriptionError::ModelLoadFailed(e.to_string()))?;
-
-        // Store context and update state
-        {
-            let mut guard = self
-                .tdt_context
-                .lock()
-                .map_err(|_| TranscriptionError::LockPoisoned)?;
-            *guard = Some(tdt);
-        }
-        {
-            let mut state = self
-                .state
-                .lock()
-                .map_err(|_| TranscriptionError::LockPoisoned)?;
-            *state = TranscriptionState::Idle;
-        }
-
-        Ok(())
+        self.shared_model.load(path)
     }
 
     fn transcribe(&self, file_path: &str) -> TranscriptionResult<String> {
-        // Validate file path
-        if file_path.is_empty() {
-            return Err(TranscriptionError::InvalidAudio(
-                "Empty file path".to_string(),
-            ));
-        }
-
-        // Set state to transcribing
-        {
-            let mut state = self
-                .state
-                .lock()
-                .map_err(|_| TranscriptionError::LockPoisoned)?;
-            if *state == TranscriptionState::Unloaded {
-                return Err(TranscriptionError::ModelNotLoaded);
-            }
-            *state = TranscriptionState::Transcribing;
-        }
-
-        // Perform transcription using transcribe_file
-        let result = {
-            let mut guard = self
-                .tdt_context
-                .lock()
-                .map_err(|_| TranscriptionError::LockPoisoned)?;
-
-            let tdt = guard.as_mut().ok_or(TranscriptionError::ModelNotLoaded)?;
-
-            // Use transcribe_file - parakeet-rs handles audio loading and preprocessing
-            match tdt.transcribe_file(file_path, None) {
-                Ok(transcribe_result) => {
-                    // WORKAROUND for parakeet-rs v0.2.5 bug:
-                    // result.text incorrectly joins tokens with spaces (`.join(" ")`)
-                    // Instead, concatenate tokens directly - they already have leading
-                    // spaces at word boundaries (from SentencePiece ▁ marker)
-                    let fixed_text: String = transcribe_result.tokens
-                        .iter()
-                        .map(|t| t.text.as_str())
-                        .collect();
-                    let fixed_text = fixed_text.trim().to_string();
-
-                    // Log for debugging
-                    info!("=== parakeet-rs transcribe_file result ===");
-                    info!("result.text (broken): {:?}", transcribe_result.text);
-                    info!("fixed_text: {:?}", fixed_text);
-                    info!("=== end parakeet-rs result ===");
-
-                    Ok(fixed_text)
-                }
-                Err(e) => Err(TranscriptionError::TranscriptionFailed(e.to_string()))
-            }
-        };
-
-        // Update state to Completed or Error based on result
-        {
-            let mut state = self
-                .state
-                .lock()
-                .map_err(|_| TranscriptionError::LockPoisoned)?;
-            *state = if result.is_ok() {
-                TranscriptionState::Completed
-            } else {
-                TranscriptionState::Error
-            };
-        }
-
-        result
+        self.shared_model.transcribe_file(file_path)
     }
 
     fn is_loaded(&self) -> bool {
-        // Check if TDT model is loaded
-        self.is_tdt_loaded()
+        self.shared_model.is_loaded()
     }
 
     #[allow(dead_code)]
     fn state(&self) -> TranscriptionState {
-        self.state
-            .lock()
-            .map(|guard| *guard)
-            .unwrap_or(TranscriptionState::Unloaded)
+        self.shared_model.state()
     }
 
     fn reset_to_idle(&self) -> TranscriptionResult<()> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| TranscriptionError::LockPoisoned)?;
-
-        // Only reset from Completed or Error states
-        if *state == TranscriptionState::Completed || *state == TranscriptionState::Error {
-            *state = TranscriptionState::Idle;
-        }
-        Ok(())
+        self.shared_model.reset_to_idle()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::types::TranscriptionError;
 
     #[test]
     fn test_transcription_manager_new_is_unloaded() {
@@ -241,47 +126,6 @@ mod tests {
     }
 
     #[test]
-    fn test_reset_to_idle_from_completed() {
-        let manager = TranscriptionManager::new();
-        // Manually set state to Completed for testing
-        {
-            let mut state = manager.state.lock().unwrap();
-            *state = TranscriptionState::Completed;
-        }
-        assert_eq!(manager.state(), TranscriptionState::Completed);
-
-        manager.reset_to_idle().unwrap();
-        assert_eq!(manager.state(), TranscriptionState::Idle);
-    }
-
-    #[test]
-    fn test_reset_to_idle_from_error() {
-        let manager = TranscriptionManager::new();
-        // Manually set state to Error for testing
-        {
-            let mut state = manager.state.lock().unwrap();
-            *state = TranscriptionState::Error;
-        }
-        assert_eq!(manager.state(), TranscriptionState::Error);
-
-        manager.reset_to_idle().unwrap();
-        assert_eq!(manager.state(), TranscriptionState::Idle);
-    }
-
-    #[test]
-    fn test_reset_to_idle_noop_from_idle() {
-        let manager = TranscriptionManager::new();
-        // Set to Idle first
-        {
-            let mut state = manager.state.lock().unwrap();
-            *state = TranscriptionState::Idle;
-        }
-
-        manager.reset_to_idle().unwrap();
-        assert_eq!(manager.state(), TranscriptionState::Idle);
-    }
-
-    #[test]
     fn test_reset_to_idle_noop_from_unloaded() {
         let manager = TranscriptionManager::new();
         assert_eq!(manager.state(), TranscriptionState::Unloaded);
@@ -289,50 +133,6 @@ mod tests {
         manager.reset_to_idle().unwrap();
         // Should remain Unloaded, not reset
         assert_eq!(manager.state(), TranscriptionState::Unloaded);
-    }
-
-    #[test]
-    fn test_transcription_manager_state_transitions() {
-        let manager = TranscriptionManager::new();
-
-        // Initial state: Unloaded
-        assert_eq!(manager.state(), TranscriptionState::Unloaded);
-
-        // After setting to Idle (simulating model load success)
-        {
-            let mut state = manager.state.lock().unwrap();
-            *state = TranscriptionState::Idle;
-        }
-        assert_eq!(manager.state(), TranscriptionState::Idle);
-
-        // After setting to Transcribing
-        {
-            let mut state = manager.state.lock().unwrap();
-            *state = TranscriptionState::Transcribing;
-        }
-        assert_eq!(manager.state(), TranscriptionState::Transcribing);
-
-        // After setting to Completed
-        {
-            let mut state = manager.state.lock().unwrap();
-            *state = TranscriptionState::Completed;
-        }
-        assert_eq!(manager.state(), TranscriptionState::Completed);
-
-        // Reset to Idle
-        manager.reset_to_idle().unwrap();
-        assert_eq!(manager.state(), TranscriptionState::Idle);
-
-        // Can also transition from Idle to Error
-        {
-            let mut state = manager.state.lock().unwrap();
-            *state = TranscriptionState::Error;
-        }
-        assert_eq!(manager.state(), TranscriptionState::Error);
-
-        // Reset from Error to Idle
-        manager.reset_to_idle().unwrap();
-        assert_eq!(manager.state(), TranscriptionState::Idle);
     }
 
     #[test]
@@ -347,5 +147,27 @@ mod tests {
         let result = manager.load_tdt_model(Path::new("/nonexistent/path/to/model"));
         assert!(result.is_err());
         assert!(matches!(result, Err(TranscriptionError::ModelLoadFailed(_))));
+    }
+
+    #[test]
+    fn test_with_shared_model() {
+        let shared = SharedTranscriptionModel::new();
+        let manager = TranscriptionManager::with_shared_model(shared.clone());
+
+        // Both should report unloaded
+        assert!(!manager.is_loaded());
+        assert!(!shared.is_loaded());
+        assert_eq!(manager.state(), TranscriptionState::Unloaded);
+        assert_eq!(shared.state(), TranscriptionState::Unloaded);
+    }
+
+    #[test]
+    fn test_shared_model_accessor() {
+        let manager = TranscriptionManager::new();
+        let shared = manager.shared_model();
+
+        // Shared model should reflect the same state
+        assert!(!manager.is_loaded());
+        assert!(!shared.is_loaded());
     }
 }
