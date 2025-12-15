@@ -9,6 +9,7 @@ mod events;
 mod manager;
 mod pipeline;
 mod silence;
+mod vad;
 
 // Core components used by the listening pipeline
 pub use buffer::CircularBuffer;
@@ -31,3 +32,6 @@ pub use silence::{SilenceConfig, SilenceDetectionResult, SilenceDetector, Silenc
 
 // Event channel types for safe async communication
 pub use events::WakeWordEvent;
+
+// Unified VAD configuration
+pub use vad::{create_vad, VadConfig, VadError};

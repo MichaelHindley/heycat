@@ -1,6 +1,7 @@
 // Silence detection for automatic recording stop
 // Uses VAD (Voice Activity Detection) to identify end of speech
 
+use super::vad::{create_vad, VadConfig};
 use crate::{debug, info, trace};
 use std::time::Instant;
 use voice_activity_detector::VoiceActivityDetector;
@@ -75,13 +76,18 @@ impl SilenceDetector {
     }
 
     /// Create a new silence detector with custom configuration
+    ///
+    /// Uses the unified VadConfig with silence preset for optimal precision.
     pub fn with_config(config: SilenceConfig) -> Self {
-        // Initialize VAD
-        let vad = VoiceActivityDetector::builder()
-            .sample_rate(config.sample_rate as i32)
-            .chunk_size(512_usize)
-            .build()
-            .ok();
+        // Initialize VAD using unified factory
+        let vad_config = VadConfig {
+            speech_threshold: config.vad_speech_threshold,
+            sample_rate: config.sample_rate,
+            chunk_size: 512, // Required by Silero VAD at 16kHz
+            min_speech_frames: 2,
+        };
+
+        let vad = create_vad(&vad_config).ok();
 
         if vad.is_some() {
             debug!("[silence] VAD initialized (threshold={})", config.vad_speech_threshold);
@@ -105,12 +111,14 @@ impl SilenceDetector {
         self.silence_start = None;
         self.recording_start = Instant::now();
 
-        // Reinitialize VAD for fresh state
-        self.vad = VoiceActivityDetector::builder()
-            .sample_rate(self.config.sample_rate as i32)
-            .chunk_size(512_usize)
-            .build()
-            .ok();
+        // Reinitialize VAD for fresh state using unified factory
+        let vad_config = VadConfig {
+            speech_threshold: self.config.vad_speech_threshold,
+            sample_rate: self.config.sample_rate,
+            chunk_size: 512,
+            min_speech_frames: 2,
+        };
+        self.vad = create_vad(&vad_config).ok();
     }
 
     /// Get the configuration

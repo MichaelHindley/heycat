@@ -1,6 +1,7 @@
 // Wake word detector using Parakeet for on-device speech recognition
 // Analyzes audio windows to detect the "Hey Cat" wake phrase
 
+use super::vad::{create_vad, VadConfig, VadError};
 use super::CircularBuffer;
 use crate::events::{current_timestamp, listening_events, ListeningEventEmitter};
 use crate::parakeet::SharedTranscriptionModel;
@@ -250,6 +251,7 @@ impl WakeWordDetector {
     ///
     /// Must be called before processing audio if VAD is enabled.
     /// The Parakeet model should already be loaded via the shared model.
+    /// Uses the unified VadConfig with wake_word preset for optimal sensitivity.
     pub fn init_vad(&self) -> Result<(), WakeWordError> {
         if !self.config.vad_enabled {
             crate::info!("[wake-word] VAD disabled");
@@ -257,14 +259,21 @@ impl WakeWordDetector {
         }
 
         crate::debug!("[wake-word] Initializing VAD detector...");
-        let vad = VoiceActivityDetector::builder()
-            .sample_rate(self.config.sample_rate)
-            .chunk_size(512usize) // Fixed for Silero at 16kHz
-            .build()
-            .map_err(|e| {
-                crate::error!("[wake-word] Failed to initialize VAD: {}", e);
-                WakeWordError::VadInitFailed(e.to_string())
-            })?;
+
+        // Create VAD config based on detector settings
+        let vad_config = VadConfig {
+            speech_threshold: self.config.vad_speech_threshold,
+            sample_rate: self.config.sample_rate,
+            chunk_size: 512, // Required by Silero VAD at 16kHz
+            min_speech_frames: self.config.min_speech_frames,
+        };
+
+        let vad = create_vad(&vad_config).map_err(|e| {
+            crate::error!("[wake-word] Failed to initialize VAD: {}", e);
+            match e {
+                VadError::InitializationFailed(msg) => WakeWordError::VadInitFailed(msg),
+            }
+        })?;
 
         let mut vad_guard = self.vad.lock().map_err(|_| WakeWordError::LockPoisoned)?;
         *vad_guard = Some(vad);
