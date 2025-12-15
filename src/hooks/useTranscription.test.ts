@@ -181,6 +181,68 @@ describe("useTranscription", () => {
     expect(mockUnlisten).toHaveBeenCalledTimes(3);
   });
 
+  it("handles timeout error and allows subsequent transcriptions", async () => {
+    let startedCallback: ((event: { payload: { timestamp: string } }) => void) | null = null;
+    let errorCallback: ((event: { payload: { error: string } }) => void) | null = null;
+    let completedCallback: ((event: {
+      payload: { text: string; duration_ms: number };
+    }) => void) | null = null;
+
+    mockListen.mockImplementation(
+      (
+        eventName: string,
+        callback: (event: { payload: unknown }) => void
+      ) => {
+        if (eventName === "transcription_started") {
+          startedCallback = callback;
+        } else if (eventName === "transcription_error") {
+          errorCallback = callback;
+        } else if (eventName === "transcription_completed") {
+          completedCallback = callback;
+        }
+        return Promise.resolve(mockUnlisten);
+      }
+    );
+
+    const { result } = renderHook(() => useTranscription());
+
+    await waitFor(() => {
+      expect(startedCallback).not.toBeNull();
+      expect(errorCallback).not.toBeNull();
+      expect(completedCallback).not.toBeNull();
+    });
+
+    // Start transcription
+    act(() => {
+      startedCallback!({ payload: { timestamp: "2025-01-01T12:00:00Z" } });
+    });
+    expect(result.current.isTranscribing).toBe(true);
+
+    // Timeout error during transcription
+    act(() => {
+      errorCallback!({ payload: { error: "Transcription timed out after 60 seconds. The audio may be too long or the model may be stuck." } });
+    });
+
+    // State should be reset - not stuck on isTranscribing
+    expect(result.current.isTranscribing).toBe(false);
+    expect(result.current.error).toBe("Transcription timed out after 60 seconds. The audio may be too long or the model may be stuck.");
+
+    // Subsequent transcription should work (recovery test)
+    act(() => {
+      startedCallback!({ payload: { timestamp: "2025-01-01T12:01:00Z" } });
+    });
+    expect(result.current.isTranscribing).toBe(true);
+    expect(result.current.error).toBeNull(); // Error should be cleared
+
+    act(() => {
+      completedCallback!({
+        payload: { text: "Recovery transcription", duration_ms: 500 },
+      });
+    });
+    expect(result.current.isTranscribing).toBe(false);
+    expect(result.current.transcribedText).toBe("Recovery transcription");
+  });
+
   it("clears previous state when new transcription starts", async () => {
     let startedCallback: ((event: { payload: { timestamp: string } }) => void) | null = null;
     let completedCallback: ((event: {
