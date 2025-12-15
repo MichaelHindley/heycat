@@ -69,11 +69,12 @@ pub struct PipelineConfig {
 impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
-            // Analyze every 500ms by default
-            analysis_interval_ms: 500,
-            // Need at least 0.5 seconds of audio before analyzing
-            // 16000 Hz * 0.5s = 8000 samples
-            min_samples_for_analysis: 8000,
+            // Analyze every 150ms for responsive wake word detection
+            // Trades ~3x more CPU for ~3x faster response time
+            analysis_interval_ms: 150,
+            // Need at least 0.25 seconds of audio before analyzing
+            // 16000 Hz * 0.25s = 4000 samples
+            min_samples_for_analysis: 4000,
         }
     }
 }
@@ -488,6 +489,10 @@ fn analysis_thread_main<E: ListeningEventEmitter>(
                 // VAD filtered out non-speech audio, continue
                 crate::trace!("[pipeline] No speech detected (VAD), skipping transcription");
             }
+            Err(WakeWordError::DuplicateAudio) => {
+                // Audio segment already analyzed (fingerprint match), continue
+                crate::trace!("[pipeline] Duplicate audio detected (fingerprint), skipping");
+            }
             Err(WakeWordError::ModelNotLoaded) => {
                 // Model not loaded - emit unavailable and stop
                 crate::error!("[pipeline] Wake word model not loaded");
@@ -514,8 +519,8 @@ mod tests {
     #[test]
     fn test_pipeline_config_default() {
         let config = PipelineConfig::default();
-        assert_eq!(config.analysis_interval_ms, 500);
-        assert_eq!(config.min_samples_for_analysis, 8000);
+        assert_eq!(config.analysis_interval_ms, 150);
+        assert_eq!(config.min_samples_for_analysis, 4000);
     }
 
     #[test]
@@ -623,19 +628,19 @@ mod tests {
     #[test]
     fn test_circular_buffer_bounds_memory() {
         // Verify the circular buffer in WakeWordDetector bounds memory
-        // The default config uses 3 seconds at 16kHz = 48000 samples
-        // 48000 * 4 bytes (f32) = ~192KB per buffer
+        // The default config uses 2 seconds at 16kHz = 32000 samples
+        // 32000 * 4 bytes (f32) = ~128KB per buffer
         let detector = WakeWordDetector::new();
         let config = detector.config();
 
         let expected_samples = (config.window_duration_secs * config.sample_rate as f32) as usize;
-        // Should be ~48000 samples for default 3 second window
-        assert_eq!(expected_samples, 48000);
+        // Should be ~32000 samples for default 2 second window
+        assert_eq!(expected_samples, 32000);
 
-        // Memory should be bounded: 48000 samples * 4 bytes = ~192KB
+        // Memory should be bounded: 32000 samples * 4 bytes = ~128KB
         let expected_memory = expected_samples * std::mem::size_of::<f32>();
-        assert!(expected_memory < 250 * 1024); // Less than 250KB (allows small overhead)
-        assert!(expected_memory >= 180 * 1024); // At least ~180KB (verifies 3s buffer)
+        assert!(expected_memory < 150 * 1024); // Less than 150KB (allows small overhead)
+        assert!(expected_memory >= 120 * 1024); // At least ~120KB (verifies 2s buffer)
     }
 
     #[test]
@@ -643,13 +648,13 @@ mod tests {
         // Verify the pipeline config's min_samples_for_analysis is reasonable
         let config = PipelineConfig::default();
 
-        // 8000 samples at 16kHz = 0.5 seconds
-        // This means we start analyzing after half a second of audio
-        assert_eq!(config.min_samples_for_analysis, 8000);
+        // 4000 samples at 16kHz = 0.25 seconds
+        // This means we start analyzing after a quarter second of audio
+        assert_eq!(config.min_samples_for_analysis, 4000);
 
-        // Memory for min_samples: 8000 * 4 bytes = 32KB
+        // Memory for min_samples: 4000 * 4 bytes = 16KB
         let min_memory = config.min_samples_for_analysis * std::mem::size_of::<f32>();
-        assert!(min_memory < 50 * 1024); // Less than 50KB
+        assert!(min_memory < 20 * 1024); // Less than 20KB
     }
 
     // Note: Integration tests requiring actual audio hardware are in pipeline_test.rs

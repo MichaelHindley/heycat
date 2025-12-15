@@ -16,6 +16,7 @@ mod voice_commands;
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
 use tauri_plugin_log::{Target, TargetKind};
+use tauri_plugin_store::StoreExt;
 
 // Re-export log macros for use throughout the crate
 pub use tauri_plugin_log::log::{debug, error, info, trace, warn};
@@ -60,8 +61,17 @@ pub fn run() {
             // Manage the state for Tauri commands
             app.manage(recording_state.clone());
 
-            // Create and manage listening state
-            let listening_state = Arc::new(Mutex::new(listening::ListeningManager::new()));
+            // Create and manage listening state, restoring persisted enabled setting
+            let listening_enabled = app
+                .store("settings.json")
+                .ok()
+                .and_then(|store| store.get("listening.enabled"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            debug!("Restored listening.enabled from store: {}", listening_enabled);
+            let listening_state = Arc::new(Mutex::new(
+                listening::ListeningManager::with_enabled(listening_enabled),
+            ));
             app.manage(listening_state.clone());
 
             // Create and manage listening pipeline

@@ -5,6 +5,7 @@ use super::CircularBuffer;
 use crate::events::{current_timestamp, listening_events, ListeningEventEmitter};
 use crate::model::download::{get_model_dir, ModelType};
 use parakeet_rs::ParakeetTDT;
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use voice_activity_detector::VoiceActivityDetector;
 
@@ -21,13 +22,17 @@ pub struct WakeWordDetectorConfig {
     /// Sample rate in Hz (must match audio input)
     pub sample_rate: u32,
     /// Minimum new samples required before re-analysis (prevents duplicate transcriptions)
-    /// Default: 8000 samples = 0.5 seconds at 16kHz
+    /// Default: 4000 samples = 0.25 seconds at 16kHz
     pub min_new_samples_for_analysis: usize,
     /// VAD speech probability threshold (0.0 - 1.0)
     /// Audio below this threshold is considered non-speech
+    /// Default: 0.3 (lowered from 0.5 for better sensitivity to varied volumes)
     pub vad_speech_threshold: f32,
     /// Whether VAD pre-filtering is enabled
     pub vad_enabled: bool,
+    /// Minimum speech frames required in VAD check
+    /// Default: 2 frames (early return at 3 for performance)
+    pub min_speech_frames: usize,
 }
 
 impl Default for WakeWordDetectorConfig {
@@ -35,16 +40,21 @@ impl Default for WakeWordDetectorConfig {
         Self {
             wake_phrase: "hey cat".to_string(),
             confidence_threshold: 0.8,
-            // ~3 seconds at 16kHz = 48000 samples = ~192KB memory
-            window_duration_secs: 3.0,
+            // ~2 seconds at 16kHz = 32000 samples = ~128KB memory
+            // Reduced from 3s to 2s for faster response with short utterances
+            window_duration_secs: 2.0,
             sample_rate: 16000,
             // 0.5 seconds of new audio required before re-analysis
-            // This prevents the same audio from being transcribed multiple times
+            // This ensures complete utterances like "hey cat" (~0.5-0.7s) are captured
             min_new_samples_for_analysis: 8000,
-            // VAD threshold - Silero default is 0.5
-            vad_speech_threshold: 0.5,
+            // VAD threshold - lowered from 0.5 to 0.3 for better sensitivity
+            // 0.3 catches softer consonants while still filtering background noise
+            vad_speech_threshold: 0.3,
             // VAD enabled by default to filter background noise
             vad_enabled: true,
+            // Minimum speech frames - require 2+ frames above threshold
+            // Reduced from 10% ratio to catch short utterances like "hello"
+            min_speech_frames: 2,
         }
     }
 }
@@ -58,6 +68,41 @@ pub struct WakeWordResult {
     pub confidence: f32,
     /// The transcribed text from the audio window
     pub transcription: String,
+}
+
+/// Audio fingerprint for deduplicating audio segments
+///
+/// Identifies audio by its position in the sample stream rather than content.
+/// This allows detecting duplicate audio regardless of transcription variations.
+#[derive(Debug, Clone)]
+struct AudioFingerprint {
+    /// Start sample index (from total_samples_pushed)
+    start_idx: u64,
+    /// End sample index
+    end_idx: u64,
+}
+
+impl AudioFingerprint {
+    /// Calculate overlap ratio with another fingerprint (0.0 to 1.0)
+    ///
+    /// Returns the proportion of self's range that overlaps with other.
+    fn overlap_ratio(&self, other: &AudioFingerprint) -> f32 {
+        let overlap_start = self.start_idx.max(other.start_idx);
+        let overlap_end = self.end_idx.min(other.end_idx);
+
+        if overlap_start >= overlap_end {
+            return 0.0; // No overlap
+        }
+
+        let overlap_len = (overlap_end - overlap_start) as f32;
+        let self_len = (self.end_idx - self.start_idx) as f32;
+
+        if self_len == 0.0 {
+            return 0.0;
+        }
+
+        overlap_len / self_len
+    }
 }
 
 /// Errors that can occur during wake word detection
@@ -79,6 +124,8 @@ pub enum WakeWordError {
     NoSpeechDetected,
     /// VAD initialization failed
     VadInitFailed(String),
+    /// Audio segment already analyzed (fingerprint match)
+    DuplicateAudio,
 }
 
 impl std::fmt::Display for WakeWordError {
@@ -97,6 +144,9 @@ impl std::fmt::Display for WakeWordError {
             }
             WakeWordError::VadInitFailed(msg) => {
                 write!(f, "VAD initialization failed: {}", msg)
+            }
+            WakeWordError::DuplicateAudio => {
+                write!(f, "Audio segment already analyzed (fingerprint match)")
             }
         }
     }
@@ -117,8 +167,9 @@ pub struct WakeWordDetector {
     buffer: Mutex<CircularBuffer>,
     /// Sample count at last analysis (for tracking new samples)
     last_analysis_sample_count: Mutex<u64>,
-    /// Last transcription result (for deduplication)
-    last_transcription: Mutex<Option<String>>,
+    /// Recent audio fingerprints for deduplication (stores last 5)
+    /// Uses sample indices to identify audio segments, independent of transcription text
+    recent_fingerprints: Mutex<VecDeque<AudioFingerprint>>,
     /// Voice Activity Detector for filtering non-speech audio
     vad: Mutex<Option<VoiceActivityDetector>>,
 }
@@ -137,7 +188,7 @@ impl WakeWordDetector {
             model: Arc::new(Mutex::new(None)),
             buffer: Mutex::new(buffer),
             last_analysis_sample_count: Mutex::new(0),
-            last_transcription: Mutex::new(None),
+            recent_fingerprints: Mutex::new(VecDeque::with_capacity(5)),
             vad: Mutex::new(None),
         }
     }
@@ -222,13 +273,16 @@ impl WakeWordDetector {
     /// Returns a WakeWordResult indicating whether the wake phrase was detected.
     /// Skips analysis if not enough new samples have accumulated since last analysis.
     pub fn analyze(&self) -> Result<WakeWordResult, WakeWordError> {
-        // Get samples from buffer and check if we have enough new audio
-        let (samples, current_total) = {
+        // Get samples from buffer and calculate audio fingerprint
+        let (samples, fingerprint) = {
             let buffer = self.buffer.lock().map_err(|_| WakeWordError::LockPoisoned)?;
             if buffer.is_empty() {
                 return Err(WakeWordError::EmptyBuffer);
             }
-            (buffer.get_samples(), buffer.total_samples_pushed())
+            let samples = buffer.get_samples();
+            let end_idx = buffer.total_samples_pushed();
+            let start_idx = end_idx.saturating_sub(samples.len() as u64);
+            (samples, AudioFingerprint { start_idx, end_idx })
         };
 
         // Check if we have enough new samples since last analysis
@@ -240,7 +294,7 @@ impl WakeWordDetector {
             *guard
         };
 
-        let new_samples = current_total.saturating_sub(last_count) as usize;
+        let new_samples = fingerprint.end_idx.saturating_sub(last_count) as usize;
         if new_samples < self.config.min_new_samples_for_analysis {
             crate::trace!(
                 "[wake-word] Skipping analysis: only {} new samples (need {})",
@@ -248,6 +302,24 @@ impl WakeWordDetector {
                 self.config.min_new_samples_for_analysis
             );
             return Err(WakeWordError::InsufficientNewSamples);
+        }
+
+        // Check for duplicate audio using fingerprint (>50% overlap with recent)
+        {
+            let fingerprints = self
+                .recent_fingerprints
+                .lock()
+                .map_err(|_| WakeWordError::LockPoisoned)?;
+            for fp in fingerprints.iter() {
+                let overlap = fingerprint.overlap_ratio(fp);
+                if overlap > 0.5 {
+                    crate::trace!(
+                        "[wake-word] Skipping duplicate audio: {:.1}% overlap with recent fingerprint",
+                        overlap * 100.0
+                    );
+                    return Err(WakeWordError::DuplicateAudio);
+                }
+            }
         }
 
         crate::trace!(
@@ -284,49 +356,28 @@ impl WakeWordDetector {
         };
         let transcribe_duration = transcribe_start.elapsed();
 
-        // Clear buffer after transcription to prevent re-analyzing same audio
-        // This is critical because the CircularBuffer is a rolling 3-second window,
-        // so without clearing, the same speech would be transcribed multiple times
-        {
-            let mut buffer = self.buffer.lock().map_err(|_| WakeWordError::LockPoisoned)?;
-            buffer.clear();
-            buffer.reset_sample_counter();
-            crate::trace!("[wake-word] Buffer cleared after transcription");
-        }
-
-        // Reset sample count tracking since buffer is now empty
+        // Update sample count and store fingerprint after successful transcription
         {
             let mut guard = self
                 .last_analysis_sample_count
                 .lock()
                 .map_err(|_| WakeWordError::LockPoisoned)?;
-            *guard = 0;
+            *guard = fingerprint.end_idx;
         }
-
-        // Check for duplicate transcription (secondary deduplication)
-        let is_duplicate = {
-            let mut last = self
-                .last_transcription
+        {
+            let mut fingerprints = self
+                .recent_fingerprints
                 .lock()
                 .map_err(|_| WakeWordError::LockPoisoned)?;
-            let is_same = last.as_ref() == Some(&transcription);
-            if !is_same {
-                *last = Some(transcription.clone());
+            fingerprints.push_back(fingerprint);
+            // Keep only last 5 fingerprints
+            while fingerprints.len() > 5 {
+                fingerprints.pop_front();
             }
-            is_same
-        };
-
-        if is_duplicate {
             crate::trace!(
-                "[wake-word] Skipping duplicate transcription: '{}'",
-                transcription
+                "[wake-word] Stored fingerprint, total={} recent fingerprints",
+                fingerprints.len()
             );
-            // Return non-detection for duplicate transcriptions
-            return Ok(WakeWordResult {
-                detected: false,
-                confidence: 0.0,
-                transcription,
-            });
         }
 
         crate::debug!(
@@ -407,13 +458,13 @@ impl WakeWordDetector {
             *count = 0;
         }
 
-        // Reset last transcription to allow fresh detection
+        // Clear recent fingerprints to allow fresh detection
         {
-            let mut last = self
-                .last_transcription
+            let mut fingerprints = self
+                .recent_fingerprints
                 .lock()
                 .map_err(|_| WakeWordError::LockPoisoned)?;
-            *last = None;
+            fingerprints.clear();
         }
 
         Ok(())
@@ -421,8 +472,10 @@ impl WakeWordDetector {
 
     /// Check if audio samples contain speech using Voice Activity Detection
     ///
-    /// Returns true if speech is detected in a significant portion of the audio.
+    /// Returns true if speech is detected in enough frames of the audio.
     /// Uses Silero VAD with 512-sample chunks at 16kHz.
+    /// Now uses min_speech_frames (default: 2) instead of 10% ratio for better
+    /// detection of short utterances like "hello".
     fn check_vad(&self, samples: &[f32]) -> Result<bool, WakeWordError> {
         let mut vad_guard = self.vad.lock().map_err(|_| WakeWordError::LockPoisoned)?;
 
@@ -437,36 +490,59 @@ impl WakeWordDetector {
 
         // Process samples in 512-sample chunks (required by Silero at 16kHz)
         const CHUNK_SIZE: usize = 512;
+        let mut max_probability: f32 = 0.0;
         let mut speech_frames = 0;
         let mut total_frames = 0;
 
         for chunk in samples.chunks(CHUNK_SIZE) {
             if chunk.len() == CHUNK_SIZE {
                 let probability = vad.predict(chunk.to_vec());
+                max_probability = max_probability.max(probability);
                 if probability >= self.config.vad_speech_threshold {
                     speech_frames += 1;
+                    // Early return on confident speech detection for performance
+                    // This ensures short utterances like "hello" trigger analysis quickly
+                    if speech_frames >= self.config.min_speech_frames + 1 {
+                        crate::trace!(
+                            "[wake-word] VAD: Early return after {} speech frames (max_prob={:.2})",
+                            speech_frames,
+                            max_probability
+                        );
+                        return Ok(true);
+                    }
                 }
                 total_frames += 1;
             }
         }
 
-        // Require at least 10% of frames to contain speech
-        let speech_ratio = if total_frames > 0 {
-            speech_frames as f32 / total_frames as f32
-        } else {
-            0.0
-        };
+        // Also process partial final chunk by zero-padding
+        // This prevents missing speech at buffer boundaries
+        let remaining = samples.len() % CHUNK_SIZE;
+        if remaining > 0 && remaining >= 256 {
+            // Only process if we have at least half a chunk (meaningful data)
+            let start = samples.len() - remaining;
+            let mut padded = vec![0.0f32; CHUNK_SIZE];
+            padded[..remaining].copy_from_slice(&samples[start..]);
+            let probability = vad.predict(padded);
+            max_probability = max_probability.max(probability);
+            if probability >= self.config.vad_speech_threshold {
+                speech_frames += 1;
+            }
+            total_frames += 1;
+        }
 
         crate::trace!(
-            "[wake-word] VAD: {}/{} frames with speech (ratio={:.2}, threshold={})",
+            "[wake-word] VAD: {}/{} frames with speech (max_prob={:.2}, threshold={}, min_frames={})",
             speech_frames,
             total_frames,
-            speech_ratio,
-            self.config.vad_speech_threshold
+            max_probability,
+            self.config.vad_speech_threshold,
+            self.config.min_speech_frames
         );
 
-        // Consider it speech if at least 10% of frames have speech above threshold
-        Ok(speech_ratio >= 0.1)
+        // Require at least min_speech_frames with speech above threshold
+        // This catches short utterances while filtering random noise spikes
+        Ok(speech_frames >= self.config.min_speech_frames)
     }
 
     /// Check if transcription contains the wake phrase
@@ -549,14 +625,16 @@ mod tests {
         let config = WakeWordDetectorConfig::default();
         assert_eq!(config.wake_phrase, "hey cat");
         assert_eq!(config.confidence_threshold, 0.8);
-        // 3 seconds window for ~192KB memory at 16kHz
-        assert_eq!(config.window_duration_secs, 3.0);
+        // 2 seconds window for ~128KB memory at 16kHz
+        assert_eq!(config.window_duration_secs, 2.0);
         assert_eq!(config.sample_rate, 16000);
         // 0.5 seconds of new audio required before re-analysis
         assert_eq!(config.min_new_samples_for_analysis, 8000);
-        // VAD enabled by default with 0.5 threshold
+        // VAD enabled by default with 0.3 threshold (lowered for better sensitivity)
         assert!(config.vad_enabled);
-        assert_eq!(config.vad_speech_threshold, 0.5);
+        assert_eq!(config.vad_speech_threshold, 0.3);
+        // Minimum 2 speech frames required
+        assert_eq!(config.min_speech_frames, 2);
     }
 
     #[test]
@@ -575,6 +653,7 @@ mod tests {
             min_new_samples_for_analysis: 4000,
             vad_speech_threshold: 0.6,
             vad_enabled: false, // Disable VAD in tests without real audio
+            min_speech_frames: 3,
         };
         let detector = WakeWordDetector::with_config(config.clone());
         assert_eq!(detector.config().wake_phrase, "hello world");
@@ -716,6 +795,7 @@ mod tests {
         assert!(format!("{}", WakeWordError::InsufficientNewSamples).contains("new"));
         assert!(format!("{}", WakeWordError::NoSpeechDetected).contains("VAD"));
         assert!(format!("{}", WakeWordError::VadInitFailed("test".to_string())).contains("test"));
+        assert!(format!("{}", WakeWordError::DuplicateAudio).contains("fingerprint"));
     }
 
     #[test]

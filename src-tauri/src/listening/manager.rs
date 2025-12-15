@@ -69,10 +69,20 @@ pub struct ListeningManager {
 }
 
 impl ListeningManager {
-    /// Create a new ListeningManager
+    /// Create a new ListeningManager with listening disabled
     pub fn new() -> Self {
         Self {
             listening_enabled: false,
+            mic_available: true,
+        }
+    }
+
+    /// Create a new ListeningManager with the specified enabled state
+    ///
+    /// Used to restore persisted settings on app startup.
+    pub fn with_enabled(enabled: bool) -> Self {
+        Self {
+            listening_enabled: enabled,
             mic_available: true,
         }
     }
@@ -252,6 +262,20 @@ mod tests {
     fn test_default_listening_manager_disabled() {
         let manager = ListeningManager::default();
         assert!(!manager.is_enabled());
+    }
+
+    #[test]
+    fn test_with_enabled_true() {
+        let manager = ListeningManager::with_enabled(true);
+        assert!(manager.is_enabled());
+        assert!(manager.is_mic_available());
+    }
+
+    #[test]
+    fn test_with_enabled_false() {
+        let manager = ListeningManager::with_enabled(false);
+        assert!(!manager.is_enabled());
+        assert!(manager.is_mic_available());
     }
 
     #[test]
