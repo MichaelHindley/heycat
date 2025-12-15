@@ -312,8 +312,11 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
     /// Transcribes the WAV file, tries command matching, then fallback to clipboard.
     /// Uses Tauri's async runtime for bounded async execution.
     /// No-op if transcription manager or transcription emitter is not configured.
+    ///
+    /// This method is public so it can be called from the wake word recording flow
+    /// (via the coordinator) in addition to the hotkey recording flow.
     #[cfg_attr(coverage_nightly, coverage(off))]
-    fn spawn_transcription(&self, file_path: String) {
+    pub fn spawn_transcription(&self, file_path: String) {
         // Check all required components are present
         let transcription_manager = match &self.transcription_manager {
             Some(tm) => tm.clone(),

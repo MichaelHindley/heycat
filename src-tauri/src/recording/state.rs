@@ -139,6 +139,37 @@ impl RecordingManager {
         Ok(buffer)
     }
 
+    /// Start recording using an existing audio buffer (for wake word handoff)
+    ///
+    /// This allows the listening pipeline to hand off its buffer to recording,
+    /// preserving any audio captured before the wake word was detected.
+    /// The existing buffer may already contain audio samples from wake word detection.
+    ///
+    /// # Arguments
+    /// * `sample_rate` - The audio sample rate in Hz
+    /// * `existing_buffer` - The buffer to use (from listening pipeline)
+    ///
+    /// # Errors
+    /// Returns error if not in Idle or Listening state
+    #[must_use = "this returns a Result that should be handled"]
+    pub fn start_recording_with_buffer(
+        &mut self,
+        sample_rate: u32,
+        existing_buffer: AudioBuffer,
+    ) -> Result<AudioBuffer, RecordingStateError> {
+        if self.state != RecordingState::Idle && self.state != RecordingState::Listening {
+            return Err(RecordingStateError::InvalidTransition {
+                from: self.state,
+                to: RecordingState::Recording,
+            });
+        }
+
+        self.audio_buffer = Some(existing_buffer.clone());
+        self.active_recording = Some(ActiveRecording { sample_rate });
+        self.state = RecordingState::Recording;
+        Ok(existing_buffer)
+    }
+
     /// Update the sample rate for the current recording
     ///
     /// Call this after audio capture starts to set the actual device sample rate.

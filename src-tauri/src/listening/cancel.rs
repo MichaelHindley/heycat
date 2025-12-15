@@ -360,16 +360,11 @@ impl CancelPhraseDetector {
                 timestamp: current_timestamp(),
             });
 
-            // Abort the recording and transition to target state
-            let target_state = if return_to_listening {
-                crate::recording::RecordingState::Listening
-            } else {
-                crate::recording::RecordingState::Idle
-            };
-
+            // Abort the recording and transition to Idle
+            // User must explicitly re-enable listening mode
             if let Ok(mut manager) = recording_manager.lock() {
                 // Abort discards the buffer without saving
-                if let Err(e) = manager.abort_recording(target_state) {
+                if let Err(e) = manager.abort_recording(crate::recording::RecordingState::Idle) {
                     // Log but don't fail - the cancellation event was emitted
                     crate::warn!("[cancel] Failed to abort recording: {}", e);
                 }

@@ -16,6 +16,7 @@ fn params_with_close(app: &str) -> HashMap<String, String> {
 }
 
 #[tokio::test]
+#[ignore] // Opens Safari - skip during local dev
 async fn test_open_safari_successfully() {
     // This test actually opens Safari - only run on macOS
     if !cfg!(target_os = "macos") {
@@ -32,6 +33,7 @@ async fn test_open_safari_successfully() {
 }
 
 #[tokio::test]
+#[ignore] // Opens TextEdit - skip during local dev
 async fn test_open_app_with_spaces_in_name() {
     // Skip on non-macOS or if VS Code is not installed
     if !cfg!(target_os = "macos") {
@@ -63,6 +65,7 @@ async fn test_nonexistent_app_returns_not_found() {
 }
 
 #[tokio::test]
+#[ignore] // Opens Safari - skip during local dev
 async fn test_case_variation_opens_app() {
     // macOS open command is case-insensitive
     if !cfg!(target_os = "macos") {

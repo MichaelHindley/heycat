@@ -5,6 +5,7 @@ use super::{WakeWordDetector, WakeWordDetectorConfig, WakeWordError};
 use crate::audio::{AudioBuffer, AudioCaptureError, AudioThreadHandle};
 use crate::events::{current_timestamp, listening_events, ListeningEventEmitter};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -112,6 +113,9 @@ pub struct ListeningPipeline {
     buffer: Option<AudioBuffer>,
     /// Wake word callback - called when "Hey Cat" is detected
     wake_word_callback: Arc<Mutex<Option<Arc<WakeWordCallback>>>>,
+    /// Receiver for analysis thread exit notification
+    /// Used to wait for previous thread to exit before starting a new one
+    thread_exit_rx: Option<Receiver<()>>,
 }
 
 impl ListeningPipeline {
@@ -131,6 +135,7 @@ impl ListeningPipeline {
             detector: None,
             buffer: None,
             wake_word_callback: Arc::new(Mutex::new(None)),
+            thread_exit_rx: None,
         }
     }
 
@@ -176,6 +181,17 @@ impl ListeningPipeline {
         audio_handle: &AudioThreadHandle,
         emitter: Arc<E>,
     ) -> Result<AudioBuffer, PipelineError> {
+        // Wait for any previous analysis thread to fully exit before starting a new one.
+        // This prevents race conditions when the wake word callback stops the pipeline
+        // and recording completion immediately tries to restart it.
+        if let Some(rx) = self.thread_exit_rx.take() {
+            crate::debug!("[pipeline] Waiting for previous analysis thread to exit...");
+            match rx.recv_timeout(Duration::from_millis(500)) {
+                Ok(()) => crate::debug!("[pipeline] Previous thread exit confirmed"),
+                Err(_) => crate::warn!("[pipeline] Timeout waiting for previous thread exit"),
+            }
+        }
+
         if self.is_running() {
             crate::debug!("[pipeline] Start called but already running");
             return Err(PipelineError::AlreadyRunning);
@@ -214,10 +230,16 @@ impl ListeningPipeline {
             wake_word_callback,
         };
 
+        // Create exit notification channel
+        let (exit_tx, exit_rx) = mpsc::channel();
+        self.thread_exit_rx = Some(exit_rx);
+
         // Start analysis thread
         let config = self.config.clone();
         let analysis_thread = thread::spawn(move || {
             analysis_thread_main(state, config, emitter);
+            // Signal that thread has exited
+            let _ = exit_tx.send(());
         });
 
         self.analysis_thread = Some(analysis_thread);
@@ -261,6 +283,52 @@ impl ListeningPipeline {
         crate::debug!("[pipeline] Pipeline stopped successfully");
 
         Ok(())
+    }
+
+    /// Stop the listening pipeline and return the buffer for handoff to recording
+    ///
+    /// This is used when wake word is detected - the listening pipeline stops but
+    /// hands off its buffer to the recording mode, so audio data is preserved.
+    ///
+    /// NOTE: This method does NOT join the analysis thread because it may be called
+    /// from within the wake word callback (which runs on the analysis thread itself).
+    /// The thread will exit naturally after checking the should_stop flag.
+    ///
+    /// # Arguments
+    /// * `audio_handle` - Handle to stop audio capture
+    ///
+    /// # Returns
+    /// The audio buffer if pipeline was running, None if not running
+    pub fn stop_and_get_buffer(
+        &mut self,
+        audio_handle: &AudioThreadHandle,
+    ) -> Result<Option<AudioBuffer>, PipelineError> {
+        if !self.is_running() {
+            crate::debug!("[pipeline] stop_and_get_buffer called but not running");
+            return Ok(None);
+        }
+
+        crate::info!("[pipeline] Stopping pipeline and returning buffer for recording...");
+
+        // Signal analysis thread to stop
+        self.should_stop.store(true, Ordering::SeqCst);
+
+        // Stop audio capture
+        let _ = audio_handle.stop();
+
+        // DO NOT join the thread here - this method may be called from within
+        // the wake word callback, which runs ON the analysis thread.
+        // The thread will exit on its own after the callback returns.
+        // Just take the handle so is_running() returns false.
+        let _ = self.analysis_thread.take();
+
+        self.detector = None;
+
+        // Return the buffer WITHOUT clearing it - recording will use it
+        let buffer = self.buffer.take();
+
+        crate::debug!("[pipeline] Pipeline stopped, buffer returned for recording");
+        Ok(buffer)
     }
 
     /// Set microphone availability (called when mic status changes)

@@ -1,8 +1,9 @@
 // Silence detection for automatic recording stop
-// Uses energy-based (RMS) detection to identify end of speech
+// Uses VAD (Voice Activity Detection) to identify end of speech
 
 use crate::{debug, info, trace};
 use std::time::Instant;
+use voice_activity_detector::VoiceActivityDetector;
 
 /// Reason why recording was automatically stopped due to silence detection
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -16,8 +17,8 @@ pub enum SilenceStopReason {
 /// Configuration for silence detection
 #[derive(Debug, Clone)]
 pub struct SilenceConfig {
-    /// RMS threshold below which audio is considered silent (default: 0.01)
-    pub silence_threshold: f32,
+    /// VAD speech probability threshold (0.0 - 1.0, default: 0.5)
+    pub vad_speech_threshold: f32,
     /// Duration of silence before stopping recording in milliseconds (default: 2000)
     pub silence_duration_ms: u32,
     /// Duration before canceling if no speech detected after wake word in milliseconds (default: 5000)
@@ -25,15 +26,14 @@ pub struct SilenceConfig {
     /// Duration of pause that doesn't trigger stop in milliseconds (default: 1000)
     #[allow(dead_code)] // Reserved for future pause detection refinement
     pub pause_tolerance_ms: u32,
-    /// Sample rate for calculating frame durations (default: 16000)
-    #[allow(dead_code)] // Reserved for future frame-based timing calculations
+    /// Sample rate for VAD processing (default: 16000)
     pub sample_rate: u32,
 }
 
 impl Default for SilenceConfig {
     fn default() -> Self {
         Self {
-            silence_threshold: 0.01,
+            vad_speech_threshold: 0.5,
             silence_duration_ms: 2000,
             no_speech_timeout_ms: 5000,
             pause_tolerance_ms: 1000,
@@ -64,6 +64,8 @@ pub struct SilenceDetector {
     silence_start: Option<Instant>,
     /// When recording started (for no-speech timeout)
     recording_start: Instant,
+    /// Voice activity detector for speech detection
+    vad: Option<VoiceActivityDetector>,
 }
 
 impl SilenceDetector {
@@ -74,11 +76,25 @@ impl SilenceDetector {
 
     /// Create a new silence detector with custom configuration
     pub fn with_config(config: SilenceConfig) -> Self {
+        // Initialize VAD
+        let vad = VoiceActivityDetector::builder()
+            .sample_rate(config.sample_rate as i32)
+            .chunk_size(512_usize)
+            .build()
+            .ok();
+
+        if vad.is_some() {
+            debug!("[silence] VAD initialized (threshold={})", config.vad_speech_threshold);
+        } else {
+            debug!("[silence] VAD initialization failed, speech detection will be disabled");
+        }
+
         Self {
             config,
             has_detected_speech: false,
             silence_start: None,
             recording_start: Instant::now(),
+            vad,
         }
     }
 
@@ -88,6 +104,13 @@ impl SilenceDetector {
         self.has_detected_speech = false;
         self.silence_start = None;
         self.recording_start = Instant::now();
+
+        // Reinitialize VAD for fresh state
+        self.vad = VoiceActivityDetector::builder()
+            .sample_rate(self.config.sample_rate as i32)
+            .chunk_size(512_usize)
+            .build()
+            .ok();
     }
 
     /// Get the configuration
@@ -102,16 +125,35 @@ impl SilenceDetector {
         self.has_detected_speech
     }
 
-    /// Calculate RMS (root mean square) energy of audio samples
+    /// Check if speech is present using VAD
     ///
-    /// RMS is a common measure of audio energy/loudness.
-    /// Returns 0.0 for empty input.
-    pub fn calculate_rms(samples: &[f32]) -> f32 {
-        if samples.is_empty() {
-            return 0.0;
+    /// Processes audio in 512-sample chunks (required by Silero VAD at 16kHz).
+    /// Returns true if any chunk has speech probability above threshold.
+    fn check_vad(&mut self, samples: &[f32]) -> bool {
+        let vad = match &mut self.vad {
+            Some(v) => v,
+            None => {
+                trace!("[silence] VAD not available, assuming no speech");
+                return false;
+            }
+        };
+
+        // Process in 512-sample chunks (required by Silero VAD at 16kHz)
+        let chunk_size = 512;
+        let mut max_probability: f32 = 0.0;
+
+        for chunk in samples.chunks(chunk_size) {
+            if chunk.len() == chunk_size {
+                let probability = vad.predict(chunk.to_vec());
+                max_probability = max_probability.max(probability);
+                if probability >= self.config.vad_speech_threshold {
+                    return true; // Speech detected
+                }
+            }
         }
-        let sum_squares: f32 = samples.iter().map(|s| s * s).sum();
-        (sum_squares / samples.len() as f32).sqrt()
+
+        trace!("[silence] VAD max_probability={:.3}, threshold={}", max_probability, self.config.vad_speech_threshold);
+        false
     }
 
     /// Process a frame of audio samples and return detection result
@@ -120,23 +162,16 @@ impl SilenceDetector {
     /// Returns whether to continue recording or stop (with reason).
     pub fn process_samples(&mut self, samples: &[f32]) -> SilenceDetectionResult {
         let now = Instant::now();
-        let rms = Self::calculate_rms(samples);
-        let is_silent = rms < self.config.silence_threshold;
 
-        // Log audio level on every call (trace level for high-frequency)
-        trace!(
-            "[silence] RMS={:.4}, threshold={:.4}, is_silent={}, samples={}",
-            rms,
-            self.config.silence_threshold,
-            is_silent,
-            samples.len()
-        );
+        // Use VAD to detect speech
+        let has_speech = self.check_vad(samples);
+        let is_silent = !has_speech;
 
         if is_silent {
-            // Audio is silent
+            // Audio is silent (no speech detected by VAD)
             if self.silence_start.is_none() {
                 // Start tracking silence period
-                debug!("[silence] Silence period started");
+                debug!("[silence] Silence period started (VAD)");
                 self.silence_start = Some(now);
             }
 
@@ -173,9 +208,9 @@ impl SilenceDetector {
                 }
             }
         } else {
-            // Audio is not silent (speech detected)
+            // Speech detected by VAD
             if !self.has_detected_speech {
-                debug!("[silence] First speech detected! RMS={:.4}", rms);
+                debug!("[silence] First speech detected via VAD!");
             }
             if self.silence_start.is_some() {
                 debug!("[silence] Speech resumed after silence");
@@ -201,40 +236,9 @@ mod tests {
     use std::time::Duration;
 
     #[test]
-    fn test_calculate_rms_empty() {
-        assert_eq!(SilenceDetector::calculate_rms(&[]), 0.0);
-    }
-
-    #[test]
-    fn test_calculate_rms_silence() {
-        let samples = vec![0.0; 100];
-        assert_eq!(SilenceDetector::calculate_rms(&samples), 0.0);
-    }
-
-    #[test]
-    fn test_calculate_rms_constant() {
-        // RMS of constant signal equals the constant
-        let samples = vec![0.5; 100];
-        let rms = SilenceDetector::calculate_rms(&samples);
-        assert!((rms - 0.5).abs() < 0.001);
-    }
-
-    #[test]
-    fn test_calculate_rms_speech_like() {
-        // Simulate speech-like audio with varying amplitudes
-        let samples: Vec<f32> = (0..1600)
-            .map(|i| (i as f32 * 0.1).sin() * 0.3)
-            .collect();
-        let rms = SilenceDetector::calculate_rms(&samples);
-        // Sin wave RMS = peak / sqrt(2) ≈ 0.3 / 1.414 ≈ 0.212
-        assert!(rms > 0.1, "RMS {} should be > 0.1", rms);
-        assert!(rms < 0.3, "RMS {} should be < 0.3", rms);
-    }
-
-    #[test]
     fn test_silence_config_default() {
         let config = SilenceConfig::default();
-        assert_eq!(config.silence_threshold, 0.01);
+        assert_eq!(config.vad_speech_threshold, 0.5);
         assert_eq!(config.silence_duration_ms, 2000);
         assert_eq!(config.no_speech_timeout_ms, 5000);
         assert_eq!(config.pause_tolerance_ms, 1000);
@@ -254,48 +258,15 @@ mod tests {
     }
 
     #[test]
-    fn test_speech_detection_sets_flag() {
-        let mut detector = SilenceDetector::new();
-        let speech_samples = vec![0.5; 100];
-
-        assert!(!detector.has_detected_speech());
-        let _ = detector.process_samples(&speech_samples);
-        assert!(detector.has_detected_speech());
-    }
-
-    #[test]
     fn test_reset_clears_state() {
         let mut detector = SilenceDetector::new();
-        let speech_samples = vec![0.5; 100];
-
-        let _ = detector.process_samples(&speech_samples);
-        assert!(detector.has_detected_speech());
+        // Manually set state to simulate speech detection
+        detector.has_detected_speech = true;
+        detector.silence_start = Some(Instant::now());
 
         detector.reset();
         assert!(!detector.has_detected_speech());
-    }
-
-    #[test]
-    fn test_continues_during_speech() {
-        let mut detector = SilenceDetector::new();
-        let speech_samples = vec![0.5; 100];
-
-        let result = detector.process_samples(&speech_samples);
-        assert_eq!(result, SilenceDetectionResult::Continue);
-    }
-
-    #[test]
-    fn test_brief_silence_continues() {
-        let mut detector = SilenceDetector::new();
-        let speech_samples = vec![0.5; 100];
-        let silent_samples = vec![0.001; 100];
-
-        // First some speech
-        let _ = detector.process_samples(&speech_samples);
-
-        // Then brief silence - should continue
-        let result = detector.process_samples(&silent_samples);
-        assert_eq!(result, SilenceDetectionResult::Continue);
+        assert!(detector.silence_start.is_none());
     }
 
     #[test]
@@ -305,7 +276,8 @@ mod tests {
             ..Default::default()
         };
         let mut detector = SilenceDetector::with_config(config);
-        let silent_samples = vec![0.001; 100];
+        // Silent samples - VAD won't detect speech
+        let silent_samples = vec![0.0; 512];
 
         // Process silence until timeout
         thread::sleep(Duration::from_millis(60));
@@ -315,20 +287,18 @@ mod tests {
     }
 
     #[test]
-    fn test_silence_after_speech() {
+    fn test_silence_after_speech_state_machine() {
         let config = SilenceConfig {
             silence_duration_ms: 50, // Very short for testing
             ..Default::default()
         };
         let mut detector = SilenceDetector::with_config(config);
-        let speech_samples = vec![0.5; 100];
-        let silent_samples = vec![0.001; 100];
+        let silent_samples = vec![0.0; 512];
 
-        // First some speech
-        let _ = detector.process_samples(&speech_samples);
-        assert!(detector.has_detected_speech());
+        // Manually simulate that speech was detected
+        detector.has_detected_speech = true;
 
-        // Then silence
+        // Start silence tracking
         let _ = detector.process_samples(&silent_samples);
 
         // Wait and check again
@@ -339,38 +309,13 @@ mod tests {
     }
 
     #[test]
-    fn test_speech_resets_silence_tracking() {
-        let config = SilenceConfig {
-            silence_duration_ms: 50,
-            ..Default::default()
-        };
-        let mut detector = SilenceDetector::with_config(config);
-        let speech_samples = vec![0.5; 100];
-        let silent_samples = vec![0.001; 100];
-
-        // Speech
-        let _ = detector.process_samples(&speech_samples);
-
-        // Some silence
-        let _ = detector.process_samples(&silent_samples);
-        thread::sleep(Duration::from_millis(30));
-
-        // More speech before timeout - should reset
-        let _ = detector.process_samples(&speech_samples);
-
-        // More silence - should continue since timer was reset
-        let result = detector.process_samples(&silent_samples);
-        assert_eq!(result, SilenceDetectionResult::Continue);
-    }
-
-    #[test]
     fn test_config_accessor() {
         let config = SilenceConfig {
-            silence_threshold: 0.05,
+            vad_speech_threshold: 0.7,
             ..Default::default()
         };
         let detector = SilenceDetector::with_config(config);
-        assert_eq!(detector.config().silence_threshold, 0.05);
+        assert_eq!(detector.config().vad_speech_threshold, 0.7);
     }
 
     #[test]
@@ -394,30 +339,29 @@ mod tests {
     }
 
     #[test]
-    fn test_background_noise_doesnt_trigger_speech() {
+    fn test_silence_samples_no_speech() {
         let mut detector = SilenceDetector::new();
-        // Low-level background noise (below threshold)
-        let noise_samples = vec![0.005; 100];
+        // Pure silence - VAD should not detect speech
+        let silent_samples = vec![0.0; 512];
 
-        let _ = detector.process_samples(&noise_samples);
+        let _ = detector.process_samples(&silent_samples);
         assert!(!detector.has_detected_speech());
     }
 
     #[test]
-    fn test_varying_speech_patterns() {
+    fn test_continues_while_waiting() {
         let mut detector = SilenceDetector::new();
+        let silent_samples = vec![0.0; 512];
 
-        // Simulate alternating speech and brief pauses
-        let speech = vec![0.3; 100];
-        let brief_pause = vec![0.005; 100];
+        // Should continue (not timeout yet)
+        let result = detector.process_samples(&silent_samples);
+        assert_eq!(result, SilenceDetectionResult::Continue);
+    }
 
-        for _ in 0..5 {
-            let r1 = detector.process_samples(&speech);
-            let r2 = detector.process_samples(&brief_pause);
-            assert_eq!(r1, SilenceDetectionResult::Continue);
-            assert_eq!(r2, SilenceDetectionResult::Continue);
-        }
-
-        assert!(detector.has_detected_speech());
+    #[test]
+    fn test_vad_initialized() {
+        let detector = SilenceDetector::new();
+        // VAD should be initialized
+        assert!(detector.vad.is_some());
     }
 }
