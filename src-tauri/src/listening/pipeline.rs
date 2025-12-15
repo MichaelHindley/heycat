@@ -446,6 +446,17 @@ fn analysis_thread_main<E: ListeningEventEmitter>(
                 );
 
                 if result.detected {
+                    // Check should_stop BEFORE invoking callback to prevent deadlock:
+                    // If stop() is called while we're here, it holds the pipeline lock
+                    // and waits for us to exit. If we try to invoke the callback which
+                    // locks the pipeline, we'd deadlock.
+                    if state.should_stop.load(Ordering::SeqCst) {
+                        crate::debug!(
+                            "[pipeline] Wake word detected but stop requested, skipping callback"
+                        );
+                        break;
+                    }
+
                     crate::info!(
                         "[pipeline] WAKE_WORD_DETECTED! confidence={:.2}, transcription='{}', invoking callback",
                         result.confidence,

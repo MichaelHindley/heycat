@@ -1,6 +1,6 @@
 // Tauri shortcut backend - thin wrapper around tauri_plugin_global_shortcut
 use super::ShortcutBackend;
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 pub struct TauriShortcutBackend {
     app: tauri::AppHandle,
@@ -19,7 +19,13 @@ impl ShortcutBackend for TauriShortcutBackend {
         let parsed: Shortcut = shortcut.parse().map_err(|e| format!("{}", e))?;
         self.app
             .global_shortcut()
-            .on_shortcut(parsed, move |_, _, _| callback())
+            .on_shortcut(parsed, move |_, _, event| {
+                // Only trigger on key PRESS, not on key RELEASE
+                // Without this check, the callback fires twice per keypress
+                if event.state == ShortcutState::Pressed {
+                    callback()
+                }
+            })
             .map_err(|e| format!("{}", e))
     }
 

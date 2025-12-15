@@ -6,12 +6,12 @@ use crate::audio::AudioThreadHandle;
 use crate::commands::logic::{start_recording_impl, stop_recording_impl};
 use crate::events::{
     current_timestamp, CommandAmbiguousPayload, CommandCandidate, CommandEventEmitter,
-    CommandExecutedPayload, CommandFailedPayload, CommandMatchedPayload, RecordingErrorPayload,
-    RecordingEventEmitter, RecordingStartedPayload, RecordingStoppedPayload,
+    CommandExecutedPayload, CommandFailedPayload, CommandMatchedPayload, ListeningEventEmitter,
+    RecordingErrorPayload, RecordingEventEmitter, RecordingStartedPayload, RecordingStoppedPayload,
     TranscriptionCompletedPayload, TranscriptionErrorPayload, TranscriptionEventEmitter,
     TranscriptionStartedPayload,
 };
-use crate::listening::ListeningManager;
+use crate::listening::{ListeningManager, ListeningPipeline};
 use crate::model::{check_model_exists_for_type, ModelType};
 use crate::recording::{RecordingManager, RecordingState};
 use crate::voice_commands::executor::ActionDispatcher;
@@ -67,7 +67,7 @@ fn simulate_paste() -> Result<(), String> {
 }
 
 /// Handles hotkey toggle with debouncing and event emission
-pub struct HotkeyIntegration<R: RecordingEventEmitter, T: TranscriptionEventEmitter, C: CommandEventEmitter> {
+pub struct HotkeyIntegration<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmitter, C: CommandEventEmitter> {
     last_toggle_time: Option<Instant>,
     debounce_duration: Duration,
     recording_emitter: R,
@@ -93,9 +93,11 @@ pub struct HotkeyIntegration<R: RecordingEventEmitter, T: TranscriptionEventEmit
     transcription_semaphore: Arc<Semaphore>,
     /// Optional app handle for clipboard access
     app_handle: Option<AppHandle>,
+    /// Optional listening pipeline for restarting wake word detection after recording
+    listening_pipeline: Option<Arc<Mutex<ListeningPipeline>>>,
 }
 
-impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: CommandEventEmitter + 'static> HotkeyIntegration<R, T, C> {
+impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmitter + 'static, C: CommandEventEmitter + 'static> HotkeyIntegration<R, T, C> {
     /// Create a new HotkeyIntegration with default debounce duration
     pub fn new(recording_emitter: R) -> Self {
         Self {
@@ -113,6 +115,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
             command_emitter: None,
             transcription_semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_TRANSCRIPTIONS)),
             app_handle: None,
+            listening_pipeline: None,
         }
     }
 
@@ -176,6 +179,11 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
         self
     }
 
+    /// Add listening pipeline for restarting after hotkey recording (builder pattern)
+    pub fn with_listening_pipeline(mut self, pipeline: Arc<Mutex<ListeningPipeline>>) -> Self {
+        self.listening_pipeline = Some(pipeline);
+        self
+    }
 
     /// Create with custom debounce duration (for testing)
     #[cfg(test)]
@@ -195,6 +203,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
             command_emitter: None,
             transcription_semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_TRANSCRIPTIONS)),
             app_handle: None,
+            listening_pipeline: None,
         }
     }
 
@@ -239,6 +248,13 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
         match current_state {
             RecordingState::Idle | RecordingState::Listening => {
                 info!("Starting recording from {:?} state...", current_state);
+
+                // If coming from Listening state, stop the pipeline first to prevent zombie
+                // (analysis thread running with orphaned audio buffer)
+                if current_state == RecordingState::Listening {
+                    self.stop_listening_pipeline_for_hotkey();
+                }
+
                 // Check model availability (TDT for batch transcription)
                 let model_available = check_model_exists_for_type(ModelType::ParakeetTDT).unwrap_or(false);
 
@@ -287,6 +303,11 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
 
                         // Auto-transcribe if transcription manager is configured
                         self.spawn_transcription(file_path_for_transcription);
+
+                        // Restart listening pipeline if returning to listening mode
+                        if return_to_listening {
+                            self.restart_listening_pipeline();
+                        }
 
                         true
                     }
@@ -594,6 +615,109 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
             // Clear recording buffer to free memory
             clear_recording_buffer();
         });
+    }
+
+    /// Stop the listening pipeline before hotkey recording starts
+    /// Called when transitioning from Listening -> Recording via hotkey
+    /// This prevents the "zombie pipeline" issue where the analysis thread
+    /// continues running but the audio buffer is orphaned
+    fn stop_listening_pipeline_for_hotkey(&self) {
+        let pipeline = match &self.listening_pipeline {
+            Some(p) => p,
+            None => return,
+        };
+
+        let audio_thread = match &self.audio_thread {
+            Some(at) => at,
+            None => return,
+        };
+
+        if let Ok(mut p) = pipeline.lock() {
+            if p.is_running() {
+                info!("Stopping listening pipeline before hotkey recording...");
+                // Note: We don't need the buffer since hotkey recording
+                // creates its own fresh buffer (unlike wake word which hands off)
+                if let Err(e) = p.stop(audio_thread.as_ref()) {
+                    warn!("Failed to stop listening pipeline: {:?}", e);
+                    // Continue anyway - recording should still work
+                }
+            }
+        }
+    }
+
+    /// Restart the listening pipeline after recording stops
+    /// Only restarts if pipeline and audio thread are configured and pipeline isn't running
+    fn restart_listening_pipeline(&self) {
+        let pipeline = match &self.listening_pipeline {
+            Some(p) => p,
+            None => {
+                debug!("No listening pipeline configured, skipping restart");
+                return;
+            }
+        };
+
+        let audio_thread = match &self.audio_thread {
+            Some(at) => at,
+            None => {
+                debug!("No audio thread configured, cannot restart pipeline");
+                return;
+            }
+        };
+
+        let emitter = match &self.transcription_emitter {
+            Some(e) => e.clone(),
+            None => {
+                debug!("No transcription emitter configured, cannot restart pipeline");
+                return;
+            }
+        };
+
+        let mut p = match pipeline.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                warn!("Failed to lock listening pipeline for restart");
+                return;
+            }
+        };
+
+        // Stop if still running (shouldn't happen since we now stop before recording,
+        // but keep for safety in case of race conditions or other code paths)
+        if p.is_running() {
+            info!("Pipeline still running unexpectedly, stopping before restart...");
+            match p.stop(audio_thread.as_ref()) {
+                Ok(()) => debug!("Pipeline stopped successfully"),
+                Err(e) => {
+                    // NotRunning error is fine - thread may have exited naturally
+                    warn!("Error stopping pipeline: {:?}", e);
+                }
+            }
+        }
+
+        // Small delay to ensure any thread cleanup completes
+        // The stop() method joins the thread, but this gives a moment for cleanup
+        drop(p); // Release lock during sleep
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Re-acquire lock for restart
+        let mut p = match pipeline.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                warn!("Failed to re-lock listening pipeline for restart");
+                return;
+            }
+        };
+
+        info!("Restarting listening pipeline after hotkey recording");
+        match p.start(audio_thread.as_ref(), emitter) {
+            Ok(_) => info!("Listening pipeline restarted successfully"),
+            Err(crate::listening::PipelineError::AlreadyRunning) => {
+                // Should not happen after stop, but handle gracefully
+                warn!("Pipeline reported AlreadyRunning after stop - unexpected state");
+            }
+            Err(e) => {
+                warn!("Failed to restart listening pipeline: {:?}", e);
+            }
+        }
     }
 
     /// Check if currently in debounce window (for testing)

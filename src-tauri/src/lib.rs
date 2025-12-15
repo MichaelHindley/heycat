@@ -140,7 +140,8 @@ pub fn run() {
                 .with_transcription_emitter(emitter)
                 .with_recording_state(recording_state.clone())
                 .with_listening_state(listening_state)
-                .with_command_emitter(command_emitter);
+                .with_command_emitter(command_emitter)
+                .with_listening_pipeline(listening_pipeline.clone());
 
             // Wire up voice command integration if available
             if let (Some(registry), Some(matcher), Some(dispatcher)) = (command_registry, command_matcher, action_dispatcher) {

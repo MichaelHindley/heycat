@@ -124,6 +124,28 @@ impl crate::events::CommandEventEmitter for MockEmitter {
     }
 }
 
+impl crate::events::ListeningEventEmitter for MockEmitter {
+    fn emit_wake_word_detected(&self, _payload: crate::events::listening_events::WakeWordDetectedPayload) {
+        // No-op for tests
+    }
+
+    fn emit_listening_started(&self, _payload: crate::events::listening_events::ListeningStartedPayload) {
+        // No-op for tests
+    }
+
+    fn emit_listening_stopped(&self, _payload: crate::events::listening_events::ListeningStoppedPayload) {
+        // No-op for tests
+    }
+
+    fn emit_listening_unavailable(&self, _payload: crate::events::listening_events::ListeningUnavailablePayload) {
+        // No-op for tests
+    }
+
+    fn emit_recording_cancelled(&self, _payload: crate::events::listening_events::RecordingCancelledPayload) {
+        // No-op for tests
+    }
+}
+
 /// Type alias for HotkeyIntegration with MockEmitter for all parameters
 type TestIntegration = HotkeyIntegration<MockEmitter, MockEmitter, MockEmitter>;
 

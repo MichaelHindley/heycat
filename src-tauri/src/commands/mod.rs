@@ -335,10 +335,13 @@ pub fn enable_listening(
 
             // 1. Stop the listening pipeline and get the buffer for handoff
             let shared_buffer = {
-                let mut pipeline = match listening_pipeline_for_callback.lock() {
+                // Use try_lock to avoid deadlock with hotkey recording flow:
+                // If hotkey is stopping the pipeline, it holds the lock and waits for us.
+                // If we block on lock(), we'd deadlock. try_lock fails gracefully instead.
+                let mut pipeline = match listening_pipeline_for_callback.try_lock() {
                     Ok(p) => p,
                     Err(_) => {
-                        crate::error!("Failed to lock pipeline for wake word callback");
+                        crate::warn!("Pipeline busy (likely hotkey recording), skipping wake word callback");
                         return;
                     }
                 };
