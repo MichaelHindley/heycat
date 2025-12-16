@@ -2,8 +2,8 @@
 // Shared between WakeWordDetector (listening) and SilenceDetector (recording)
 
 use crate::audio_constants::{
-    DEFAULT_SAMPLE_RATE, VAD_CHUNK_SIZE_16KHZ, VAD_THRESHOLD_BALANCED, VAD_THRESHOLD_SILENCE,
-    VAD_THRESHOLD_WAKE_WORD,
+    chunk_size_for_sample_rate, DEFAULT_SAMPLE_RATE, VAD_CHUNK_SIZE_16KHZ, VAD_CHUNK_SIZE_8KHZ,
+    VAD_THRESHOLD_BALANCED, VAD_THRESHOLD_SILENCE, VAD_THRESHOLD_WAKE_WORD,
 };
 use voice_activity_detector::VoiceActivityDetector;
 
@@ -12,6 +12,8 @@ use voice_activity_detector::VoiceActivityDetector;
 pub enum VadError {
     /// VAD initialization failed
     InitializationFailed(String),
+    /// Invalid configuration (e.g., unsupported sample rate)
+    ConfigurationInvalid(String),
 }
 
 impl std::fmt::Display for VadError {
@@ -19,6 +21,9 @@ impl std::fmt::Display for VadError {
         match self {
             VadError::InitializationFailed(msg) => {
                 write!(f, "VAD initialization failed: {}", msg)
+            }
+            VadError::ConfigurationInvalid(msg) => {
+                write!(f, "VAD configuration invalid: {}", msg)
             }
         }
     }
@@ -63,15 +68,10 @@ pub struct VadConfig {
 
     /// Audio sample rate in Hz
     ///
-    /// Must match the audio input source. The Silero VAD model works best
-    /// at 16kHz but supports 8kHz as well.
+    /// Must match the audio input source. The Silero VAD model only supports
+    /// 8000 or 16000 Hz. The chunk size is automatically derived from this
+    /// value (32ms window = 256 samples at 8kHz, 512 at 16kHz).
     pub sample_rate: u32,
-
-    /// Chunk size for VAD processing
-    ///
-    /// Must be 512 for Silero VAD at 16kHz (32ms window).
-    /// At 8kHz, use 256 (also 32ms window).
-    pub chunk_size: usize,
 
     /// Minimum speech frames before considering speech detected
     ///
@@ -88,7 +88,6 @@ impl Default for VadConfig {
             // Override with wake_word_config() or silence_config() for specific uses
             speech_threshold: VAD_THRESHOLD_BALANCED,
             sample_rate: DEFAULT_SAMPLE_RATE,
-            chunk_size: VAD_CHUNK_SIZE_16KHZ,
             min_speech_frames: 2,
         }
     }
@@ -139,11 +138,26 @@ impl VadConfig {
 ///
 /// # Errors
 ///
+/// Returns `VadError::ConfigurationInvalid` if the sample rate is not 8000 or 16000 Hz.
 /// Returns `VadError::InitializationFailed` if the VAD model fails to load.
 pub fn create_vad(config: &VadConfig) -> Result<VoiceActivityDetector, VadError> {
+    // Validate sample rate - Silero VAD only supports 8kHz and 16kHz
+    match config.sample_rate {
+        8000 | 16000 => {}
+        other => {
+            return Err(VadError::ConfigurationInvalid(format!(
+                "Unsupported sample rate: {} Hz. Must be 8000 or 16000 Hz.",
+                other
+            )))
+        }
+    }
+
+    // Calculate chunk size from sample rate (32ms window)
+    let chunk_size = chunk_size_for_sample_rate(config.sample_rate);
+
     VoiceActivityDetector::builder()
         .sample_rate(config.sample_rate as i32)
-        .chunk_size(config.chunk_size)
+        .chunk_size(chunk_size)
         .build()
         .map_err(|e| VadError::InitializationFailed(e.to_string()))
 }
@@ -157,7 +171,6 @@ mod tests {
         let config = VadConfig::default();
         assert_eq!(config.speech_threshold, VAD_THRESHOLD_BALANCED);
         assert_eq!(config.sample_rate, DEFAULT_SAMPLE_RATE);
-        assert_eq!(config.chunk_size, VAD_CHUNK_SIZE_16KHZ);
         assert_eq!(config.min_speech_frames, 2);
     }
 
@@ -167,7 +180,6 @@ mod tests {
         assert_eq!(config.speech_threshold, VAD_THRESHOLD_WAKE_WORD);
         // Other fields should use defaults
         assert_eq!(config.sample_rate, DEFAULT_SAMPLE_RATE);
-        assert_eq!(config.chunk_size, VAD_CHUNK_SIZE_16KHZ);
     }
 
     #[test]
@@ -176,7 +188,6 @@ mod tests {
         assert_eq!(config.speech_threshold, VAD_THRESHOLD_SILENCE);
         // Other fields should use defaults
         assert_eq!(config.sample_rate, DEFAULT_SAMPLE_RATE);
-        assert_eq!(config.chunk_size, VAD_CHUNK_SIZE_16KHZ);
     }
 
     #[test]
@@ -230,6 +241,84 @@ mod tests {
     fn test_vad_error_eq() {
         let err1 = VadError::InitializationFailed("test".to_string());
         let err2 = VadError::InitializationFailed("test".to_string());
+        assert_eq!(err1, err2);
+    }
+
+    // Sample rate validation tests
+
+    #[test]
+    fn test_create_vad_with_8khz_succeeds() {
+        let config = VadConfig {
+            sample_rate: 8000,
+            ..Default::default()
+        };
+        let result = create_vad(&config);
+        assert!(result.is_ok());
+        // Verify chunk size is 256 for 8kHz (32ms window)
+        assert_eq!(chunk_size_for_sample_rate(8000), VAD_CHUNK_SIZE_8KHZ);
+    }
+
+    #[test]
+    fn test_create_vad_with_16khz_succeeds() {
+        let config = VadConfig {
+            sample_rate: 16000,
+            ..Default::default()
+        };
+        let result = create_vad(&config);
+        assert!(result.is_ok());
+        // Verify chunk size is 512 for 16kHz (32ms window)
+        assert_eq!(chunk_size_for_sample_rate(16000), VAD_CHUNK_SIZE_16KHZ);
+    }
+
+    #[test]
+    fn test_create_vad_with_44100hz_returns_error() {
+        let config = VadConfig {
+            sample_rate: 44100,
+            ..Default::default()
+        };
+        let result = create_vad(&config);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, VadError::ConfigurationInvalid(_)));
+    }
+
+    #[test]
+    fn test_create_vad_with_0hz_returns_error() {
+        let config = VadConfig {
+            sample_rate: 0,
+            ..Default::default()
+        };
+        let result = create_vad(&config);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, VadError::ConfigurationInvalid(_)));
+    }
+
+    #[test]
+    fn test_sample_rate_error_message_mentions_supported_rates() {
+        let config = VadConfig {
+            sample_rate: 22050,
+            ..Default::default()
+        };
+        let result = create_vad(&config);
+        let err = result.unwrap_err();
+        let msg = format!("{}", err);
+        assert!(msg.contains("8000"), "Error should mention 8000 Hz");
+        assert!(msg.contains("16000"), "Error should mention 16000 Hz");
+    }
+
+    #[test]
+    fn test_configuration_invalid_error_display() {
+        let err = VadError::ConfigurationInvalid("test config error".to_string());
+        let msg = format!("{}", err);
+        assert!(msg.contains("configuration invalid"));
+        assert!(msg.contains("test config error"));
+    }
+
+    #[test]
+    fn test_configuration_invalid_error_eq() {
+        let err1 = VadError::ConfigurationInvalid("test".to_string());
+        let err2 = VadError::ConfigurationInvalid("test".to_string());
         assert_eq!(err1, err2);
     }
 }

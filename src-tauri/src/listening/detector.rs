@@ -278,7 +278,6 @@ impl WakeWordDetector {
         let vad_config = VadConfig {
             speech_threshold: self.config.vad_speech_threshold,
             sample_rate: self.config.sample_rate,
-            chunk_size: VAD_CHUNK_SIZE_16KHZ,
             min_speech_frames: self.config.min_speech_frames,
         };
 
@@ -286,6 +285,7 @@ impl WakeWordDetector {
             crate::error!("[wake-word] Failed to initialize VAD: {}", e);
             match e {
                 VadError::InitializationFailed(msg) => WakeWordError::VadInitFailed(msg),
+                VadError::ConfigurationInvalid(msg) => WakeWordError::VadInitFailed(msg),
             }
         })?;
 

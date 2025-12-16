@@ -87,7 +87,6 @@ impl SilenceDetector {
         let vad_config = VadConfig {
             speech_threshold: config.vad_speech_threshold,
             sample_rate: config.sample_rate,
-            chunk_size: VAD_CHUNK_SIZE_16KHZ,
             min_speech_frames: SILENCE_MIN_SPEECH_FRAMES,
         };
 
@@ -119,7 +118,6 @@ impl SilenceDetector {
         let vad_config = VadConfig {
             speech_threshold: self.config.vad_speech_threshold,
             sample_rate: self.config.sample_rate,
-            chunk_size: VAD_CHUNK_SIZE_16KHZ,
             min_speech_frames: SILENCE_MIN_SPEECH_FRAMES,
         };
         self.vad = create_vad(&vad_config).ok();
