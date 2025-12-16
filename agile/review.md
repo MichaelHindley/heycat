@@ -1,230 +1,125 @@
-# Integration-Focused Review Instructions
+# Integration-Focused Review
 
 You are reviewing a spec for a **Tauri v2 desktop application** with React frontend and Rust backend. The primary failure mode is code that exists but is not wired up end-to-end.
 
-## Review Protocol
+## Pre-Review Gates (Automated)
 
-For each spec, complete ALL sections below. Use `file:line` evidence for every verification.
+Run these checks FIRST. **STOP if any fails.**
 
-IMPORTANT: Apart from detailed instructions, be sure to reason about and find evidence for the entire spec actually being properly intergrated and works end to end in a real data flow, not just state transitions or other signals that may mislead you. Be sceptical and verify that the spec is actually working properly.
+### 1. Build Warning Check
+```bash
+cd src-tauri && cargo check 2>&1 | grep -E "(warning|unused|dead_code|never)"
+```
+**FAIL if new code has unused warnings.**
+
+### 2. Command Registration Check (if spec adds commands)
+```bash
+# Commands defined but not registered
+comm -23 \
+  <(grep -rn "#\[tauri::command\]" src-tauri/src -A1 | grep "fn " | sed 's/.*fn \([a-z_]*\).*/\1/' | sort -u) \
+  <(grep -A50 "invoke_handler" src-tauri/src/lib.rs | grep "commands::" | sed 's/.*::\([a-z_]*\).*/\1/' | sort -u)
+```
+**FAIL if output is not empty.**
+
+### 3. Event Subscription Check (if spec adds events)
+```bash
+# Events defined in backend
+grep "pub const.*: &str = " src-tauri/src/events.rs | grep -oP '"\K[^"]+'
+
+# Events listened to in frontend
+grep -rn "listen<" src/hooks --include="*.ts" | grep -oP '"[a-z_]+"'
+```
+**FAIL if new event has no listener.**
 
 ---
 
-## 1. Acceptance Criteria Verification
+## Manual Review (5 Questions)
 
-Create a table mapping each acceptance criterion to evidence:
+### 1. Is the code wired up end-to-end?
 
-| Criterion | Status | Evidence |
-|-----------|--------|----------|
-| [criterion text] | PASS/FAIL | `file:line` - description |
+Verify the new code is actually connected to production execution paths:
+- [ ] New functions are called from production code (not just tests)
+- [ ] New structs are instantiated in production code (not just tests)
+- [ ] New events are both emitted AND listened to
+- [ ] New commands are registered in invoke_handler AND called from frontend
 
-**FAIL** any criterion without line-level code evidence.
+**NEEDS_WORK if any new code is orphaned (exists but not connected).**
 
----
+### 2. What would break if this code was deleted?
 
-## 2. Integration Path Trace
+For each new function/struct/event introduced:
 
-For specs involving frontend-backend interaction, trace and diagram the complete data flow.
+| New Code | Type | Production Call Site | Reachable from main/UI? |
+|----------|------|---------------------|-------------------------|
+| [name] | fn/struct/event | file:line | YES/NO/TEST-ONLY |
 
-### Required Path (verify each link exists):
+**TEST-ONLY = NEEDS_WORK** - Code only used in tests must be moved to test module.
+**NO = NEEDS_WORK** - Code not reachable from production is dead code.
+
+### 3. Where does the data flow?
+
+For features with frontend-backend interaction, trace the complete path:
 
 ```
 [UI Action]
      |
      v
-[Hook] ----invoke()----> [Command Handler]
-                              |
-                              v
-                         [Business Logic]
-                              |
-                              v
-                         [Event Emission]
-                              |
-     <----listen()------------+
+[Hook] src/hooks/useX.ts:NN
+     | invoke("command_name")
+     v
+[Command] src-tauri/src/commands/mod.rs:NN
      |
      v
-[State Update]
+[Logic] src-tauri/src/module/file.rs:NN
+     |
+     v
+[Event] emit!("event_name") at file:NN
+     |
+     v
+[Listener] src/hooks/useX.ts:NN listen()
+     |
+     v
+[State Update] useState/store at file:NN
      |
      v
 [UI Re-render]
 ```
 
-### Verification Table:
+**NEEDS_WORK if any link is missing or broken.**
 
-| Step | Expected | Actual Location | Status |
-|------|----------|-----------------|--------|
-| Hook calls invoke | `invoke("command_name")` | `src/hooks/useX.ts:NN` | PASS/FAIL |
-| Command registered | Listed in invoke_handler | `src-tauri/src/lib.rs:193-208` | PASS/FAIL |
-| Logic executed | Function called | `src-tauri/src/module/file.rs:NN` | PASS/FAIL |
-| Event emitted | `emit!()` or `emit_or_warn!()` | `src-tauri/src/commands/mod.rs:NN` | PASS/FAIL |
-| Event listened | `listen()` in hook | `src/hooks/useX.ts:NN` | PASS/FAIL |
-| State updated | setState or store update | `src/hooks/useX.ts:NN` | PASS/FAIL |
-
-**NEEDS_WORK** if any link is broken or missing.
-
----
-
-## 3. Registration Audit
-
-Verify all new code is properly registered in the application:
-
-### Backend Registration Points:
-
-| Component | Check | Location to Verify |
-|-----------|-------|-------------------|
-| Tauri commands | Listed in `invoke_handler![]` | `src-tauri/src/lib.rs:193-208` |
-| Managed state | Passed to `app.manage()` | `src-tauri/src/lib.rs:56-99` |
-| Builder wiring | Added to HotkeyIntegration builder | `src-tauri/src/lib.rs:118-139` |
-| Event names | Defined in events module | `src-tauri/src/events.rs` |
-
-### Frontend Registration Points:
-
-| Component | Check | Location to Verify |
-|-----------|-------|-------------------|
-| Hooks | Imported and called | `src/App.tsx` or component files |
-| Event listeners | Set up in useEffect | Hook files in `src/hooks/` |
-| Components | Rendered in component tree | Parent component files |
-
-**List each new item and its registration status:**
-
-| Item | Type | Registered? | Evidence |
-|------|------|-------------|----------|
-| [name] | command/state/event/hook | YES/NO | `file:line` |
-
----
-
-## 4. Mock-to-Production Audit
-
-For every mock used in tests, verify production instantiation exists.
-
-**Search pattern:** Look for `Mock*`, `Fake*`, `Test*` structs/classes in test files.
-
-| Mock | Test Location | Production Counterpart | Production Instantiation |
-|------|---------------|----------------------|-------------------------|
-| MockEventEmitter | `*_test.rs` | TauriEventEmitter | `src-tauri/src/lib.rs:NN` |
-| [add others] | | | |
-
-**NEEDS_WORK** if any mock has no production counterpart instantiated.
-
----
-
-## 5. Event Subscription Audit
-
-For every event emitted by backend, verify frontend subscribes.
-
-**Backend events to check** (search `emit!`, `emit_or_warn!`, `app_handle.emit`):
-
-| Event Name | Emission Location | Frontend Listener | Listener Location |
-|------------|-------------------|-------------------|-------------------|
-| recording_started | `commands/mod.rs:NN` | YES/NO | `useRecording.ts:NN` |
-| [add new events] | | | |
-
-**NEEDS_WORK** if any event has no frontend listener.
-
----
-
-## 6. Deferral Tracking
+### 4. Are there any deferrals?
 
 Search implementation for deferred work:
-
-**Search terms:** `TODO`, `FIXME`, `XXX`, `HACK`, `handled separately`, `will be implemented`, `for now`, `temporary`
-
-| Deferral Text | Location | Referenced Spec | Status |
-|---------------|----------|-----------------|--------|
-| "TODO: handle error case" | `file.rs:NN` | `error-handling.spec.md` | OK |
-| "handled separately" | `file.rs:NN` | NONE | NEEDS_WORK |
-
-**NEEDS_WORK** if any deferral lacks a spec reference in `agile/`.
-
----
-
-## 7. Test Coverage Audit
-
-Map spec test cases to actual tests:
-
-| Test Case (from spec) | Test Location | Status |
-|----------------------|---------------|--------|
-| [test case description] | `file_test.rs:NN` or `file.test.ts:NN` | PASS/MISSING |
-
----
-
-## 8. Build Warning Audit
-
-Run builds and verify no new warnings related to the spec:
-
-### Backend (Rust)
 ```bash
-cd src-tauri && cargo build 2>&1 | grep -E "(warning|unused|dead_code)"
+grep -rn "TODO\|FIXME\|XXX\|HACK\|handled separately\|will be implemented\|for now" src-tauri/src src/
 ```
 
-### Frontend (TypeScript)
-```bash
-bun run build 2>&1 | grep -E "(warning|unused|never used)"
+| Deferral Text | Location | Tracking Spec |
+|---------------|----------|---------------|
+| [quote] | file:line | spec.md or **MISSING** |
+
+**MISSING = NEEDS_WORK** - Every deferral must reference a tracking spec.
+
+### 5. Automated check results
+
+Paste the output from Pre-Review Gates above:
+```
+[paste output]
 ```
 
-**Check for these warning types:**
-
-| Warning Type | Indicates |
-|-------------|-----------|
-| `unused import` | Code imported but never called |
-| `never constructed` | Struct/enum defined but never instantiated |
-| `never used` | Function/method implemented but never called |
-| `dead_code` | Code that cannot be reached |
-
-**New code introduced by this spec:**
-
-| Item | Type | Used? | Evidence |
-|------|------|-------|----------|
-| [StructName] | struct | YES/NO | `instantiated at file:line` |
-| [function_name] | function | YES/NO | `called at file:line` |
-
-**NEEDS_WORK** if any new code generates unused warnings.
-
 ---
 
-## 9. Code Quality Notes
-
-Brief assessment of:
-- [ ] Error handling appropriate
-- [ ] No unwrap() on user-facing code paths
-- [ ] Types are explicit (no untyped any/unknown)
-- [ ] Consistent with existing patterns in codebase
-
----
-
-## 10. Verdict
+## Verdict
 
 ### APPROVED
 All of the following must be true:
-- All acceptance criteria pass with line-level evidence
-- Integration path complete (no broken links in the trace)
-- All registrations verified (invoke_handler, app.manage, builder, hooks)
-- All mocks have production counterparts instantiated
-- All emitted events have frontend listeners
-- All deferrals reference tracked specs
-- Test coverage matches spec test cases
-- No unused code warnings for new code (build warning audit passed)
+- [ ] All automated checks pass (no warnings, all registrations verified)
+- [ ] All new code is reachable from production (not test-only)
+- [ ] Data flow is complete with no broken links
+- [ ] All deferrals reference tracking specs
 
 ### NEEDS_WORK
-If any above fails, provide:
-1. **What failed** - specific section and item
-2. **Why it failed** - missing registration, broken link, etc.
+Provide:
+1. **What failed** - specific question number and item
+2. **Why it failed** - missing registration, broken link, no evidence, etc.
 3. **How to fix** - concrete action with target file:line
-
----
-
-## Review Checklist
-
-Before submitting verdict:
-
-- [ ] Read the spec file completely
-- [ ] Read implementation notes and integration points in spec
-- [ ] Traced integration path with diagram
-- [ ] Verified all registrations in lib.rs
-- [ ] Audited mocks vs production
-- [ ] Audited event emission vs subscription
-- [ ] Searched for deferrals
-- [ ] Mapped test cases to actual tests
-- [ ] Ran `cargo build`, no unused code warnings for new code
-- [ ] Ran `bun run build`, no unused warnings for new code
-- [ ] Provided line-level evidence for every claim

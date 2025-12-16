@@ -3,7 +3,7 @@
 
 use parakeet_rs::ParakeetTDT;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use super::types::{TranscriptionError, TranscriptionResult, TranscriptionService, TranscriptionState};
 use super::utils::fix_parakeet_text;
@@ -102,6 +102,13 @@ impl Drop for TranscribingGuard {
 /// that can be shared between all transcription consumers and WakeWordDetector.
 /// Previously, each component loaded its own ~3GB model, wasting memory.
 ///
+/// ## Mutual Exclusion
+///
+/// The `transcription_lock` ensures that batch transcription (`transcribe_file`)
+/// and streaming transcription (`transcribe_samples`) cannot run concurrently.
+/// This prevents latency spikes and unpredictable behavior when both modes
+/// try to use the model simultaneously.
+///
 /// Usage:
 /// ```ignore
 /// let shared_model = SharedTranscriptionModel::new();
@@ -116,6 +123,10 @@ pub struct SharedTranscriptionModel {
     model: Arc<Mutex<Option<ParakeetTDT>>>,
     /// Current transcription state
     state: Arc<Mutex<TranscriptionState>>,
+    /// Transcription lock: ensures mutual exclusion between batch and streaming
+    /// transcription. Only one transcription operation can proceed at a time.
+    /// This prevents race conditions between `transcribe_file()` and `transcribe_samples()`.
+    transcription_lock: Arc<Mutex<()>>,
 }
 
 impl Default for SharedTranscriptionModel {
@@ -130,7 +141,19 @@ impl SharedTranscriptionModel {
         Self {
             model: Arc::new(Mutex::new(None)),
             state: Arc::new(Mutex::new(TranscriptionState::Unloaded)),
+            transcription_lock: Arc::new(Mutex::new(())),
         }
+    }
+
+    /// Acquire exclusive access for transcription operations.
+    ///
+    /// This must be called before any transcription to ensure mutual exclusion
+    /// between batch (`transcribe_file`) and streaming (`transcribe_samples`) modes.
+    /// The returned guard holds the lock until dropped.
+    fn acquire_transcription_lock(&self) -> TranscriptionResult<MutexGuard<'_, ()>> {
+        self.transcription_lock
+            .lock()
+            .map_err(|_| TranscriptionError::LockPoisoned)
     }
 
     /// Load the Parakeet TDT model from the given directory path
@@ -204,12 +227,21 @@ impl SharedTranscriptionModel {
     /// - State becomes Transcribing when guard is acquired
     /// - State becomes Completed/Error when guard completes
     /// - State resets to Idle on panic
+    ///
+    /// ## Mutual Exclusion
+    ///
+    /// Acquires `transcription_lock` before transcription to prevent concurrent
+    /// execution with `transcribe_samples()`. The lock is held for the duration
+    /// of the transcription and released when the guard is dropped.
     pub fn transcribe_file(&self, file_path: &str) -> TranscriptionResult<String> {
         if file_path.is_empty() {
             return Err(TranscriptionError::InvalidAudio(
                 "Empty file path".to_string(),
             ));
         }
+
+        // Acquire exclusive transcription access - blocks if streaming is active
+        let _transcription_permit = self.acquire_transcription_lock()?;
 
         // Acquire guard - sets state to Transcribing
         let mut state_guard = TranscribingGuard::new(self.state.clone())?;
@@ -255,6 +287,16 @@ impl SharedTranscriptionModel {
     /// * `samples` - Audio samples as f32 values
     /// * `sample_rate` - Sample rate in Hz (typically 16000)
     /// * `channels` - Number of audio channels (typically 1 for mono)
+    ///
+    /// ## Mutual Exclusion
+    ///
+    /// Acquires `transcription_lock` before transcription to prevent concurrent
+    /// execution with `transcribe_file()`. The lock is held for the duration
+    /// of the transcription and released when the method returns.
+    ///
+    /// Note: We don't set state to Transcribing for streaming use cases
+    /// to avoid state conflicts with batch transcription. The state machine
+    /// is primarily for the batch transcription flow.
     pub fn transcribe_samples(
         &self,
         samples: Vec<f32>,
@@ -267,9 +309,8 @@ impl SharedTranscriptionModel {
             ));
         }
 
-        // Note: We don't set state to Transcribing for streaming use cases
-        // to avoid state conflicts with batch transcription. The state machine
-        // is primarily for the batch transcription flow.
+        // Acquire exclusive transcription access - blocks if batch transcription is active
+        let _transcription_permit = self.acquire_transcription_lock()?;
 
         let mut guard = self
             .model
@@ -566,6 +607,213 @@ mod tests {
             final_state == TranscriptionState::Idle || final_state == TranscriptionState::Transcribing,
             "Final state should be Idle or Transcribing, got {:?}",
             final_state
+        );
+    }
+
+    // ==========================================================================
+    // Transcription Lock Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_transcription_lock_is_acquired() {
+        let model = SharedTranscriptionModel::new();
+
+        // Acquire the lock
+        let guard = model.acquire_transcription_lock();
+        assert!(guard.is_ok(), "Should be able to acquire transcription lock");
+
+        // Lock should be held
+        drop(guard);
+    }
+
+    #[test]
+    fn test_transcription_lock_blocks_concurrent_access() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::thread;
+        use std::time::Duration;
+
+        let model = SharedTranscriptionModel::new();
+        let counter = Arc::new(AtomicUsize::new(0));
+        let max_concurrent = Arc::new(AtomicUsize::new(0));
+
+        let mut handles = vec![];
+
+        for _ in 0..10 {
+            let model_clone = model.clone();
+            let counter_clone = counter.clone();
+            let max_concurrent_clone = max_concurrent.clone();
+
+            handles.push(thread::spawn(move || {
+                for _ in 0..5 {
+                    // Acquire the lock
+                    let _guard = model_clone.acquire_transcription_lock().unwrap();
+
+                    // Increment counter (we're inside critical section)
+                    let current = counter_clone.fetch_add(1, Ordering::SeqCst) + 1;
+
+                    // Track max concurrent
+                    max_concurrent_clone.fetch_max(current, Ordering::SeqCst);
+
+                    // Simulate some work
+                    thread::sleep(Duration::from_micros(10));
+
+                    // Decrement counter
+                    counter_clone.fetch_sub(1, Ordering::SeqCst);
+
+                    // Guard is dropped here, releasing lock
+                }
+            }));
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // Max concurrent should be 1 (mutex ensures serialization)
+        let max = max_concurrent.load(Ordering::SeqCst);
+        assert_eq!(
+            max, 1,
+            "Max concurrent access should be 1, got {}",
+            max
+        );
+    }
+
+    #[test]
+    fn test_transcription_lock_released_on_error_paths() {
+        let model = SharedTranscriptionModel::new();
+
+        // First call with empty samples - should error but release lock
+        let result = model.transcribe_samples(vec![], 16000, 1);
+        assert!(result.is_err());
+
+        // Should be able to acquire lock again
+        let guard = model.acquire_transcription_lock();
+        assert!(guard.is_ok(), "Lock should be released after error");
+    }
+
+    #[test]
+    fn test_transcription_lock_released_on_model_not_loaded() {
+        let model = SharedTranscriptionModel::new();
+
+        // Call transcribe_samples with valid samples but no model loaded
+        let result = model.transcribe_samples(vec![0.1, 0.2], 16000, 1);
+        assert!(matches!(result, Err(TranscriptionError::ModelNotLoaded)));
+
+        // Should be able to acquire lock again
+        let guard = model.acquire_transcription_lock();
+        assert!(guard.is_ok(), "Lock should be released after ModelNotLoaded error");
+    }
+
+    #[test]
+    fn test_two_transcribe_file_calls_are_serialized() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::thread;
+        use std::time::Duration;
+
+        let model = SharedTranscriptionModel::new();
+        let overlap_detected = Arc::new(AtomicBool::new(false));
+        let in_transcription = Arc::new(AtomicBool::new(false));
+
+        let model_clone1 = model.clone();
+        let model_clone2 = model.clone();
+        let overlap_detected_clone1 = overlap_detected.clone();
+        let overlap_detected_clone2 = overlap_detected.clone();
+        let in_transcription_clone1 = in_transcription.clone();
+        let in_transcription_clone2 = in_transcription.clone();
+
+        let handle1 = thread::spawn(move || {
+            // We can't actually call transcribe_file without a model, but we can
+            // test the lock acquisition behavior directly
+            let _guard = model_clone1.acquire_transcription_lock().unwrap();
+
+            // Check if another thread is already in transcription
+            if in_transcription_clone1.swap(true, Ordering::SeqCst) {
+                overlap_detected_clone1.store(true, Ordering::SeqCst);
+            }
+
+            // Simulate transcription work
+            thread::sleep(Duration::from_millis(10));
+
+            in_transcription_clone1.store(false, Ordering::SeqCst);
+        });
+
+        let handle2 = thread::spawn(move || {
+            let _guard = model_clone2.acquire_transcription_lock().unwrap();
+
+            // Check if another thread is already in transcription
+            if in_transcription_clone2.swap(true, Ordering::SeqCst) {
+                overlap_detected_clone2.store(true, Ordering::SeqCst);
+            }
+
+            // Simulate transcription work
+            thread::sleep(Duration::from_millis(10));
+
+            in_transcription_clone2.store(false, Ordering::SeqCst);
+        });
+
+        handle1.join().unwrap();
+        handle2.join().unwrap();
+
+        assert!(
+            !overlap_detected.load(Ordering::SeqCst),
+            "Transcriptions should not overlap"
+        );
+    }
+
+    #[test]
+    fn test_stress_alternating_batch_streaming_calls() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::thread;
+
+        let model = SharedTranscriptionModel::new();
+        let concurrent_count = Arc::new(AtomicUsize::new(0));
+        let max_concurrent = Arc::new(AtomicUsize::new(0));
+
+        let mut handles = vec![];
+
+        // Simulate batch transcription threads
+        for _ in 0..5 {
+            let model_clone = model.clone();
+            let concurrent_clone = concurrent_count.clone();
+            let max_clone = max_concurrent.clone();
+
+            handles.push(thread::spawn(move || {
+                for _ in 0..20 {
+                    let _guard = model_clone.acquire_transcription_lock().unwrap();
+                    let current = concurrent_clone.fetch_add(1, Ordering::SeqCst) + 1;
+                    max_clone.fetch_max(current, Ordering::SeqCst);
+                    std::hint::black_box(current); // Prevent optimization
+                    concurrent_clone.fetch_sub(1, Ordering::SeqCst);
+                }
+            }));
+        }
+
+        // Simulate streaming transcription threads
+        for _ in 0..5 {
+            let model_clone = model.clone();
+            let concurrent_clone = concurrent_count.clone();
+            let max_clone = max_concurrent.clone();
+
+            handles.push(thread::spawn(move || {
+                for _ in 0..20 {
+                    let _guard = model_clone.acquire_transcription_lock().unwrap();
+                    let current = concurrent_clone.fetch_add(1, Ordering::SeqCst) + 1;
+                    max_clone.fetch_max(current, Ordering::SeqCst);
+                    std::hint::black_box(current); // Prevent optimization
+                    concurrent_clone.fetch_sub(1, Ordering::SeqCst);
+                }
+            }));
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // Should never have more than 1 concurrent access
+        assert_eq!(
+            max_concurrent.load(Ordering::SeqCst),
+            1,
+            "Should never have concurrent transcriptions"
         );
     }
 }
