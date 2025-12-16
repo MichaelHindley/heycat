@@ -22,7 +22,7 @@ use crate::events::{
     TranscriptionStartedPayload,
 };
 use crate::audio::AudioThreadHandle;
-use crate::parakeet::TranscriptionManager;
+use crate::parakeet::SharedTranscriptionModel;
 use crate::recording::{AudioData, RecordingManager, RecordingMetadata, RecordingState};
 use crate::warn;
 use std::sync::{Arc, Mutex};
@@ -237,7 +237,7 @@ pub fn list_recordings() -> Result<Vec<RecordingInfo>, String> {
 #[tauri::command]
 pub async fn transcribe_file(
     app_handle: AppHandle,
-    transcription_manager: State<'_, Arc<TranscriptionManager>>,
+    shared_model: State<'_, Arc<SharedTranscriptionModel>>,
     file_path: String,
 ) -> Result<String, String> {
     // Emit transcription started event
@@ -250,12 +250,12 @@ pub async fn transcribe_file(
     );
 
     // Clone what we need for the blocking task
-    let manager = transcription_manager.inner().clone();
+    let model = shared_model.inner().clone();
     let path = file_path.clone();
 
     // Run transcription on blocking thread pool
     let result = tokio::task::spawn_blocking(move || {
-        transcribe_file_impl(&manager, &path)
+        transcribe_file_impl(&model, &path)
     })
     .await
     .map_err(|e| format!("Transcription task failed: {}", e))?;

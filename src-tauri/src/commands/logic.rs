@@ -415,7 +415,7 @@ pub fn list_recordings_impl() -> Result<Vec<RecordingInfo>, String> {
 /// Transcribes an audio file using the TDT (batch) model.
 ///
 /// # Arguments
-/// * `transcription_manager` - The transcription manager state
+/// * `shared_model` - The shared transcription model state
 /// * `file_path` - Path to the audio file to transcribe
 ///
 /// # Returns
@@ -427,7 +427,7 @@ pub fn list_recordings_impl() -> Result<Vec<RecordingInfo>, String> {
 /// - File does not exist
 /// - Transcription fails
 pub fn transcribe_file_impl(
-    transcription_manager: &crate::parakeet::TranscriptionManager,
+    shared_model: &crate::parakeet::SharedTranscriptionModel,
     file_path: &str,
 ) -> Result<String, String> {
     use crate::parakeet::TranscriptionService;
@@ -435,7 +435,7 @@ pub fn transcribe_file_impl(
     debug!("transcribe_file_impl called for: {}", file_path);
 
     // Check if TDT model is loaded
-    if !transcription_manager.is_tdt_loaded() {
+    if !shared_model.is_loaded() {
         return Err("Please download the Batch transcription model first.".to_string());
     }
 
@@ -445,7 +445,7 @@ pub fn transcribe_file_impl(
     }
 
     // Perform transcription
-    let text = transcription_manager
+    let text = shared_model
         .transcribe(file_path)
         .map_err(|e| format!("Transcription failed: {}", e))?;
 

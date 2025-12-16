@@ -194,7 +194,7 @@ struct DetectorState {
 /// Uses on-device speech recognition for privacy.
 ///
 /// This detector now uses a SharedTranscriptionModel, allowing it to share
-/// the ~3GB Parakeet model with TranscriptionManager, saving significant memory.
+/// the ~3GB Parakeet model with all other transcription consumers, saving significant memory.
 pub struct WakeWordDetector {
     /// Configuration
     config: WakeWordDetectorConfig,
@@ -228,7 +228,7 @@ impl WakeWordDetector {
     /// Create a wake word detector with a shared transcription model
     ///
     /// This is the preferred constructor for production use, as it allows
-    /// sharing a single ~3GB model between WakeWordDetector and TranscriptionManager.
+    /// sharing a single ~3GB model between WakeWordDetector and other transcription consumers.
     #[allow(dead_code)] // Used by ListeningPipeline and in tests
     pub fn with_shared_model(shared_model: SharedTranscriptionModel) -> Self {
         Self::with_shared_model_and_config(shared_model, WakeWordDetectorConfig::default())

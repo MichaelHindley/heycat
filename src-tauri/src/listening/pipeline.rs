@@ -35,6 +35,8 @@ pub enum PipelineError {
     /// Lock error
     #[allow(dead_code)] // Error variant for future use
     LockError,
+    /// No event subscriber configured - must call subscribe_events() before start()
+    NoEventSubscriber,
 }
 
 impl std::fmt::Display for PipelineError {
@@ -45,6 +47,9 @@ impl std::fmt::Display for PipelineError {
             PipelineError::AlreadyRunning => write!(f, "Pipeline is already running"),
             PipelineError::NotRunning => write!(f, "Pipeline is not running"),
             PipelineError::LockError => write!(f, "Lock error"),
+            PipelineError::NoEventSubscriber => {
+                write!(f, "Must call subscribe_events() before start()")
+            }
         }
     }
 }
@@ -152,7 +157,7 @@ impl ListeningPipeline {
 
     /// Set the shared transcription model for the wake word detector
     ///
-    /// This should be called with the same model used by TranscriptionManager
+    /// This should be called with the same model used by other transcription consumers
     /// to share the ~3GB Parakeet model and save memory.
     pub fn set_shared_model(&mut self, model: SharedTranscriptionModel) {
         self.shared_model = Some(model);
@@ -188,7 +193,15 @@ impl ListeningPipeline {
     /// The channel has a bounded buffer to handle backpressure gracefully.
     /// If the receiver falls behind, older events may be dropped (try_send).
     ///
-    /// NOTE: This must be called before start() to receive events from the pipeline.
+    /// # Important
+    ///
+    /// **This MUST be called before `start()`.** If not called, `start()` will
+    /// return `PipelineError::NoEventSubscriber`. This requirement ensures events
+    /// are never silently dropped.
+    ///
+    /// The subscription persists across stop/start cycles, so you only need to
+    /// call this once per pipeline instance.
+    ///
     /// Each call creates a new channel; only the most recent receiver will get events.
     pub fn subscribe_events(&mut self) -> tokio_mpsc::Receiver<WakeWordEvent> {
         let (tx, rx) = tokio_mpsc::channel(EVENT_CHANNEL_BUFFER_SIZE);
@@ -215,6 +228,12 @@ impl ListeningPipeline {
     ///
     /// # Returns
     /// The audio buffer being filled, which can be used to check if capture is working
+    ///
+    /// # Errors
+    /// - `NoEventSubscriber` if `subscribe_events()` was not called before starting
+    /// - `AlreadyRunning` if the pipeline is already running
+    /// - `DetectorError` if model is not loaded or VAD initialization fails
+    /// - `AudioError` if audio capture fails to start
     pub fn start<E: ListeningEventEmitter + 'static>(
         &mut self,
         audio_handle: &AudioThreadHandle,
@@ -234,6 +253,13 @@ impl ListeningPipeline {
         if self.is_running() {
             crate::debug!("[pipeline] Start called but already running");
             return Err(PipelineError::AlreadyRunning);
+        }
+
+        // Require event subscriber to be configured before starting
+        // This prevents silently dropping wake word events
+        // Check early so callers get a clear error message about the requirement
+        if self.event_tx.is_none() {
+            return Err(PipelineError::NoEventSubscriber);
         }
 
         crate::info!("[pipeline] Starting listening pipeline...");
@@ -271,14 +297,8 @@ impl ListeningPipeline {
         self.should_stop.store(false, Ordering::SeqCst);
         self.mic_available.store(true, Ordering::SeqCst);
 
-        // Get or create event channel for wake word events
-        // If subscribe_events() wasn't called, create a channel anyway
-        // (events will just be dropped if no one is listening)
-        let event_tx = self.event_tx.clone().unwrap_or_else(|| {
-            crate::warn!("[pipeline] No event subscriber configured, events will be dropped");
-            let (tx, _rx) = tokio_mpsc::channel(EVENT_CHANNEL_BUFFER_SIZE);
-            tx
-        });
+        // Get event_tx - safe to unwrap since we checked for NoEventSubscriber earlier
+        let event_tx = self.event_tx.clone().expect("event_tx checked above");
 
         // Create analysis state
         let state = AnalysisState {
@@ -650,6 +670,10 @@ mod tests {
 
         let err = PipelineError::LockError;
         assert!(format!("{}", err).contains("Lock error"));
+
+        let err = PipelineError::NoEventSubscriber;
+        assert!(format!("{}", err).contains("subscribe_events()"));
+        assert!(format!("{}", err).contains("start()"));
     }
 
     #[test]
@@ -733,6 +757,66 @@ mod tests {
         let mut pipeline = ListeningPipeline::new();
         let _rx = pipeline.subscribe_events();
         // Verify we got a receiver (implicitly tested by compilation)
+        assert!(pipeline.event_tx.is_some());
+    }
+
+    #[test]
+    fn test_start_without_subscribe_events_returns_error() {
+        use crate::events::tests::MockEventEmitter;
+
+        let mut pipeline = ListeningPipeline::new();
+        let audio_handle = AudioThreadHandle::spawn();
+        let emitter = Arc::new(MockEventEmitter::new());
+
+        // Try to start without calling subscribe_events() first
+        let result = pipeline.start(&audio_handle, emitter);
+
+        // Should return NoEventSubscriber error
+        assert!(matches!(result, Err(PipelineError::NoEventSubscriber)));
+    }
+
+    #[test]
+    fn test_start_after_subscribe_events_proceeds() {
+        use crate::events::tests::MockEventEmitter;
+        use crate::parakeet::SharedTranscriptionModel;
+
+        let mut pipeline = ListeningPipeline::new();
+        let audio_handle = AudioThreadHandle::spawn();
+        let emitter = Arc::new(MockEventEmitter::new());
+
+        // Subscribe to events
+        let _rx = pipeline.subscribe_events();
+
+        // Set up shared model (not loaded, so start will fail with DetectorError)
+        let shared_model = SharedTranscriptionModel::new();
+        pipeline.set_shared_model(shared_model);
+
+        // Try to start - should fail with DetectorError (model not loaded), not NoEventSubscriber
+        let result = pipeline.start(&audio_handle, emitter);
+
+        // The error should be about the model, not about missing subscriber
+        assert!(
+            matches!(result, Err(PipelineError::DetectorError(_))),
+            "Expected DetectorError, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_event_tx_persists_after_stop() {
+        let mut pipeline = ListeningPipeline::new();
+
+        // Subscribe to events
+        let _rx = pipeline.subscribe_events();
+        assert!(pipeline.event_tx.is_some());
+
+        // Simulate stop behavior - event_tx should not be cleared
+        // (Note: actual stop() requires the pipeline to be running, so we just verify
+        // that the field is not part of what gets cleared)
+        let audio_handle = AudioThreadHandle::spawn();
+        let _ = pipeline.stop(&audio_handle); // Will fail with NotRunning, but that's ok
+
+        // event_tx should still be set
         assert!(pipeline.event_tx.is_some());
     }
 

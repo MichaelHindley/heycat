@@ -5,7 +5,7 @@ use parakeet_rs::ParakeetTDT;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use super::types::{TranscriptionError, TranscriptionResult, TranscriptionState};
+use super::types::{TranscriptionError, TranscriptionResult, TranscriptionService, TranscriptionState};
 use super::utils::fix_parakeet_text;
 use crate::info;
 
@@ -99,7 +99,7 @@ impl Drop for TranscribingGuard {
 /// Shared transcription model wrapper for ParakeetTDT
 ///
 /// This struct provides thread-safe access to a single Parakeet model instance
-/// that can be shared between components (TranscriptionManager and WakeWordDetector).
+/// that can be shared between all transcription consumers and WakeWordDetector.
 /// Previously, each component loaded its own ~3GB model, wasting memory.
 ///
 /// Usage:
@@ -108,7 +108,6 @@ impl Drop for TranscribingGuard {
 /// shared_model.load(model_path)?;
 ///
 /// // Both can share the same model:
-/// let manager = TranscriptionManager::with_shared_model(shared_model.clone());
 /// let detector = WakeWordDetector::with_shared_model(shared_model.clone());
 /// ```
 #[derive(Clone)]
@@ -285,6 +284,28 @@ impl SharedTranscriptionModel {
             }
             Err(e) => Err(TranscriptionError::TranscriptionFailed(e.to_string())),
         }
+    }
+}
+
+impl TranscriptionService for SharedTranscriptionModel {
+    fn load_model(&self, path: &Path) -> TranscriptionResult<()> {
+        self.load(path)
+    }
+
+    fn transcribe(&self, file_path: &str) -> TranscriptionResult<String> {
+        self.transcribe_file(file_path)
+    }
+
+    fn is_loaded(&self) -> bool {
+        self.is_loaded()
+    }
+
+    fn state(&self) -> TranscriptionState {
+        self.state()
+    }
+
+    fn reset_to_idle(&self) -> TranscriptionResult<()> {
+        self.reset_to_idle()
     }
 }
 

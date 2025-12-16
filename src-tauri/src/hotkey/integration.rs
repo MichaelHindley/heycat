@@ -17,7 +17,7 @@ use crate::recording::{RecordingManager, RecordingState};
 use crate::voice_commands::executor::ActionDispatcher;
 use crate::voice_commands::matcher::{CommandMatcher, MatchResult};
 use crate::voice_commands::registry::CommandRegistry;
-use crate::parakeet::{TranscriptionManager, TranscriptionService};
+use crate::parakeet::{SharedTranscriptionModel, TranscriptionService};
 use crate::{debug, error, info, trace, warn};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -77,8 +77,8 @@ pub struct HotkeyIntegration<R: RecordingEventEmitter, T: TranscriptionEventEmit
     recording_emitter: R,
     /// Optional audio thread handle - when present, starts/stops capture on toggle
     audio_thread: Option<Arc<AudioThreadHandle>>,
-    /// Optional TranscriptionManager for auto-transcription after recording stops
-    transcription_manager: Option<Arc<TranscriptionManager>>,
+    /// Optional SharedTranscriptionModel for auto-transcription after recording stops
+    shared_transcription_model: Option<Arc<SharedTranscriptionModel>>,
     /// Transcription event emitter for emitting events from spawned thread
     transcription_emitter: Option<Arc<T>>,
     /// Reference to recording state for getting audio buffer in transcription thread
@@ -111,7 +111,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             debounce_duration: Duration::from_millis(DEBOUNCE_DURATION_MS),
             recording_emitter,
             audio_thread: None,
-            transcription_manager: None,
+            shared_transcription_model: None,
             transcription_emitter: None,
             recording_state: None,
             listening_state: None,
@@ -138,9 +138,9 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         self
     }
 
-    /// Add TranscriptionManager for auto-transcription (builder pattern)
-    pub fn with_transcription_manager(mut self, manager: Arc<TranscriptionManager>) -> Self {
-        self.transcription_manager = Some(manager);
+    /// Add SharedTranscriptionModel for auto-transcription (builder pattern)
+    pub fn with_shared_transcription_model(mut self, model: Arc<SharedTranscriptionModel>) -> Self {
+        self.shared_transcription_model = Some(model);
         self
     }
 
@@ -210,7 +210,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             debounce_duration: Duration::from_millis(debounce_ms),
             recording_emitter,
             audio_thread: None,
-            transcription_manager: None,
+            shared_transcription_model: None,
             transcription_emitter: None,
             recording_state: None,
             listening_state: None,
@@ -357,10 +357,10 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
     #[cfg_attr(coverage_nightly, coverage(off))]
     pub fn spawn_transcription(&self, file_path: String) {
         // Check all required components are present
-        let transcription_manager = match &self.transcription_manager {
-            Some(tm) => tm.clone(),
+        let shared_model = match &self.shared_transcription_model {
+            Some(m) => m.clone(),
             None => {
-                debug!("Transcription skipped: no transcription manager configured");
+                debug!("Transcription skipped: no shared transcription model configured");
                 return;
             }
         };
@@ -386,7 +386,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         let recording_state = self.recording_state.clone();
 
         // Check if model is loaded
-        if !transcription_manager.is_loaded() {
+        if !shared_model.is_loaded() {
             info!("Transcription skipped: transcription model not loaded");
             return;
         }
@@ -434,7 +434,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             debug!("Transcribing file: {}", file_path);
 
             // Perform transcription on blocking thread pool (CPU-intensive) with timeout
-            let transcriber = transcription_manager.clone();
+            let transcriber = shared_model.clone();
             let transcription_future = tokio::task::spawn_blocking(move || {
                 transcriber.transcribe(&file_path)
             });
@@ -448,7 +448,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                     transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
                         error: e.to_string(),
                     });
-                    if let Err(reset_err) = transcription_manager.reset_to_idle() {
+                    if let Err(reset_err) = shared_model.reset_to_idle() {
                         warn!("Failed to reset transcription state: {}", reset_err);
                     }
                     clear_recording_buffer();
@@ -459,7 +459,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                     transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
                         error: "Internal transcription error.".to_string(),
                     });
-                    if let Err(reset_err) = transcription_manager.reset_to_idle() {
+                    if let Err(reset_err) = shared_model.reset_to_idle() {
                         warn!("Failed to reset transcription state: {}", reset_err);
                     }
                     clear_recording_buffer();
@@ -471,7 +471,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                     transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
                         error: format!("Transcription timed out after {} seconds. The audio may be too long or the model may be stuck.", timeout_duration.as_secs()),
                     });
-                    if let Err(reset_err) = transcription_manager.reset_to_idle() {
+                    if let Err(reset_err) = shared_model.reset_to_idle() {
                         warn!("Failed to reset transcription state: {}", reset_err);
                     }
                     clear_recording_buffer();
@@ -643,7 +643,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             });
 
             // Reset transcription state to idle
-            if let Err(e) = transcription_manager.reset_to_idle() {
+            if let Err(e) = shared_model.reset_to_idle() {
                 warn!("Failed to reset transcription state: {}", e);
             }
 

@@ -76,13 +76,13 @@ pub fn run() {
             app.manage(listening_state.clone());
 
             // Create shared transcription model (single ~3GB Parakeet model)
-            // This model is shared between TranscriptionManager and WakeWordDetector
+            // This model is shared between all transcription consumers and WakeWordDetector
             debug!("Creating SharedTranscriptionModel...");
-            let shared_transcription_model = parakeet::SharedTranscriptionModel::new();
+            let shared_transcription_model = Arc::new(parakeet::SharedTranscriptionModel::new());
 
             // Create listening pipeline with shared model
             let mut pipeline = listening::ListeningPipeline::new();
-            pipeline.set_shared_model(shared_transcription_model.clone());
+            pipeline.set_shared_model((*shared_transcription_model).clone());
             let listening_pipeline = Arc::new(Mutex::new(pipeline));
             app.manage(listening_pipeline.clone());
 
@@ -99,14 +99,8 @@ pub fn run() {
             // Manage audio thread state for Tauri commands
             app.manage(audio_thread.clone());
 
-            // Create TranscriptionManager with shared model
-            // This allows TranscriptionManager and WakeWordDetector to share the same Parakeet model
-            debug!("Creating TranscriptionManager with shared model...");
-            let transcription_manager = Arc::new(
-                parakeet::TranscriptionManager::with_shared_model(shared_transcription_model.clone())
-            );
-
-            app.manage(transcription_manager.clone());
+            // Manage shared transcription model for Tauri commands
+            app.manage(shared_transcription_model.clone());
 
             // Create and manage VoiceCommandsState
             debug!("Creating VoiceCommandsState...");
@@ -135,11 +129,11 @@ pub fn run() {
 
             // Eager model loading at startup (if models exist)
             // Load TDT model into shared model if available
-            // This single model instance will be shared between TranscriptionManager and WakeWordDetector
+            // This single model instance will be shared between all transcription consumers and WakeWordDetector
             if let Ok(true) = model::check_model_exists_for_type(model::download::ModelType::ParakeetTDT) {
                 if let Ok(model_dir) = model::download::get_model_dir(model::download::ModelType::ParakeetTDT) {
                     info!("Loading shared Parakeet TDT model from {:?}...", model_dir);
-                    match transcription_manager.load_tdt_model(&model_dir) {
+                    match shared_transcription_model.load(&model_dir) {
                         Ok(()) => info!("Shared Parakeet TDT model loaded successfully (saves ~3GB by sharing)"),
                         Err(e) => warn!("Failed to load Parakeet TDT model: {}", e),
                     }
@@ -158,7 +152,7 @@ pub fn run() {
             >::new(recording_emitter)
                 .with_app_handle(app.handle().clone())
                 .with_audio_thread(audio_thread)
-                .with_transcription_manager(transcription_manager)
+                .with_shared_transcription_model(shared_transcription_model)
                 .with_transcription_emitter(emitter)
                 .with_recording_state(recording_state.clone())
                 .with_listening_state(listening_state)

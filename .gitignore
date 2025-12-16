@@ -30,3 +30,4 @@ dist-ssr
 
 # Coverage output
 coverage/
+.claude/tcr_verbose_chunks

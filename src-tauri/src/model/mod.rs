@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::events::model_events;
-use crate::parakeet::TranscriptionManager;
+use crate::parakeet::SharedTranscriptionModel;
 
 /// Check if a Parakeet model (TDT or EOU) is available
 /// model_type: "ParakeetTDT" or "ParakeetEOU"
@@ -62,7 +62,7 @@ impl ModelDownloadEventEmitter for TauriEmitter {
 pub async fn download_model(
     app_handle: AppHandle,
     model_type: ModelType,
-    transcription_manager: State<'_, Arc<TranscriptionManager>>,
+    shared_model: State<'_, Arc<SharedTranscriptionModel>>,
 ) -> Result<String, String> {
     let manifest = ModelManifest::tdt();
 
@@ -75,8 +75,8 @@ pub async fn download_model(
 
     // Load the TDT model into memory
     let model_dir = get_model_dir(model_type).map_err(|e| e.to_string())?;
-    transcription_manager
-        .load_tdt_model(&model_dir)
+    shared_model
+        .load(&model_dir)
         .map_err(|e| format!("Model downloaded but failed to load: {}", e))?;
 
     // Emit completion event
