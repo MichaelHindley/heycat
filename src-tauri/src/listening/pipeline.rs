@@ -4,6 +4,7 @@
 use super::events::WakeWordEvent;
 use super::{WakeWordDetector, WakeWordDetectorConfig, WakeWordError};
 use crate::audio::{AudioBuffer, AudioCaptureError, AudioThreadHandle};
+use crate::audio_constants::{ANALYSIS_INTERVAL_MS, EVENT_CHANNEL_BUFFER_SIZE, MIN_SAMPLES_FOR_ANALYSIS};
 use crate::events::{current_timestamp, listening_events, ListeningEventEmitter};
 use crate::parakeet::SharedTranscriptionModel;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -77,10 +78,10 @@ impl Default for PipelineConfig {
         Self {
             // Analyze every 150ms for responsive wake word detection
             // Trades ~3x more CPU for ~3x faster response time
-            analysis_interval_ms: 150,
+            analysis_interval_ms: ANALYSIS_INTERVAL_MS,
             // Need at least 0.25 seconds of audio before analyzing
             // 16000 Hz * 0.25s = 4000 samples
-            min_samples_for_analysis: 4000,
+            min_samples_for_analysis: MIN_SAMPLES_FOR_ANALYSIS,
         }
     }
 }
@@ -98,10 +99,6 @@ struct AnalysisState {
     /// Event channel sender for wake word events (replaces direct callback)
     event_tx: tokio_mpsc::Sender<WakeWordEvent>,
 }
-
-/// Default channel buffer size for wake word events
-/// Small buffer since events should be processed quickly
-const EVENT_CHANNEL_BUFFER_SIZE: usize = 16;
 
 /// Listening audio pipeline
 ///
@@ -592,8 +589,8 @@ mod tests {
     #[test]
     fn test_pipeline_config_default() {
         let config = PipelineConfig::default();
-        assert_eq!(config.analysis_interval_ms, 150);
-        assert_eq!(config.min_samples_for_analysis, 4000);
+        assert_eq!(config.analysis_interval_ms, ANALYSIS_INTERVAL_MS);
+        assert_eq!(config.min_samples_for_analysis, MIN_SAMPLES_FOR_ANALYSIS);
     }
 
     #[test]

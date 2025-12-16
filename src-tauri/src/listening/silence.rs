@@ -2,6 +2,10 @@
 // Uses VAD (Voice Activity Detection) to identify end of speech
 
 use super::vad::{create_vad, VadConfig};
+use crate::audio_constants::{
+    DEFAULT_SAMPLE_RATE, NO_SPEECH_TIMEOUT_MS, PAUSE_TOLERANCE_MS, SILENCE_DURATION_MS,
+    SILENCE_MIN_SPEECH_FRAMES, VAD_CHUNK_SIZE_16KHZ, VAD_THRESHOLD_SILENCE,
+};
 use crate::{debug, info, trace};
 use std::time::Instant;
 use voice_activity_detector::VoiceActivityDetector;
@@ -34,11 +38,11 @@ pub struct SilenceConfig {
 impl Default for SilenceConfig {
     fn default() -> Self {
         Self {
-            vad_speech_threshold: 0.5,
-            silence_duration_ms: 2000,
-            no_speech_timeout_ms: 5000,
-            pause_tolerance_ms: 1000,
-            sample_rate: 16000,
+            vad_speech_threshold: VAD_THRESHOLD_SILENCE,
+            silence_duration_ms: SILENCE_DURATION_MS,
+            no_speech_timeout_ms: NO_SPEECH_TIMEOUT_MS,
+            pause_tolerance_ms: PAUSE_TOLERANCE_MS,
+            sample_rate: DEFAULT_SAMPLE_RATE,
         }
     }
 }
@@ -83,8 +87,8 @@ impl SilenceDetector {
         let vad_config = VadConfig {
             speech_threshold: config.vad_speech_threshold,
             sample_rate: config.sample_rate,
-            chunk_size: 512, // Required by Silero VAD at 16kHz
-            min_speech_frames: 2,
+            chunk_size: VAD_CHUNK_SIZE_16KHZ,
+            min_speech_frames: SILENCE_MIN_SPEECH_FRAMES,
         };
 
         let vad = create_vad(&vad_config).ok();
@@ -115,8 +119,8 @@ impl SilenceDetector {
         let vad_config = VadConfig {
             speech_threshold: self.config.vad_speech_threshold,
             sample_rate: self.config.sample_rate,
-            chunk_size: 512,
-            min_speech_frames: 2,
+            chunk_size: VAD_CHUNK_SIZE_16KHZ,
+            min_speech_frames: SILENCE_MIN_SPEECH_FRAMES,
         };
         self.vad = create_vad(&vad_config).ok();
     }
@@ -146,8 +150,8 @@ impl SilenceDetector {
             }
         };
 
-        // Process in 512-sample chunks (required by Silero VAD at 16kHz)
-        let chunk_size = 512;
+        // Process in VAD_CHUNK_SIZE_16KHZ chunks (required by Silero VAD at 16kHz)
+        let chunk_size = VAD_CHUNK_SIZE_16KHZ;
         let mut max_probability: f32 = 0.0;
 
         for chunk in samples.chunks(chunk_size) {
@@ -246,11 +250,11 @@ mod tests {
     #[test]
     fn test_silence_config_default() {
         let config = SilenceConfig::default();
-        assert_eq!(config.vad_speech_threshold, 0.5);
-        assert_eq!(config.silence_duration_ms, 2000);
-        assert_eq!(config.no_speech_timeout_ms, 5000);
-        assert_eq!(config.pause_tolerance_ms, 1000);
-        assert_eq!(config.sample_rate, 16000);
+        assert_eq!(config.vad_speech_threshold, VAD_THRESHOLD_SILENCE);
+        assert_eq!(config.silence_duration_ms, SILENCE_DURATION_MS);
+        assert_eq!(config.no_speech_timeout_ms, NO_SPEECH_TIMEOUT_MS);
+        assert_eq!(config.pause_tolerance_ms, PAUSE_TOLERANCE_MS);
+        assert_eq!(config.sample_rate, DEFAULT_SAMPLE_RATE);
     }
 
     #[test]

@@ -4,6 +4,7 @@
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
 mod audio;
+mod audio_constants;
 mod commands;
 mod events;
 mod hotkey;

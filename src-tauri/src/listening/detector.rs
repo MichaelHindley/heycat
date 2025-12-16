@@ -3,16 +3,16 @@
 
 use super::vad::{create_vad, VadConfig, VadError};
 use super::CircularBuffer;
+use crate::audio_constants::{
+    DEFAULT_SAMPLE_RATE, FINGERPRINT_OVERLAP_THRESHOLD, VAD_CHUNK_SIZE_16KHZ,
+    VAD_THRESHOLD_AGGRESSIVE, WAKE_WORD_MIN_NEW_SAMPLES, WAKE_WORD_MIN_SPEECH_FRAMES,
+    WAKE_WORD_TRANSCRIPTION_TIMEOUT_SECS, WAKE_WORD_WINDOW_SECS,
+};
 use crate::events::{current_timestamp, listening_events, ListeningEventEmitter};
 use crate::parakeet::SharedTranscriptionModel;
 use std::collections::VecDeque;
 use std::sync::Mutex;
 use voice_activity_detector::VoiceActivityDetector;
-
-/// Default transcription timeout for wake word detection in seconds
-/// This is much shorter than the hotkey timeout since wake word detection
-/// only processes ~2 second audio windows
-pub const DEFAULT_WAKE_WORD_TRANSCRIPTION_TIMEOUT_SECS: u64 = 10;
 
 /// Configuration for wake word detection
 #[derive(Debug, Clone)]
@@ -51,21 +51,21 @@ impl Default for WakeWordDetectorConfig {
             confidence_threshold: 0.8,
             // ~2 seconds at 16kHz = 32000 samples = ~128KB memory
             // Reduced from 3s to 2s for faster response with short utterances
-            window_duration_secs: 2.0,
-            sample_rate: 16000,
+            window_duration_secs: WAKE_WORD_WINDOW_SECS,
+            sample_rate: DEFAULT_SAMPLE_RATE,
             // 0.75 seconds of new audio required before re-analysis
             // This reduces noise from overlapping transcriptions while still catching "hey cat"
-            min_new_samples_for_analysis: 12000,
+            min_new_samples_for_analysis: WAKE_WORD_MIN_NEW_SAMPLES,
             // VAD threshold - 0.6 is aggressive to filter ambient noise
             // May miss very quiet speech but significantly reduces false positives
-            vad_speech_threshold: 0.6,
+            vad_speech_threshold: VAD_THRESHOLD_AGGRESSIVE,
             // VAD enabled by default to filter background noise
             vad_enabled: true,
             // Minimum speech frames - require 4+ frames (~128ms) above threshold
             // Filters brief noise spikes while catching short utterances like "hey cat"
-            min_speech_frames: 4,
+            min_speech_frames: WAKE_WORD_MIN_SPEECH_FRAMES,
             // Transcription timeout - 10s is generous for ~2s audio window
-            transcription_timeout_secs: DEFAULT_WAKE_WORD_TRANSCRIPTION_TIMEOUT_SECS,
+            transcription_timeout_secs: WAKE_WORD_TRANSCRIPTION_TIMEOUT_SECS,
         }
     }
 }
@@ -264,7 +264,7 @@ impl WakeWordDetector {
         let vad_config = VadConfig {
             speech_threshold: self.config.vad_speech_threshold,
             sample_rate: self.config.sample_rate,
-            chunk_size: 512, // Required by Silero VAD at 16kHz
+            chunk_size: VAD_CHUNK_SIZE_16KHZ,
             min_speech_frames: self.config.min_speech_frames,
         };
 
@@ -349,7 +349,7 @@ impl WakeWordDetector {
                 .map_err(|_| WakeWordError::LockPoisoned)?;
             for fp in fingerprints.iter() {
                 let overlap = fingerprint.overlap_ratio(fp);
-                if overlap >= 0.5 {
+                if overlap >= FINGERPRINT_OVERLAP_THRESHOLD {
                     crate::trace!(
                         "[wake-word] Skipping duplicate audio: {:.1}% overlap with recent fingerprint",
                         overlap * 100.0
@@ -535,8 +535,8 @@ impl WakeWordDetector {
             }
         };
 
-        // Process samples in 512-sample chunks (required by Silero at 16kHz)
-        const CHUNK_SIZE: usize = 512;
+        // Process samples in VAD_CHUNK_SIZE_16KHZ chunks (required by Silero at 16kHz)
+        const CHUNK_SIZE: usize = VAD_CHUNK_SIZE_16KHZ;
         let mut max_probability: f32 = 0.0;
         let mut speech_frames = 0;
         let mut total_frames = 0;
@@ -673,17 +673,17 @@ mod tests {
         assert_eq!(config.wake_phrase, "hey cat");
         assert_eq!(config.confidence_threshold, 0.8);
         // 2 seconds window for ~128KB memory at 16kHz
-        assert_eq!(config.window_duration_secs, 2.0);
-        assert_eq!(config.sample_rate, 16000);
+        assert_eq!(config.window_duration_secs, WAKE_WORD_WINDOW_SECS);
+        assert_eq!(config.sample_rate, DEFAULT_SAMPLE_RATE);
         // 0.75 seconds of new audio required before re-analysis
-        assert_eq!(config.min_new_samples_for_analysis, 12000);
-        // VAD enabled by default with 0.6 threshold (aggressive filtering)
+        assert_eq!(config.min_new_samples_for_analysis, WAKE_WORD_MIN_NEW_SAMPLES);
+        // VAD enabled by default with aggressive threshold
         assert!(config.vad_enabled);
-        assert_eq!(config.vad_speech_threshold, 0.6);
-        // Minimum 4 speech frames required (~128ms, filters brief noise spikes)
-        assert_eq!(config.min_speech_frames, 4);
-        // 10 second transcription timeout (generous for ~2s audio window)
-        assert_eq!(config.transcription_timeout_secs, DEFAULT_WAKE_WORD_TRANSCRIPTION_TIMEOUT_SECS);
+        assert_eq!(config.vad_speech_threshold, VAD_THRESHOLD_AGGRESSIVE);
+        // Minimum speech frames required (~128ms, filters brief noise spikes)
+        assert_eq!(config.min_speech_frames, WAKE_WORD_MIN_SPEECH_FRAMES);
+        // Transcription timeout (generous for ~2s audio window)
+        assert_eq!(config.transcription_timeout_secs, WAKE_WORD_TRANSCRIPTION_TIMEOUT_SECS);
     }
 
     #[test]

@@ -1,6 +1,10 @@
 // Unified VAD (Voice Activity Detection) configuration
 // Shared between WakeWordDetector (listening) and SilenceDetector (recording)
 
+use crate::audio_constants::{
+    DEFAULT_SAMPLE_RATE, VAD_CHUNK_SIZE_16KHZ, VAD_THRESHOLD_BALANCED, VAD_THRESHOLD_SILENCE,
+    VAD_THRESHOLD_WAKE_WORD,
+};
 use voice_activity_detector::VoiceActivityDetector;
 
 /// Error type for VAD operations
@@ -82,9 +86,9 @@ impl Default for VadConfig {
         Self {
             // Balanced threshold for general use
             // Override with wake_word_config() or silence_config() for specific uses
-            speech_threshold: 0.4,
-            sample_rate: 16000,
-            chunk_size: 512, // Required by Silero VAD at 16kHz
+            speech_threshold: VAD_THRESHOLD_BALANCED,
+            sample_rate: DEFAULT_SAMPLE_RATE,
+            chunk_size: VAD_CHUNK_SIZE_16KHZ,
             min_speech_frames: 2,
         }
     }
@@ -99,7 +103,7 @@ impl VadConfig {
     #[allow(dead_code)]
     pub fn wake_word() -> Self {
         Self {
-            speech_threshold: 0.3,
+            speech_threshold: VAD_THRESHOLD_WAKE_WORD,
             ..Default::default()
         }
     }
@@ -112,7 +116,7 @@ impl VadConfig {
     #[allow(dead_code)]
     pub fn silence() -> Self {
         Self {
-            speech_threshold: 0.5,
+            speech_threshold: VAD_THRESHOLD_SILENCE,
             ..Default::default()
         }
     }
@@ -151,35 +155,35 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = VadConfig::default();
-        assert_eq!(config.speech_threshold, 0.4);
-        assert_eq!(config.sample_rate, 16000);
-        assert_eq!(config.chunk_size, 512);
+        assert_eq!(config.speech_threshold, VAD_THRESHOLD_BALANCED);
+        assert_eq!(config.sample_rate, DEFAULT_SAMPLE_RATE);
+        assert_eq!(config.chunk_size, VAD_CHUNK_SIZE_16KHZ);
         assert_eq!(config.min_speech_frames, 2);
     }
 
     #[test]
     fn test_wake_word_config() {
         let config = VadConfig::wake_word();
-        assert_eq!(config.speech_threshold, 0.3);
+        assert_eq!(config.speech_threshold, VAD_THRESHOLD_WAKE_WORD);
         // Other fields should use defaults
-        assert_eq!(config.sample_rate, 16000);
-        assert_eq!(config.chunk_size, 512);
+        assert_eq!(config.sample_rate, DEFAULT_SAMPLE_RATE);
+        assert_eq!(config.chunk_size, VAD_CHUNK_SIZE_16KHZ);
     }
 
     #[test]
     fn test_silence_config() {
         let config = VadConfig::silence();
-        assert_eq!(config.speech_threshold, 0.5);
+        assert_eq!(config.speech_threshold, VAD_THRESHOLD_SILENCE);
         // Other fields should use defaults
-        assert_eq!(config.sample_rate, 16000);
-        assert_eq!(config.chunk_size, 512);
+        assert_eq!(config.sample_rate, DEFAULT_SAMPLE_RATE);
+        assert_eq!(config.chunk_size, VAD_CHUNK_SIZE_16KHZ);
     }
 
     #[test]
     fn test_with_threshold() {
         let config = VadConfig::with_threshold(0.6);
         assert_eq!(config.speech_threshold, 0.6);
-        assert_eq!(config.sample_rate, 16000);
+        assert_eq!(config.sample_rate, DEFAULT_SAMPLE_RATE);
     }
 
     #[test]
