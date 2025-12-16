@@ -196,6 +196,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
     ///
     /// Default is 60 seconds. If transcription takes longer than this, it will be
     /// cancelled and a timeout error will be emitted to the frontend.
+    #[allow(dead_code)]
     pub fn with_transcription_timeout(mut self, timeout: Duration) -> Self {
         self.transcription_timeout = timeout;
         self

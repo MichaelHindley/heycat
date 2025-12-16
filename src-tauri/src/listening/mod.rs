@@ -33,5 +33,6 @@ pub use silence::{SilenceConfig, SilenceDetectionResult, SilenceDetector, Silenc
 // Event channel types for safe async communication
 pub use events::WakeWordEvent;
 
-// Unified VAD configuration
+// Unified VAD configuration - exported for future external consumers
+#[allow(unused_imports)]
 pub use vad::{create_vad, VadConfig, VadError};

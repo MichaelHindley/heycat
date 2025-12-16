@@ -44,12 +44,17 @@ impl std::error::Error for VadError {}
 /// - Values below 0.3 are typically background noise
 /// - Values 0.3-0.5 may be soft speech or ambiguous audio
 /// - Values above 0.5 are confident speech detection
+///
+/// Note: `speech_threshold` and `min_speech_frames` are not used by `create_vad()`
+/// (Silero VAD doesn't accept thresholds at init time). They exist for documentation
+/// and future use if consumers want to extract threshold config from a unified source.
 #[derive(Debug, Clone)]
 pub struct VadConfig {
     /// Speech probability threshold (0.0-1.0)
     ///
     /// Audio frames with probability above this value are considered speech.
     /// See struct docs for threshold rationale.
+    #[allow(dead_code)]
     pub speech_threshold: f32,
 
     /// Audio sample rate in Hz
@@ -68,6 +73,7 @@ pub struct VadConfig {
     ///
     /// Helps filter out brief noise spikes. Setting to 2 catches
     /// short utterances like "hello" while filtering random pops.
+    #[allow(dead_code)]
     pub min_speech_frames: usize,
 }
 
@@ -90,6 +96,7 @@ impl VadConfig {
     /// Uses a lower threshold (0.3) for better sensitivity to varied
     /// pronunciations and volumes. The cost of false positives is only
     /// an extra transcription attempt.
+    #[allow(dead_code)]
     pub fn wake_word() -> Self {
         Self {
             speech_threshold: 0.3,
@@ -102,6 +109,7 @@ impl VadConfig {
     /// Uses a higher threshold (0.5) to avoid cutting off speech
     /// during pauses. Precision is more important than sensitivity
     /// when deciding to stop recording.
+    #[allow(dead_code)]
     pub fn silence() -> Self {
         Self {
             speech_threshold: 0.5,
@@ -110,6 +118,7 @@ impl VadConfig {
     }
 
     /// Create config with custom threshold
+    #[allow(dead_code)]
     pub fn with_threshold(threshold: f32) -> Self {
         Self {
             speech_threshold: threshold,

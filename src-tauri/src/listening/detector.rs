@@ -53,17 +53,17 @@ impl Default for WakeWordDetectorConfig {
             // Reduced from 3s to 2s for faster response with short utterances
             window_duration_secs: 2.0,
             sample_rate: 16000,
-            // 0.5 seconds of new audio required before re-analysis
-            // This ensures complete utterances like "hey cat" (~0.5-0.7s) are captured
-            min_new_samples_for_analysis: 8000,
-            // VAD threshold - lowered from 0.5 to 0.3 for better sensitivity
-            // 0.3 catches softer consonants while still filtering background noise
-            vad_speech_threshold: 0.3,
+            // 0.75 seconds of new audio required before re-analysis
+            // This reduces noise from overlapping transcriptions while still catching "hey cat"
+            min_new_samples_for_analysis: 12000,
+            // VAD threshold - 0.6 is aggressive to filter ambient noise
+            // May miss very quiet speech but significantly reduces false positives
+            vad_speech_threshold: 0.6,
             // VAD enabled by default to filter background noise
             vad_enabled: true,
-            // Minimum speech frames - require 2+ frames above threshold
-            // Reduced from 10% ratio to catch short utterances like "hello"
-            min_speech_frames: 2,
+            // Minimum speech frames - require 4+ frames (~128ms) above threshold
+            // Filters brief noise spikes while catching short utterances like "hey cat"
+            min_speech_frames: 4,
             // Transcription timeout - 10s is generous for ~2s audio window
             transcription_timeout_secs: DEFAULT_WAKE_WORD_TRANSCRIPTION_TIMEOUT_SECS,
         }
@@ -349,7 +349,7 @@ impl WakeWordDetector {
                 .map_err(|_| WakeWordError::LockPoisoned)?;
             for fp in fingerprints.iter() {
                 let overlap = fingerprint.overlap_ratio(fp);
-                if overlap > 0.5 {
+                if overlap >= 0.5 {
                     crate::trace!(
                         "[wake-word] Skipping duplicate audio: {:.1}% overlap with recent fingerprint",
                         overlap * 100.0
@@ -675,13 +675,13 @@ mod tests {
         // 2 seconds window for ~128KB memory at 16kHz
         assert_eq!(config.window_duration_secs, 2.0);
         assert_eq!(config.sample_rate, 16000);
-        // 0.5 seconds of new audio required before re-analysis
-        assert_eq!(config.min_new_samples_for_analysis, 8000);
-        // VAD enabled by default with 0.3 threshold (lowered for better sensitivity)
+        // 0.75 seconds of new audio required before re-analysis
+        assert_eq!(config.min_new_samples_for_analysis, 12000);
+        // VAD enabled by default with 0.6 threshold (aggressive filtering)
         assert!(config.vad_enabled);
-        assert_eq!(config.vad_speech_threshold, 0.3);
-        // Minimum 2 speech frames required
-        assert_eq!(config.min_speech_frames, 2);
+        assert_eq!(config.vad_speech_threshold, 0.6);
+        // Minimum 4 speech frames required (~128ms, filters brief noise spikes)
+        assert_eq!(config.min_speech_frames, 4);
         // 10 second transcription timeout (generous for ~2s audio window)
         assert_eq!(config.transcription_timeout_secs, DEFAULT_WAKE_WORD_TRANSCRIPTION_TIMEOUT_SECS);
     }
@@ -721,8 +721,8 @@ mod tests {
     #[test]
     fn test_analyze_without_model_returns_error() {
         let detector = WakeWordDetector::new();
-        // Push enough samples to meet min_new_samples_for_analysis (8000)
-        let samples = vec![0.1; 8000];
+        // Push enough samples to meet min_new_samples_for_analysis (12000)
+        let samples = vec![0.1; 12000];
         detector.push_samples(&samples).unwrap();
         let result = detector.analyze();
         assert!(matches!(result, Err(WakeWordError::ModelNotLoaded)));
