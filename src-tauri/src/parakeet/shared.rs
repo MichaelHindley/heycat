@@ -175,6 +175,7 @@ impl SharedTranscriptionModel {
     }
 
     /// Get the current transcription state
+    #[allow(dead_code)] // Will be used for UI state display
     pub fn state(&self) -> TranscriptionState {
         self.state
             .lock()
