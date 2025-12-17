@@ -3,6 +3,9 @@
 mod tauri_backend;
 pub use tauri_backend::TauriShortcutBackend;
 
+pub mod double_tap;
+pub use double_tap::DoubleTapDetector;
+
 pub mod integration;
 pub use integration::HotkeyIntegration;
 
