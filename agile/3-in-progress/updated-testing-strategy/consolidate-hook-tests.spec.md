@@ -1,7 +1,7 @@
 ---
-status: in-progress
+status: completed
 created: 2025-12-17
-completed: null
+completed: 2025-12-17
 dependencies:
   - testing-philosophy-guide
 ---
@@ -66,3 +66,55 @@ N/A - test refactoring only
 
 - Verification: [ ] `bun test` passes with reduced test count
 - Verification: [ ] Coverage >= 60%
+
+## Review
+
+**Reviewed:** 2025-12-17
+**Reviewer:** Claude
+
+### Acceptance Criteria Verification
+
+| Criterion | Status | Evidence |
+|-----------|--------|----------|
+| Reduce useRecording tests from 14 to 3-5 behavior tests | PASS | 13 tests reduced to 4 tests (git diff shows reduction) |
+| Remove tests for: stable function references, listener setup counts, listener cleanup counts | PASS | grep confirms no such tests in useRecording.test.ts, useListening.test.ts, useTranscription.test.ts, useSettings.test.ts |
+| Focus on: user actions produce correct results, errors are surfaced, state reflects backend | PASS | All test names use "user can/sees" pattern, verify user-facing behavior |
+| Apply same pattern to other hook test files | PASS | useListening.test.ts (5 tests), useTranscription.test.ts (4 tests), useSettings.test.ts (4 tests) all refactored |
+| Coverage remains above 60% threshold | PASS | Coverage at 88.64% (bun run test:coverage) |
+
+### Test Coverage Audit
+
+| Test Case | Status | Location |
+|-----------|--------|----------|
+| user can start and stop recording, receiving metadata on completion | PASS | src/hooks/useRecording.test.ts |
+| user sees error when recording fails to start | PASS | src/hooks/useRecording.test.ts |
+| user sees error when backend emits recording_error | PASS | src/hooks/useRecording.test.ts |
+| state reflects backend events even without explicit user action | PASS | src/hooks/useRecording.test.ts |
+| user can enable and disable listening mode | PASS | src/hooks/useListening.test.ts |
+| user sees wake word detection indicator temporarily | PASS | src/hooks/useListening.test.ts |
+| user sees error and mic unavailable when microphone disconnects | PASS | src/hooks/useListening.test.ts |
+| user sees error when enabling listening fails | PASS | src/hooks/useListening.test.ts |
+| mic availability recovers when listening successfully starts | PASS | src/hooks/useListening.test.ts |
+| user sees transcription progress and result when transcription completes | PASS | src/hooks/useTranscription.test.ts |
+| user sees error when transcription fails | PASS | src/hooks/useTranscription.test.ts |
+| user can retry after timeout error | PASS | src/hooks/useTranscription.test.ts |
+| previous transcription result clears when new transcription starts | PASS | src/hooks/useTranscription.test.ts |
+| user sees persisted settings loaded from store | PASS | src/hooks/useSettings.test.ts |
+| user can update settings and changes persist to store | PASS | src/hooks/useSettings.test.ts |
+| user sees error when store operations fail | PASS | src/hooks/useSettings.test.ts |
+| user can clear audio device selection | PASS | src/hooks/useSettings.test.ts |
+
+### Code Quality
+
+**Strengths:**
+- All tests follow consistent "user can/sees" naming convention that focuses on behavior
+- Tests verify complete user flows (action -> backend event -> state update -> user-visible result)
+- Error handling paths are well-tested with clear error surfacing to users
+- Test count reduced significantly (684 lines removed) while maintaining 88.64% coverage
+
+**Concerns:**
+- Other hook test files (useAudioErrorHandler, useCatOverlay, useDisambiguation, useMultiModelStatus) still contain implementation-detail tests ("sets up event listener on mount", "cleans up event listener on unmount", "returns stable function reference"). The spec says "Other hook test files as needed" - these were not refactored but may need future attention.
+
+### Verdict
+
+**APPROVED** - All explicitly listed acceptance criteria are met. The four core hook test files (useRecording, useListening, useTranscription, useSettings) have been successfully refactored from implementation-detail tests to behavior-focused tests. Coverage remains well above the 60% threshold at 88.64%. The concern about other hook files is noted but does not block approval as the spec listed them as "as needed" and the primary files were successfully refactored.

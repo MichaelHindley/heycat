@@ -82,6 +82,34 @@ This enables:
 - Multiple components reacting to same state change
 - Consistent state across all listeners
 
+### Additional Event Types
+
+**Audio Monitor Events** (device testing feedback):
+```rust
+app_handle.emit("audio-level", AudioLevelPayload { level: 75 });
+```
+
+**Audio Error Events** (discriminated union for type-safe handling):
+```rust
+app_handle.emit("audio_device_error", AudioDeviceError::DeviceNotFound { device_name });
+app_handle.emit("audio_device_error", AudioDeviceError::DeviceDisconnected);
+app_handle.emit("audio_device_error", AudioDeviceError::CaptureError { message });
+```
+
+**Voice Command Events**:
+```rust
+app_handle.emit("command_matched", CommandMatchPayload { transcription, command_id, trigger, confidence });
+app_handle.emit("command_executed", CommandExecutedPayload { command_id, trigger, message });
+app_handle.emit("command_failed", CommandFailedPayload { command_id, trigger, error_code, error_message });
+app_handle.emit("command_ambiguous", CommandAmbiguousPayload { transcription, candidates });
+```
+
+**Model Download Events**:
+```rust
+app_handle.emit("model_download_completed", ModelCompletedPayload { model_type, model_path });
+app_handle.emit("model_file_download_progress", DownloadProgressPayload { percent, file_name, ... });
+```
+
 ---
 
 ## 2. State Management
@@ -219,7 +247,7 @@ let device_name = device_name.or_else(|| {
 │            │                     │ was listening) │             │
 │            ▼                     └────────────────┘             │
 │     ┌─────────────────┐                                         │
-│     │  TRANSCRIBING   │─────────────────────────────────────────┤
+│     │   PROCESSING    │─────────────────────────────────────────┤
 │     └─────────────────┘                                         │
 │                                                                  │
 │   Events emitted at each transition for UI sync                 │
@@ -268,6 +296,30 @@ let device_name = device_name.or_else(|| {
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+### Audio Level Monitoring (Device Testing)
+
+Separate from the main audio capture pipeline, used for UI feedback when selecting devices:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│              AUDIO LEVEL MONITORING                              │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Frontend                         Backend                        │
+│  ┌──────────────────┐            ┌──────────────────┐           │
+│  │ useAudioLevel    │──invoke───▶│ start_audio_     │           │
+│  │ Monitor          │            │ monitor          │           │
+│  │                  │◀──listen───│                  │           │
+│  │ throttle 20fps   │ audio-level│ AudioMonitor     │           │
+│  └──────────────────┘            │ Handle           │           │
+│                                  └──────────────────┘           │
+│                                                                  │
+│  Purpose: Visual feedback for device selection UI                │
+│  Runs in separate thread from AudioThreadHandle                  │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
 ---
 
 ## 6. Module Organization
@@ -277,10 +329,17 @@ let device_name = device_name.or_else(|| {
 ```
 src/
 ├── hooks/           # State & side effects
-│   ├── useRecording.ts      # Recording state + invoke + listen
-│   ├── useListening.ts      # Listening state + invoke + listen
-│   ├── useSettings.ts       # Persistent settings (store)
-│   └── useAudioDevices.ts   # Device enumeration
+│   ├── useRecording.ts         # Recording state + invoke + listen
+│   ├── useListening.ts         # Listening state + invoke + listen
+│   ├── useSettings.ts          # Persistent settings (store)
+│   ├── useAudioDevices.ts      # Device enumeration
+│   ├── useAudioLevelMonitor.ts # Real-time audio levels for device testing
+│   ├── useAudioErrorHandler.ts # Audio device error events
+│   ├── useTranscription.ts     # Transcription events (started/completed/error)
+│   ├── useCatOverlay.ts        # Overlay window state management
+│   ├── useDisambiguation.ts    # Voice command disambiguation UI
+│   ├── useMultiModelStatus.ts  # Model download progress tracking
+│   └── useAutoStartListening.ts # Auto-enable listening on launch
 ├── components/      # UI components
 │   └── [Component]/
 │       ├── Component.tsx
@@ -292,17 +351,28 @@ src/
 
 ```
 src-tauri/src/
-├── lib.rs           # App setup, command registration
-├── commands/        # Tauri IPC handlers
-│   ├── mod.rs       # Command wrappers + event emission
-│   └── logic.rs     # Testable implementation (no Tauri deps)
-├── events.rs        # Event types + emitter traits
-├── recording/       # Recording state machine
-├── listening/       # Wake word pipeline
-├── audio/           # Audio capture (cpal)
-├── hotkey/          # Global hotkey integration
-└── parakeet/        # Transcription model
+├── lib.rs              # App setup, command registration
+├── audio_constants.rs  # Audio configuration constants
+├── commands/           # Tauri IPC handlers
+│   ├── mod.rs          # Command wrappers + event emission
+│   └── logic.rs        # Testable implementation (no Tauri deps)
+├── events.rs           # Event types + emitter traits
+├── recording/          # Recording state machine
+├── listening/          # Wake word pipeline
+│   └── events.rs       # Listening-specific events
+├── audio/              # Audio capture (cpal)
+├── hotkey/             # Global hotkey integration
+│   └── integration.rs  # Hotkey orchestration
+├── parakeet/           # Transcription model
+├── model/              # Model download & management
+└── voice_commands/     # Voice command system
+    ├── registry.rs     # Command persistence
+    ├── matcher.rs      # Fuzzy matching
+    ├── executor.rs     # Action dispatch
+    └── actions/        # Action implementations
 ```
+
+> Note: The `mod.rs` + `logic.rs` pattern (separating Tauri-specific wrappers from testable logic) is used in the `commands/` module. Other modules keep implementations in their main files.
 
 ---
 
