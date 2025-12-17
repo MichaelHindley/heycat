@@ -24,6 +24,12 @@ interface RecordingErrorPayload {
   message: string;
 }
 
+/** Options for the useRecording hook */
+export interface UseRecordingOptions {
+  /** Device name to record from (null = system default) */
+  deviceName?: string | null;
+}
+
 /** Return type of the useRecording hook */
 export interface UseRecordingResult {
   isRecording: boolean;
@@ -36,8 +42,13 @@ export interface UseRecordingResult {
 /**
  * Custom hook for managing recording state
  * Provides methods to start/stop recording and listens to backend events
+ *
+ * @param options Configuration options including device selection
  */
-export function useRecording(): UseRecordingResult {
+export function useRecording(
+  options: UseRecordingOptions = {}
+): UseRecordingResult {
+  const { deviceName } = options;
   const [isRecording, setIsRecording] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastRecording, setLastRecording] = useState<RecordingMetadata | null>(
@@ -50,13 +61,15 @@ export function useRecording(): UseRecordingResult {
     setError(null);
     /* v8 ignore start -- @preserve */
     try {
-      await invoke("start_recording");
+      await invoke("start_recording", {
+        deviceName: deviceName ?? undefined,
+      });
       // State will be updated by recording_started event
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
     /* v8 ignore stop */
-  }, []);
+  }, [deviceName]);
 
   const stopRecording = useCallback(async () => {
     setError(null);

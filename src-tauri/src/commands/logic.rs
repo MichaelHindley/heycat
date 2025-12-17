@@ -488,6 +488,7 @@ pub fn enable_listening_impl<E: ListeningEventEmitter + 'static>(
     listening_pipeline: &Mutex<ListeningPipeline>,
     audio_thread: &AudioThreadHandle,
     emitter: std::sync::Arc<E>,
+    device_name: Option<String>,
 ) -> Result<(), String> {
     debug!("enable_listening_impl called");
 
@@ -521,10 +522,12 @@ pub fn enable_listening_impl<E: ListeningEventEmitter + 'static>(
 
         // Only start if not already running
         if !pipeline.is_running() {
-            pipeline.start(audio_thread, emitter).map_err(|e| {
-                error!("Failed to start listening pipeline: {}", e);
-                format!("Failed to start listening: {}", e)
-            })?;
+            pipeline
+                .start_with_device(audio_thread, emitter, device_name)
+                .map_err(|e| {
+                    error!("Failed to start listening pipeline: {}", e);
+                    format!("Failed to start listening: {}", e)
+                })?;
             info!("Listening pipeline started");
         }
     }

@@ -61,7 +61,9 @@ describe("useListening", () => {
       await result.current.enableListening();
     });
 
-    expect(mockInvoke).toHaveBeenCalledWith("enable_listening");
+    expect(mockInvoke).toHaveBeenCalledWith("enable_listening", {
+      deviceName: undefined,
+    });
     // State doesn't update immediately - needs event
     expect(result.current.isListening).toBe(false);
 

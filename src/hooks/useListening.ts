@@ -25,6 +25,12 @@ interface ListeningUnavailablePayload {
   timestamp: string;
 }
 
+/** Options for the useListening hook */
+export interface UseListeningOptions {
+  /** Device name to listen from (null = system default) */
+  deviceName?: string | null;
+}
+
 /** Return type of the useListening hook */
 export interface UseListeningReturn {
   isListening: boolean;
@@ -38,8 +44,13 @@ export interface UseListeningReturn {
 /**
  * Custom hook for managing listening mode state
  * Provides methods to enable/disable listening and listens to backend events
+ *
+ * @param options Configuration options including device selection
  */
-export function useListening(): UseListeningReturn {
+export function useListening(
+  options: UseListeningOptions = {}
+): UseListeningReturn {
+  const { deviceName } = options;
   const [isListening, setIsListening] = useState(false);
   const [isWakeWordDetected, setIsWakeWordDetected] = useState(false);
   const [isMicAvailable, setIsMicAvailable] = useState(true);
@@ -51,13 +62,15 @@ export function useListening(): UseListeningReturn {
     setError(null);
     /* v8 ignore start -- @preserve */
     try {
-      await invoke("enable_listening");
+      await invoke("enable_listening", {
+        deviceName: deviceName ?? undefined,
+      });
       // State will be updated by listening_started event
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
     /* v8 ignore stop */
-  }, []);
+  }, [deviceName]);
 
   const disableListening = useCallback(async () => {
     setError(null);

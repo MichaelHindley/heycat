@@ -362,6 +362,7 @@ pub fn enable_listening(
     audio_thread: State<'_, AudioThreadState>,
     hotkey_integration: State<'_, HotkeyIntegrationState>,
     recording_detectors: State<'_, RecordingDetectorsState>,
+    device_name: Option<String>,
 ) -> Result<(), String> {
     let emitter = Arc::new(TauriEventEmitter::new(app_handle.clone()));
 
@@ -404,6 +405,7 @@ pub fn enable_listening(
         listening_pipeline.as_ref(),
         audio_thread.as_ref(),
         emitter,
+        device_name,
     );
 
     // Emit event on success

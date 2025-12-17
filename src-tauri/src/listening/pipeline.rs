@@ -220,7 +220,7 @@ impl ListeningPipeline {
         self.mic_available.load(Ordering::SeqCst)
     }
 
-    /// Start continuous audio capture and analysis
+    /// Start continuous audio capture and analysis using the default device
     ///
     /// # Arguments
     /// * `audio_handle` - Handle to the audio thread for capture
@@ -238,6 +238,30 @@ impl ListeningPipeline {
         &mut self,
         audio_handle: &AudioThreadHandle,
         emitter: Arc<E>,
+    ) -> Result<AudioBuffer, PipelineError> {
+        self.start_with_device(audio_handle, emitter, None)
+    }
+
+    /// Start continuous audio capture and analysis using a specific device
+    ///
+    /// # Arguments
+    /// * `audio_handle` - Handle to the audio thread for capture
+    /// * `emitter` - Event emitter for wake word detection events
+    /// * `device_name` - Optional device name; None uses the default device
+    ///
+    /// # Returns
+    /// The audio buffer being filled, which can be used to check if capture is working
+    ///
+    /// # Errors
+    /// - `NoEventSubscriber` if `subscribe_events()` was not called before starting
+    /// - `AlreadyRunning` if the pipeline is already running
+    /// - `DetectorError` if model is not loaded or VAD initialization fails
+    /// - `AudioError` if audio capture fails to start
+    pub fn start_with_device<E: ListeningEventEmitter + 'static>(
+        &mut self,
+        audio_handle: &AudioThreadHandle,
+        emitter: Arc<E>,
+        device_name: Option<String>,
     ) -> Result<AudioBuffer, PipelineError> {
         // Wait for any previous analysis thread to fully exit before starting a new one.
         // This prevents race conditions when the wake word callback stops the pipeline
@@ -288,9 +312,9 @@ impl ListeningPipeline {
         let buffer = AudioBuffer::new();
         let buffer_clone = buffer.clone();
 
-        // Start audio capture
+        // Start audio capture with specified device
         audio_handle
-            .start(buffer_clone.clone())
+            .start_with_device(buffer_clone.clone(), device_name)
             .map_err(|e| PipelineError::AudioError(e.to_string()))?;
 
         // Reset flags

@@ -60,7 +60,9 @@ describe("useRecording", () => {
       await result.current.startRecording();
     });
 
-    expect(mockInvoke).toHaveBeenCalledWith("start_recording");
+    expect(mockInvoke).toHaveBeenCalledWith("start_recording", {
+      deviceName: undefined,
+    });
     // State doesn't update immediately - needs event
     expect(result.current.isRecording).toBe(false);
 
