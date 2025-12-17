@@ -34,50 +34,11 @@ heycat is a Tauri v2 desktop application with a React + TypeScript frontend and 
 
 
 ### TCR (Test-Commit-Refactor)
-**Invoke the `devloop:tcr` skill** for test discipline and coverage enforcement.
+**When:** Running tests, checking coverage, test-driven development
+**File:** docs/TESTING.md
 
-**Testing Philosophy:**
-Before writing a test, ensure to have looked at docs/TESTING.md
-
-#### Quick Tests (for specs and spec reviews)
-Use these for fast feedback during development - no coverage overhead:
-```bash
-# Quick: Both frontend and backend (~3-5s)
-tcr check "bun run test && cd src-tauri && cargo test"
-
-# Quick: Frontend only
-tcr check "bun run test"
-
-# Quick: Backend only
-tcr check "cd src-tauri && cargo test"
-```
-
-#### Full Coverage Tests (for feature reviews only)
-Use these only during `/devloop:agile:feature-review` to verify coverage thresholds:
-```bash
-# Full: Both frontend and backend (slower, includes coverage)
-tcr check "bun run test:coverage && cd src-tauri && cargo +nightly llvm-cov --fail-under-lines 60 --fail-under-functions 60 --ignore-filename-regex '_test\.rs$'"
-
-# Full: Frontend only
-tcr check "bun run test:coverage"
-
-# Full: Backend only
-tcr check "cd src-tauri && cargo +nightly llvm-cov --fail-under-lines 60 --fail-under-functions 60 --ignore-filename-regex '_test\.rs$'"
-```
-
-#### TCR in Agile Workflow
-| Workflow Stage | Test Command |
-|----------------|--------------|
-| Spec implementation | Quick tests |
-| `/devloop:agile:review` (spec review) | Quick tests |
-| `/devloop:agile:feature-review` | Full coverage tests |
-
-#### TCR Status Commands
-```bash
-tcr status  # Check current TCR state
-tcr reset   # Reset after failures
-```
+Quick reference: `tcr check "bun run test && cd src-tauri && cargo test"`
 
 ### Review Independence
-
-Reviews must be performed by a **fresh subagent** with no implementation context. Use `/devloop:agile:review`.
+**When:** Code reviews for specs or features
+Reviews must use a **fresh subagent** with no implementation context. Use `/devloop:agile:review`.

@@ -166,12 +166,59 @@ This threshold reflects our smoke-testing philosophy: cover the most valuable pa
 
 ### Running Coverage
 
+Remember to only ues the tcr skill to run commands.
+
 ```bash
 # Frontend
 bun run test:coverage
 
 # Backend
 cd src-tauri && cargo +nightly llvm-cov --fail-under-lines 60 --fail-under-functions 60 --ignore-filename-regex '_test\.rs$'
+```
+
+---
+
+## TCR Commands
+
+TCR (Test-Commit-Refactor) enforces test discipline. Invoke the `devloop:tcr` skill for details.
+
+### Quick Tests (specs and spec reviews)
+Fast feedback during development - no coverage overhead:
+```bash
+# Both frontend and backend (~3-5s)
+tcr check "bun run test && cd src-tauri && cargo test"
+
+# Frontend only
+tcr check "bun run test"
+
+# Backend only
+tcr check "cd src-tauri && cargo test"
+```
+
+### Full Coverage Tests (feature reviews only)
+Use only during `/devloop:agile:feature-review`:
+```bash
+# Both frontend and backend (slower, includes coverage)
+tcr check "bun run test:coverage && cd src-tauri && cargo +nightly llvm-cov --fail-under-lines 60 --fail-under-functions 60 --ignore-filename-regex '_test\.rs$'"
+
+# Frontend only
+tcr check "bun run test:coverage"
+
+# Backend only
+tcr check "cd src-tauri && cargo +nightly llvm-cov --fail-under-lines 60 --fail-under-functions 60 --ignore-filename-regex '_test\.rs$'"
+```
+
+### TCR in Agile Workflow
+| Workflow Stage | Test Command |
+|----------------|--------------|
+| Spec implementation | Quick tests |
+| `/devloop:agile:review` (spec review) | Quick tests |
+| `/devloop:agile:feature-review` | Full coverage tests |
+
+### TCR Status Commands
+```bash
+tcr status  # Check current TCR state
+tcr reset   # Reset after failures
 ```
 
 ## Decision Tree: When to Write a Test
