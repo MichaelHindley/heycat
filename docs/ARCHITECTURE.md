@@ -11,37 +11,14 @@ heycat is a Tauri v2 desktop app with React+TypeScript frontend and Rust backend
 ## 1. Frontend-Backend Communication
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    COMMUNICATION PATTERNS                        │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │                    FRONTEND (React)                      │    │
-│  │                                                          │    │
-│  │   Hook calls invoke()          Hook listens to events    │    │
-│  │         │                              ▲                 │    │
-│  │         │ Request                      │ Broadcast       │    │
-│  │         │ (with args)                  │ (all listeners) │    │
-│  └─────────┼──────────────────────────────┼─────────────────┘    │
-│            │                              │                      │
-│            ▼                              │                      │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │                    TAURI IPC BRIDGE                      │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│            │                              ▲                      │
-│            ▼                              │                      │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │                    BACKEND (Rust)                        │    │
-│  │                                                          │    │
-│  │   #[tauri::command]            app_handle.emit()         │    │
-│  │   fn start_recording()         "recording_started"       │    │
-│  │         │                              │                 │    │
-│  │         └──────────────────────────────┘                 │    │
-│  │              Process → Emit Event                        │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
+Request:  Frontend hook → invoke(cmd, args) → Tauri IPC → #[tauri::command] handler
+Response: Backend handler → app_handle.emit(event, payload) → Tauri IPC → listen() callback
 ```
+
+| Direction | Frontend | Backend |
+|-----------|----------|---------|
+| Request | `invoke("start_recording", {deviceName})` | `#[tauri::command] fn start_recording()` |
+| Response | `listen("recording_started", callback)` | `app_handle.emit("recording_started", payload)` |
 
 ### Commands (Frontend → Backend)
 
@@ -114,40 +91,14 @@ app_handle.emit("model_file_download_progress", DownloadProgressPayload { percen
 
 ## 2. State Management
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    STATE LAYERS                                  │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │              PERSISTENT (survives restart)               │    │
-│  │                                                          │    │
-│  │   settings.json (Tauri plugin-store)                     │    │
-│  │   ├─ listening.enabled                                   │    │
-│  │   ├─ listening.autoStartOnLaunch                         │    │
-│  │   └─ audio.selectedDevice                                │    │
-│  │                                                          │    │
-│  │   Frontend: useSettings() hook                           │    │
-│  │   Backend:  app.store("settings.json").get(key)          │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│                                                                  │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │              SESSION (runtime only)                      │    │
-│  │                                                          │    │
-│  │   Frontend: React useState in hooks                      │    │
-│  │   ├─ isRecording, isListening, isTranscribing            │    │
-│  │   ├─ error states                                        │    │
-│  │   └─ transient UI state                                  │    │
-│  │                                                          │    │
-│  │   Backend: Arc<Mutex<T>> managed by Tauri                │    │
-│  │   ├─ RecordingManager (state machine)                    │    │
-│  │   ├─ ListeningManager (pipeline coordinator)             │    │
-│  │   ├─ AudioThreadHandle (audio capture)                   │    │
-│  │   └─ SharedTranscriptionModel (3GB model, load once)     │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
-```
+| Layer | Storage | Frontend Access | Backend Access |
+|-------|---------|-----------------|----------------|
+| **Persistent** | `settings.json` (Tauri plugin-store) | `useSettings()` hook | `app.store("settings.json").get(key)` |
+| **Session** | React useState / `Arc<Mutex<T>>` | hooks (`isRecording`, `isListening`, etc.) | `State<'_, T>` |
+
+**Persistent keys:** `listening.enabled`, `listening.autoStartOnLaunch`, `audio.selectedDevice`
+
+**Session state (Backend):** RecordingManager, ListeningManager, AudioThreadHandle, SharedTranscriptionModel
 
 ### Frontend State Pattern
 
@@ -180,30 +131,13 @@ fn start_recording(state: State<'_, ProductionState>) {
 
 **Critical Pattern**: Core functionality can be triggered from multiple paths.
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                 MULTIPLE ENTRY POINTS                            │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│   ┌────────────┐   ┌────────────┐   ┌────────────┐              │
-│   │ UI Button  │   │  Hotkey    │   │ Wake Word  │              │
-│   │ (Frontend) │   │ (Backend)  │   │ (Backend)  │              │
-│   └─────┬──────┘   └─────┬──────┘   └─────┬──────┘              │
-│         │                │                │                      │
-│         │ Has frontend   │ No frontend    │ No frontend          │
-│         │ context        │ context        │ context              │
-│         │                │                │                      │
-│         ▼                ▼                ▼                      │
-│   ┌─────────────────────────────────────────────────────────┐   │
-│   │                  CORE FUNCTIONALITY                      │   │
-│   │              (start_recording_impl)                      │   │
-│   └─────────────────────────────────────────────────────────┘   │
-│                                                                  │
-│   RULE: All paths must have access to same settings/params      │
-│   PATTERN: Backend paths read from store as fallback            │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
-```
+| Entry Point | Context | Path to Core |
+|-------------|---------|--------------|
+| UI Button | Frontend (has context) | `invoke()` → command → `start_recording_impl` |
+| Hotkey | Backend (no frontend context) | handler → `start_recording_impl` (store fallback) |
+| Wake Word | Backend (no frontend context) | detector → `start_recording_impl` (store fallback) |
+
+**Rule:** All paths must access same settings → Backend paths use store fallback pattern
 
 ### Store Fallback Pattern
 
@@ -223,77 +157,27 @@ let device_name = device_name.or_else(|| {
 ## 4. Application State Machine
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    STATE TRANSITIONS                             │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│     ┌────────┐                                                   │
-│     │  IDLE  │◄─────────────────────────────────────┐           │
-│     └───┬────┘                                       │           │
-│         │ enable_listening                           │           │
-│         ▼                                            │           │
-│     ┌─────────────┐                                  │           │
-│     │  LISTENING  │◄──────────────────────┐         │           │
-│     │ (wake word) │                        │         │           │
-│     └──────┬──────┘                        │         │           │
-│            │                               │         │           │
-│     wake word OR hotkey                    │         │           │
-│            │                               │         │           │
-│            ▼                               │         │           │
-│     ┌─────────────┐              ┌────────┴───────┐ │           │
-│     │  RECORDING  │──────────────│ recording_done │─┘           │
-│     └──────┬──────┘    stop      │(returns to     │             │
-│            │                     │ listening if   │             │
-│            │                     │ was listening) │             │
-│            ▼                     └────────────────┘             │
-│     ┌─────────────────┐                                         │
-│     │   PROCESSING    │─────────────────────────────────────────┤
-│     └─────────────────┘                                         │
-│                                                                  │
-│   Events emitted at each transition for UI sync                 │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
+IDLE --enable_listening--> LISTENING --wake/hotkey--> RECORDING --stop--> PROCESSING
+                               ↑                                              |
+                               └──────────── recording_done ──────────────────┘
+                               (returns to listening if was listening)
 ```
+
+Events emitted at each transition for UI sync.
 
 ---
 
 ## 5. Audio System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    AUDIO SUBSYSTEM                               │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  ┌───────────────────────┐    ┌───────────────────────┐         │
-│  │  LISTENING PIPELINE   │    │  RECORDING MANAGER    │         │
-│  │  (Background)         │    │  (On-demand)          │         │
-│  ├───────────────────────┤    ├───────────────────────┤         │
-│  │ • Wake word detection │    │ • Audio capture       │         │
-│  │ • VAD (voice activity)│    │ • WAV encoding        │         │
-│  │ • Continuous analysis │    │ • File saving         │         │
-│  │ • Triggers recording  │    │ • Transcription       │         │
-│  └───────────┬───────────┘    └───────────┬───────────┘         │
-│              │                            │                      │
-│              └──────────┬─────────────────┘                      │
-│                         │                                        │
-│                         ▼                                        │
-│              ┌─────────────────────┐                             │
-│              │  AudioThreadHandle  │                             │
-│              │  (Shared resource)  │                             │
-│              ├─────────────────────┤                             │
-│              │ • start_with_device │                             │
-│              │ • stop              │                             │
-│              │ • One active at a   │                             │
-│              │   time              │                             │
-│              └──────────┬──────────┘                             │
-│                         │                                        │
-│                         ▼                                        │
-│              ┌─────────────────────┐                             │
-│              │    CPAL Backend     │                             │
-│              │ (Cross-platform)    │                             │
-│              └─────────────────────┘                             │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
+Audio Subsystem
+├── Listening Pipeline (background)
+│   └── wake word detection, VAD, continuous analysis → triggers recording
+├── Recording Manager (on-demand)
+│   └── audio capture, WAV encoding, file saving, transcription
+└── AudioThreadHandle (shared resource, one active at a time)
+    ├── start_with_device(), stop()
+    └── CPAL Backend (cross-platform)
 ```
 
 ### Audio Level Monitoring (Device Testing)
@@ -301,24 +185,11 @@ let device_name = device_name.or_else(|| {
 Separate from the main audio capture pipeline, used for UI feedback when selecting devices:
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│              AUDIO LEVEL MONITORING                              │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  Frontend                         Backend                        │
-│  ┌──────────────────┐            ┌──────────────────┐           │
-│  │ useAudioLevel    │──invoke───▶│ start_audio_     │           │
-│  │ Monitor          │            │ monitor          │           │
-│  │                  │◀──listen───│                  │           │
-│  │ throttle 20fps   │ audio-level│ AudioMonitor     │           │
-│  └──────────────────┘            │ Handle           │           │
-│                                  └──────────────────┘           │
-│                                                                  │
-│  Purpose: Visual feedback for device selection UI                │
-│  Runs in separate thread from AudioThreadHandle                  │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
+useAudioLevelMonitor → invoke("start_audio_monitor") → AudioMonitorHandle
+                     ← listen("audio-level") ← (emits levels, throttled 20fps)
 ```
+
+Purpose: Visual feedback for device selection UI. Runs in separate thread from AudioThreadHandle.
 
 ---
 
@@ -394,24 +265,5 @@ src-tauri/src/
 - [ ] Voice commands: Register in voice_commands/registry.rs if applicable
 - [ ] Model events: Subscribe to download progress if user-facing
 
-### Testing
-
-- [ ] Test each entry point independently
-- [ ] Test with non-default settings (e.g., non-default audio device)
-- [ ] Verify events fire correctly for all paths
-- [ ] Check state consistency after rapid operations
-
 ---
 
-## 8. Common Pitfalls
-
-| Pitfall | Solution |
-|---------|----------|
-| Backend path ignores user setting | Use store fallback pattern |
-| UI doesn't update from hotkey action | Use events, not command responses |
-| Race condition on startup | Backend reads initial state from store |
-| Audio device ignored | Pass device through ALL audio paths |
-| Shared model not loaded | Check model status before use |
-| Voice command not matched | Check matcher confidence thresholds |
-| Model not downloading | Verify network, check model events for progress |
-| Audio level not updating | Ensure monitor started, check throttle interval |

@@ -681,7 +681,7 @@ pub fn start_audio_monitor(
     // (Receiver is not Clone, so we need a dedicated thread)
     std::thread::spawn(move || {
         while let Ok(level) = level_rx.recv() {
-            let _ = app_handle.emit("audio-level", level);
+            let _ = app_handle.emit(event_names::AUDIO_LEVEL, level);
         }
         // Channel closed - monitoring stopped
     });
