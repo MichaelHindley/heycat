@@ -88,6 +88,10 @@ impl<B: ShortcutBackend> HotkeyService<B> {
     ///
     /// The Escape key listener should only be active during recording
     /// to avoid conflicts with Escape key usage in other contexts.
+    ///
+    /// Note: Currently unused as HotkeyIntegration calls backend.register() directly,
+    /// but kept as public API for potential future use.
+    #[allow(dead_code)]
     pub fn register_escape_shortcut(
         &self,
         callback: Box<dyn Fn() + Send + Sync>,
@@ -98,6 +102,10 @@ impl<B: ShortcutBackend> HotkeyService<B> {
     }
 
     /// Unregister the Escape key shortcut
+    ///
+    /// Note: Currently unused as HotkeyIntegration calls backend.unregister() directly,
+    /// but kept as public API for potential future use.
+    #[allow(dead_code)]
     pub fn unregister_escape_shortcut(&self) -> Result<(), HotkeyError> {
         self.backend
             .unregister(ESCAPE_SHORTCUT)
