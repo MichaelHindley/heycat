@@ -174,4 +174,91 @@ describe("useRecording", () => {
     expect(result.current.isRecording).toBe(false);
     expect(result.current.lastRecording).toEqual(metadata);
   });
+
+  it("user cancels recording via double-tap-escape, state shows cancellation", async () => {
+    let startedCallback: ((event: { payload: { timestamp: string } }) => void) | null = null;
+    let cancelledCallback: ((event: { payload: { reason: string; timestamp: string } }) => void) | null = null;
+
+    mockListen.mockImplementation(
+      (
+        eventName: string,
+        callback: (event: { payload: unknown }) => void
+      ) => {
+        if (eventName === "recording_started") {
+          startedCallback = callback;
+        } else if (eventName === "recording_cancelled") {
+          cancelledCallback = callback;
+        }
+        return Promise.resolve(mockUnlisten);
+      }
+    );
+
+    const { result } = renderHook(() => useRecording());
+
+    await waitFor(() => {
+      expect(startedCallback).not.toBeNull();
+      expect(cancelledCallback).not.toBeNull();
+    });
+
+    // Recording starts
+    act(() => {
+      startedCallback!({ payload: { timestamp: "2025-01-01T12:00:00Z" } });
+    });
+    expect(result.current.isRecording).toBe(true);
+    expect(result.current.wasCancelled).toBe(false);
+
+    // User cancels via double-tap-escape
+    act(() => {
+      cancelledCallback!({ payload: { reason: "double-tap-escape", timestamp: "2025-01-01T12:00:05Z" } });
+    });
+
+    expect(result.current.isRecording).toBe(false);
+    expect(result.current.wasCancelled).toBe(true);
+    expect(result.current.cancelReason).toBe("double-tap-escape");
+    expect(result.current.error).toBeNull();
+  });
+
+  it("cancelled state resets when new recording starts", async () => {
+    let startedCallback: ((event: { payload: { timestamp: string } }) => void) | null = null;
+    let cancelledCallback: ((event: { payload: { reason: string; timestamp: string } }) => void) | null = null;
+
+    mockListen.mockImplementation(
+      (
+        eventName: string,
+        callback: (event: { payload: unknown }) => void
+      ) => {
+        if (eventName === "recording_started") {
+          startedCallback = callback;
+        } else if (eventName === "recording_cancelled") {
+          cancelledCallback = callback;
+        }
+        return Promise.resolve(mockUnlisten);
+      }
+    );
+
+    const { result } = renderHook(() => useRecording());
+
+    await waitFor(() => {
+      expect(startedCallback).not.toBeNull();
+      expect(cancelledCallback).not.toBeNull();
+    });
+
+    // First recording starts and gets cancelled
+    act(() => {
+      startedCallback!({ payload: { timestamp: "2025-01-01T12:00:00Z" } });
+    });
+    act(() => {
+      cancelledCallback!({ payload: { reason: "double-tap-escape", timestamp: "2025-01-01T12:00:05Z" } });
+    });
+    expect(result.current.wasCancelled).toBe(true);
+    expect(result.current.cancelReason).toBe("double-tap-escape");
+
+    // New recording starts - cancelled state should reset
+    act(() => {
+      startedCallback!({ payload: { timestamp: "2025-01-01T12:01:00Z" } });
+    });
+    expect(result.current.isRecording).toBe(true);
+    expect(result.current.wasCancelled).toBe(false);
+    expect(result.current.cancelReason).toBeNull();
+  });
 });

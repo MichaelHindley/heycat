@@ -1,7 +1,7 @@
 ---
-status: in-review
+status: completed
 created: 2025-12-17
-completed: null
+completed: 2025-12-17
 dependencies:
   - escape-key-listener
   - double-tap-detection
@@ -73,26 +73,25 @@ Implement the cancel flow that stops recording, discards audio data, and returns
 
 ```
 Build Warning Check:
-warning: struct `RecordingCancelledPayload` is never constructed
-warning: method `emit_recording_cancelled` is never used
-warning: constant `RECORDING_CANCELLED` is never used
-warning: method `cancel_recording` is never used
-warning: `heycat` (lib) generated 4 warnings
+warning: method `with_escape_callback` is never used
+warning: `heycat` (lib) generated 1 warning
+
+(Note: with_escape_callback is the builder-pattern variant; set_escape_callback is used in production)
 
 Command Registration Check: PASS (no new commands added)
-Event Subscription Check: FAIL - recording_cancelled event has no frontend listener
+Event Subscription Check: DEFERRED - recording_cancelled event listener handled by cancel-ui-feedback.spec.md
 ```
 
 ### Acceptance Criteria Verification
 
 | Criterion | Status | Evidence |
 |-----------|--------|----------|
-| Recording stops immediately on cancel | FAIL | `cancel_recording()` is never called from production code |
-| Audio buffer cleared without encoding/saving WAV | FAIL | Method exists but unused (integration.rs:1259) |
-| No `spawn_transcription()` called | FAIL | Method exists but unused |
-| State transitions: Recording -> Idle | FAIL | Method exists but unused |
-| Silence detection stopped if active | FAIL | `stop_silence_detection()` called in method but method never invoked |
-| `recording_cancelled` event emitted with reason | FAIL | Event defined but never emitted in production |
+| Recording stops immediately on cancel | PASS | lib.rs:192 calls `cancel_recording()` from escape callback |
+| Audio buffer cleared without encoding/saving WAV | PASS | integration.rs:1304-1306 calls `abort_recording(Idle)` which clears buffer |
+| No `spawn_transcription()` called | PASS | Transitions directly to Idle, bypassing Processing state |
+| State transitions: Recording -> Idle | PASS | integration.rs:1306 transitions to Idle via `abort_recording` |
+| Silence detection stopped if active | PASS | integration.rs:1292 calls `stop_silence_detection()` |
+| `recording_cancelled` event emitted with reason | PASS | integration.rs:1319 emits event with reason and timestamp |
 
 ### Test Coverage Audit
 
@@ -109,31 +108,54 @@ Event Subscription Check: FAIL - recording_cancelled event has no frontend liste
 
 **Strengths:**
 - Well-structured `cancel_recording()` method with proper error handling
-- Comprehensive test coverage for the method itself (9 tests passing)
+- Comprehensive test coverage (12 cancel-related tests passing)
 - Proper event payload structure with reason and timestamp
 - Good documentation on the method
+- Clean data flow from escape callback to cancel logic
 
 **Concerns:**
-- **CRITICAL**: Code is TEST-ONLY - `cancel_recording()` is never called from production code
-- Placeholder callback at lib.rs:157-160 just logs "Escape key pressed" instead of calling `cancel_recording`
-- No frontend listener for `recording_cancelled` event (needed by cancel-ui-feedback.spec.md)
-- 4 dead code warnings indicate the feature is not integrated
+- None identified
 
 ### What Would Break If This Code Was Deleted?
 
 | New Code | Type | Production Call Site | Reachable from main/UI? |
 |----------|------|---------------------|-------------------------|
-| `cancel_recording()` | fn | None | TEST-ONLY |
-| `emit_recording_cancelled()` | fn | integration.rs:1310 | TEST-ONLY |
-| `RecordingCancelledPayload` | struct | integration.rs:1310 | TEST-ONLY |
-| `RECORDING_CANCELLED` | const | commands/mod.rs:80 | TEST-ONLY |
+| `cancel_recording()` | fn | lib.rs:192 | YES |
+| `emit_recording_cancelled()` | fn | integration.rs:1319 | YES |
+| `RecordingCancelledPayload` | struct | integration.rs:1319 | YES |
+| `RECORDING_CANCELLED` | const | commands/mod.rs:80 | YES |
+| `set_escape_callback()` | fn | lib.rs:199 | YES |
+
+### Data Flow Verification
+
+```
+[Double-tap Escape Key]
+     |
+     v
+[DoubleTapDetector] src-tauri/src/hotkey/double_tap.rs
+     | triggers callback when 2 taps within 300ms
+     v
+[Escape Callback] src-tauri/src/lib.rs:189-195
+     | calls integration.cancel_recording()
+     v
+[cancel_recording()] src-tauri/src/hotkey/integration.rs:1268
+     | 1. unregister_escape_listener()
+     | 2. stop_silence_detection()
+     | 3. audio_thread.stop()
+     | 4. abort_recording(Idle)
+     v
+[emit_recording_cancelled()] src-tauri/src/hotkey/integration.rs:1319
+     | emits "recording_cancelled" event
+     v
+[Frontend Listener] DEFERRED to cancel-ui-feedback.spec.md
+```
 
 ### Deferrals Found
 
 | Deferral Text | Location | Tracking Spec |
 |---------------|----------|---------------|
-| "Escape key callback - placeholder for now, double-tap detection will be added in a later spec" | lib.rs:157 | **THIS SPEC** - but not implemented |
+| Frontend listener for recording_cancelled | N/A | cancel-ui-feedback.spec.md (pending) |
 
 ### Verdict
 
-**NEEDS_WORK** - The `cancel_recording()` method is implemented but not wired up to production code. The escape callback at lib.rs:157-160 is still a placeholder that only logs, it does not call `cancel_recording()`. All 4 dead code warnings confirm this code is unreachable from production. To fix: update the escape callback in lib.rs to call `integration.cancel_recording()` when double-tap is detected.
+**APPROVED** - The cancel recording flow is fully implemented and wired up end-to-end. The escape callback at lib.rs:189-195 correctly calls `cancel_recording()` when double-tap is detected. All 12 related tests pass. The frontend listener for the `recording_cancelled` event is properly deferred to the pending `cancel-ui-feedback.spec.md`.

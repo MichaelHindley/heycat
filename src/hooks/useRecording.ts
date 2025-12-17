@@ -24,6 +24,12 @@ interface RecordingErrorPayload {
   message: string;
 }
 
+/** Payload for recording_cancelled event */
+interface RecordingCancelledPayload {
+  reason: string;
+  timestamp: string;
+}
+
 /** Options for the useRecording hook */
 export interface UseRecordingOptions {
   /** Device name to record from (null = system default) */
@@ -37,6 +43,10 @@ export interface UseRecordingResult {
   startRecording: () => Promise<void>;
   stopRecording: () => Promise<void>;
   lastRecording: RecordingMetadata | null;
+  /** True if the last recording was cancelled (not stopped normally) */
+  wasCancelled: boolean;
+  /** Reason for cancellation (e.g., "double-tap-escape"), null if not cancelled */
+  cancelReason: string | null;
 }
 
 /**
@@ -54,6 +64,8 @@ export function useRecording(
   const [lastRecording, setLastRecording] = useState<RecordingMetadata | null>(
     null
   );
+  const [wasCancelled, setWasCancelled] = useState(false);
+  const [cancelReason, setCancelReason] = useState<string | null>(null);
 
   // Note: State updates happen via events, not command responses.
   // This ensures hotkey-triggered recordings update the UI correctly.
@@ -93,6 +105,9 @@ export function useRecording(
         () => {
           setIsRecording(true);
           setError(null);
+          // Reset cancelled state when new recording starts
+          setWasCancelled(false);
+          setCancelReason(null);
         }
       );
       unlistenFns.push(unlistenStarted);
@@ -114,6 +129,17 @@ export function useRecording(
         }
       );
       unlistenFns.push(unlistenError);
+
+      const unlistenCancelled = await listen<RecordingCancelledPayload>(
+        "recording_cancelled",
+        (event) => {
+          setIsRecording(false);
+          setWasCancelled(true);
+          setCancelReason(event.payload.reason);
+          setError(null);
+        }
+      );
+      unlistenFns.push(unlistenCancelled);
     };
 
     setupListeners();
@@ -132,5 +158,7 @@ export function useRecording(
     startRecording,
     stopRecording,
     lastRecording,
+    wasCancelled,
+    cancelReason,
   };
 }

@@ -14,6 +14,8 @@ describe("RecordingIndicator", () => {
     startRecording: vi.fn(),
     stopRecording: vi.fn(),
     lastRecording: null,
+    wasCancelled: false,
+    cancelReason: null,
   };
 
   beforeEach(() => {

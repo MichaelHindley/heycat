@@ -27,6 +27,8 @@ describe("App Integration", () => {
     startRecording: vi.fn(),
     stopRecording: vi.fn(),
     lastRecording: null,
+    wasCancelled: false,
+    cancelReason: null,
   };
 
   const defaultTranscriptionMock: useTranscriptionModule.UseTranscriptionResult = {

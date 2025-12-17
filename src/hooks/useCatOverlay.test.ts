@@ -71,6 +71,8 @@ describe("useCatOverlay", () => {
       startRecording: vi.fn(),
       stopRecording: vi.fn(),
       lastRecording: null,
+      wasCancelled: false,
+      cancelReason: null,
     });
   });
 
@@ -201,6 +203,8 @@ describe("useCatOverlay", () => {
       startRecording: vi.fn(),
       stopRecording: vi.fn(),
       lastRecording: null,
+      wasCancelled: false,
+      cancelReason: null,
     });
 
     const { result } = renderHook(() => useCatOverlay());
@@ -215,6 +219,8 @@ describe("useCatOverlay", () => {
       startRecording: vi.fn(),
       stopRecording: vi.fn(),
       lastRecording: null,
+      wasCancelled: false,
+      cancelReason: null,
     });
 
     const { result } = renderHook(() => useCatOverlay());

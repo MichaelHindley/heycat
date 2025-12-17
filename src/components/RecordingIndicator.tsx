@@ -14,7 +14,7 @@ export function RecordingIndicator({
   isBlocked = false,
 }: RecordingIndicatorProps) {
   const { settings } = useSettings();
-  const { isRecording, error } = useRecording({
+  const { isRecording, error, wasCancelled } = useRecording({
     deviceName: settings.audio.selectedDevice,
   });
 
@@ -22,8 +22,16 @@ export function RecordingIndicator({
     ? "recording-indicator--blocked"
     : isRecording
       ? "recording-indicator--recording"
-      : "recording-indicator--idle";
-  const statusText = isBlocked ? "Recording blocked" : isRecording ? "Recording" : "Idle";
+      : wasCancelled
+        ? "recording-indicator--cancelled"
+        : "recording-indicator--idle";
+  const statusText = isBlocked
+    ? "Recording blocked"
+    : isRecording
+      ? "Recording"
+      : wasCancelled
+        ? "Cancelled"
+        : "Idle";
 
   return (
     <div
