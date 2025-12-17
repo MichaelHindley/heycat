@@ -130,4 +130,22 @@ describe("RecordingIndicator", () => {
       "recording-indicator--blocked"
     );
   });
+
+  it("shows cancelled state when wasCancelled is true", () => {
+    mockUseRecording.mockReturnValue({
+      ...defaultMock,
+      wasCancelled: true,
+      cancelReason: "double-tap-escape",
+    });
+
+    render(<RecordingIndicator />);
+
+    expect(screen.getByText("Cancelled")).toBeDefined();
+    expect(screen.getByRole("status").className).toContain(
+      "recording-indicator--cancelled"
+    );
+    expect(screen.getByRole("status").getAttribute("aria-label")).toBe(
+      "Recording status: Cancelled"
+    );
+  });
 });

@@ -56,3 +56,99 @@ Handle the `recording_cancelled` event in the frontend and provide visual feedba
 
 - Test location: `src/hooks/useRecording.test.ts`
 - Verification: [ ] Integration test passes
+
+## Review
+
+**Reviewed:** 2025-12-17
+**Reviewer:** Claude
+
+### Pre-Review Gates
+
+#### 1. Build Warning Check
+```
+warning: method `with_escape_callback` is never used
+    = note: `#[warn(dead_code)]` on by default
+warning: `heycat` (lib) generated 1 warning
+```
+**Status:** PASS - The warning is for `with_escape_callback` at src/hotkey/integration.rs:288, which is unrelated to this spec. No new warnings introduced by this spec's code.
+
+#### 2. Command Registration Check
+**Status:** N/A - This spec does not add new commands.
+
+#### 3. Event Subscription Check
+**Status:** PASS
+- Backend event `recording_cancelled` defined at: src-tauri/src/events.rs:12
+- Backend event emitted at: src-tauri/src/hotkey/integration.rs:1319
+- Frontend listener registered at: src/hooks/useRecording.ts:133-142
+
+### Acceptance Criteria Verification
+
+| Criterion | Status | Evidence |
+|-----------|--------|----------|
+| useRecording hook listens to recording_cancelled event | PASS | src/hooks/useRecording.ts:133-142 |
+| Recording state reset to idle on cancel | PASS | src/hooks/useRecording.ts:136 sets isRecording to false |
+| Visual indication that recording was cancelled (not stopped normally) | PASS | src/components/RecordingIndicator.tsx:25-26,32-33 shows "Cancelled" status with recording-indicator--cancelled CSS class |
+| Cancel reason available in state (e.g., "double-tap-escape") | PASS | src/hooks/useRecording.ts:138 stores reason in cancelReason state |
+
+### Test Coverage Audit
+
+| Test Case | Status | Location |
+|-----------|--------|----------|
+| Hook receives recording_cancelled event | PASS | src/hooks/useRecording.test.ts:178-219 |
+| isRecording becomes false on cancel | PASS | src/hooks/useRecording.test.ts:215 |
+| wasCancelled flag set to true on cancel | PASS | src/hooks/useRecording.test.ts:216 |
+| Cancel reason stored in state | PASS | src/hooks/useRecording.test.ts:217 |
+| UI shows cancelled state differently from normal stop | MISSING | No test in RecordingIndicator.test.tsx verifies cancelled state rendering |
+| Cancelled state resets when new recording starts | PASS | src/hooks/useRecording.test.ts:221-263 |
+
+### Data Flow
+
+```
+[Backend: Double-tap Escape Detection]
+     |
+     v
+[Hotkey Integration] src-tauri/src/hotkey/integration.rs:1319
+     | emit_recording_cancelled(RecordingCancelledPayload)
+     v
+[Event: recording_cancelled]
+     |
+     v
+[Hook Listener] src/hooks/useRecording.ts:133-142
+     | setIsRecording(false)
+     | setWasCancelled(true)
+     | setCancelReason(reason)
+     v
+[State Update] wasCancelled=true, cancelReason="double-tap-escape"
+     |
+     v
+[UI Component] src/components/RecordingIndicator.tsx:25-26
+     | Renders "Cancelled" text
+     | Applies "recording-indicator--cancelled" CSS class
+     v
+[UI Re-render]
+```
+
+**Status:** COMPLETE - All links verified and functional.
+
+### Code Quality
+
+**Strengths:**
+- Clean event-driven architecture with proper separation of concerns
+- Hook properly listens to recording_cancelled event and updates state
+- Cancel reason is captured and exposed via hook state
+- Cancelled state properly resets when new recording starts (lines 108-110)
+- Production UI component (RecordingIndicator) consumes wasCancelled state and provides visual feedback
+- Comprehensive hook tests cover all acceptance criteria
+- Event payload matches backend structure with camelCase serialization
+
+**Concerns:**
+- RecordingIndicator component lacks test coverage for cancelled state rendering (wasCancelled=true scenario)
+- While the component code correctly uses wasCancelled (lines 25-26, 32-33), there's no automated verification of this behavior
+
+### Deferrals
+
+No TODOs, FIXMEs, or deferred work found in implementation.
+
+### Verdict
+
+**NEEDS_WORK** - Missing test coverage for RecordingIndicator cancelled state rendering. Add test case to RecordingIndicator.test.tsx verifying that when wasCancelled=true, the component renders "Cancelled" text and applies "recording-indicator--cancelled" CSS class.
