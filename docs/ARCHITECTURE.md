@@ -391,6 +391,8 @@ src-tauri/src/
 - [ ] Events: Define payload types in events.rs + TypeScript
 - [ ] Hooks: Subscribe to relevant events, not just command responses
 - [ ] State: Use Arc<Mutex<T>> for shared backend state
+- [ ] Voice commands: Register in voice_commands/registry.rs if applicable
+- [ ] Model events: Subscribe to download progress if user-facing
 
 ### Testing
 
@@ -410,3 +412,6 @@ src-tauri/src/
 | Race condition on startup | Backend reads initial state from store |
 | Audio device ignored | Pass device through ALL audio paths |
 | Shared model not loaded | Check model status before use |
+| Voice command not matched | Check matcher confidence thresholds |
+| Model not downloading | Verify network, check model events for progress |
+| Audio level not updating | Ensure monitor started, check throttle interval |

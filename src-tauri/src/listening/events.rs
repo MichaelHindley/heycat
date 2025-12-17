@@ -61,6 +61,13 @@ impl WakeWordEvent {
 mod tests {
     use super::*;
 
+    // Tests removed per docs/TESTING.md:
+    // - test_wake_word_event_debug: Debug trait test
+    // - test_wake_word_event_clone: Type system guarantee
+
+    // ==================== Event Factory Tests ====================
+    // These test user-visible behavior: creating events via factory methods
+
     #[test]
     fn test_wake_word_event_detected() {
         let event = WakeWordEvent::detected("hey cat", 0.95);
@@ -96,20 +103,5 @@ mod tests {
         } else {
             panic!("Expected Error variant");
         }
-    }
-
-    #[test]
-    fn test_wake_word_event_debug() {
-        let event = WakeWordEvent::detected("test", 0.5);
-        let debug_str = format!("{:?}", event);
-        assert!(debug_str.contains("Detected"));
-        assert!(debug_str.contains("test"));
-    }
-
-    #[test]
-    fn test_wake_word_event_clone() {
-        let event = WakeWordEvent::detected("hey cat", 0.9);
-        let cloned = event.clone();
-        assert!(cloned.is_detected());
     }
 }

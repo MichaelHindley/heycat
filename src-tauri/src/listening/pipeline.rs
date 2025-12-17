@@ -670,12 +670,13 @@ fn analysis_thread_main<E: ListeningEventEmitter>(
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_pipeline_config_default() {
-        let config = PipelineConfig::default();
-        assert_eq!(config.analysis_interval_ms, ANALYSIS_INTERVAL_MS);
-        assert_eq!(config.min_samples_for_analysis, MIN_SAMPLES_FOR_ANALYSIS);
-    }
+    // Tests removed per docs/TESTING.md:
+    // - test_pipeline_config_default: Obvious default values
+    // - test_default_pipeline: Obvious default
+    // - test_pipeline_error_display: Display trait test
+    // - test_analysis_state_fields: Compile-time check, type system handles
+
+    // ==================== Pipeline Behavior Tests ====================
 
     #[test]
     fn test_pipeline_new_not_running() {
@@ -718,27 +719,8 @@ mod tests {
         assert!(matches!(result, Err(PipelineError::NotRunning)));
     }
 
-    #[test]
-    fn test_pipeline_error_display() {
-        let err = PipelineError::AudioError("test".to_string());
-        assert!(format!("{}", err).contains("Audio error"));
-
-        let err = PipelineError::DetectorError("test".to_string());
-        assert!(format!("{}", err).contains("Detector error"));
-
-        let err = PipelineError::AlreadyRunning;
-        assert!(format!("{}", err).contains("already running"));
-
-        let err = PipelineError::NotRunning;
-        assert!(format!("{}", err).contains("not running"));
-
-        let err = PipelineError::LockError;
-        assert!(format!("{}", err).contains("Lock error"));
-
-        let err = PipelineError::NoEventSubscriber;
-        assert!(format!("{}", err).contains("subscribe_events()"));
-        assert!(format!("{}", err).contains("start()"));
-    }
+    // ==================== Error Conversion Tests ====================
+    // From implementations are meaningful behavior
 
     #[test]
     fn test_pipeline_error_from_audio_error() {
@@ -755,65 +737,34 @@ mod tests {
     }
 
     #[test]
-    fn test_default_pipeline() {
-        let pipeline = ListeningPipeline::default();
-        assert!(!pipeline.is_running());
-    }
-
-    #[test]
     fn test_detector_not_available_before_start() {
         let pipeline = ListeningPipeline::new();
         assert!(pipeline.detector().is_none());
     }
 
-    #[test]
-    fn test_analysis_state_fields() {
-        // Verify AnalysisState can be constructed (compile-time check)
-        let detector = Arc::new(WakeWordDetector::new());
-        let should_stop = Arc::new(AtomicBool::new(false));
-        let buffer = AudioBuffer::new();
-        let mic_available = Arc::new(AtomicBool::new(true));
-        let (event_tx, _event_rx) = tokio_mpsc::channel(EVENT_CHANNEL_BUFFER_SIZE);
-
-        let _state = AnalysisState {
-            detector,
-            should_stop,
-            buffer,
-            mic_available,
-            event_tx,
-        };
-    }
+    // ==================== Memory Bounds Tests ====================
+    // These verify critical system constraints
 
     #[test]
     fn test_circular_buffer_bounds_memory() {
-        // Verify the circular buffer in WakeWordDetector bounds memory
-        // The default config uses 2 seconds at 16kHz = 32000 samples
-        // 32000 * 4 bytes (f32) = ~128KB per buffer
         let detector = WakeWordDetector::new();
         let config = detector.config();
 
         let expected_samples = (config.window_duration_secs * config.sample_rate as f32) as usize;
-        // Should be ~32000 samples for default 2 second window
         assert_eq!(expected_samples, 32000);
 
-        // Memory should be bounded: 32000 samples * 4 bytes = ~128KB
         let expected_memory = expected_samples * std::mem::size_of::<f32>();
-        assert!(expected_memory < 150 * 1024); // Less than 150KB (allows small overhead)
-        assert!(expected_memory >= 120 * 1024); // At least ~120KB (verifies 2s buffer)
+        assert!(expected_memory < 150 * 1024);
+        assert!(expected_memory >= 120 * 1024);
     }
 
     #[test]
     fn test_pipeline_config_memory_bounded() {
-        // Verify the pipeline config's min_samples_for_analysis is reasonable
         let config = PipelineConfig::default();
-
-        // 4000 samples at 16kHz = 0.25 seconds
-        // This means we start analyzing after a quarter second of audio
         assert_eq!(config.min_samples_for_analysis, 4000);
 
-        // Memory for min_samples: 4000 * 4 bytes = 16KB
         let min_memory = config.min_samples_for_analysis * std::mem::size_of::<f32>();
-        assert!(min_memory < 20 * 1024); // Less than 20KB
+        assert!(min_memory < 20 * 1024);
     }
 
     #[test]

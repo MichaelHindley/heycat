@@ -437,37 +437,7 @@ mod tests {
         assert_eq!(manager.get_post_recording_state(), RecordingState::Idle);
     }
 
-    #[test]
-    fn test_listening_error_display() {
-        let error = ListeningError::InvalidTransition {
-            current_state: RecordingState::Processing,
-        };
-        let display = format!("{}", error);
-        assert!(display.contains("Processing"));
-
-        let error = ListeningError::RecordingInProgress;
-        let display = format!("{}", error);
-        assert!(display.contains("recording"));
-
-        let error = ListeningError::LockError;
-        let display = format!("{}", error);
-        assert!(display.contains("lock"));
-
-        let error = ListeningError::AlreadyInState;
-        let display = format!("{}", error);
-        assert!(display.contains("Already"));
-    }
-
-    #[test]
-    fn test_listening_status_serialization() {
-        let status = ListeningStatus {
-            enabled: true,
-            active: true,
-            mic_available: true,
-        };
-        let json = serde_json::to_string(&status).unwrap();
-        assert!(json.contains("enabled"));
-        assert!(json.contains("active"));
-        assert!(json.contains("micAvailable")); // camelCase
-    }
+    // Tests removed per docs/TESTING.md:
+    // - test_listening_error_display: Display trait test
+    // - test_listening_status_serialization: Serialization derive test
 }

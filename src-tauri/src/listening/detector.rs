@@ -819,35 +819,9 @@ mod tests {
         assert!(!detected, "cat alone should not be detected");
     }
 
-    #[test]
-    fn test_error_display() {
-        assert!(format!("{}", WakeWordError::ModelNotLoaded).contains("not loaded"));
-        assert!(format!("{}", WakeWordError::ModelLoadFailed("test".to_string())).contains("test"));
-        assert!(
-            format!("{}", WakeWordError::TranscriptionFailed("test".to_string())).contains("test")
-        );
-        let timeout_err = WakeWordError::TranscriptionTimeout { duration_secs: 15, timeout_secs: 10 };
-        assert!(format!("{}", timeout_err).contains("timed out"));
-        assert!(format!("{}", timeout_err).contains("15"));
-        assert!(format!("{}", timeout_err).contains("10"));
-        assert!(format!("{}", WakeWordError::LockPoisoned).contains("lock"));
-        assert!(format!("{}", WakeWordError::EmptyBuffer).contains("empty"));
-        assert!(format!("{}", WakeWordError::InsufficientNewSamples).contains("new"));
-        assert!(format!("{}", WakeWordError::NoSpeechDetected).contains("VAD"));
-        assert!(format!("{}", WakeWordError::VadInitFailed("test".to_string())).contains("test"));
-        assert!(format!("{}", WakeWordError::DuplicateAudio).contains("fingerprint"));
-    }
-
-    #[test]
-    fn test_wake_word_result_equality() {
-        let result1 = WakeWordResult {
-            detected: true,
-            confidence: 0.95,
-            transcription: "hey cat".to_string(),
-        };
-        let result2 = result1.clone();
-        assert_eq!(result1, result2);
-    }
+    // Tests removed per docs/TESTING.md:
+    // - test_error_display: Display trait test
+    // - test_wake_word_result_equality: Type system guarantee (#[derive(PartialEq, Clone)])
 
     // Note: The following test cases require actual audio hardware or loaded models
     // and are covered by manual integration testing:

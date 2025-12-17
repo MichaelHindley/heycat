@@ -402,11 +402,11 @@ fn detection_loop<E: ListeningEventEmitter + RecordingEventEmitter + 'static>(
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_recording_detectors_new() {
-        let detectors = RecordingDetectors::new();
-        assert!(!detectors.is_running());
-    }
+    // Tests removed per docs/TESTING.md:
+    // - test_recording_detectors_new: Obvious default
+    // - test_recording_detectors_default: Obvious default (duplicate)
+
+    // ==================== Behavior Tests ====================
 
     #[test]
     fn test_recording_detectors_with_config() {
@@ -415,12 +415,6 @@ mod tests {
             ..Default::default()
         };
         let detectors = RecordingDetectors::with_config(silence_config);
-        assert!(!detectors.is_running());
-    }
-
-    #[test]
-    fn test_recording_detectors_default() {
-        let detectors = RecordingDetectors::default();
         assert!(!detectors.is_running());
     }
 

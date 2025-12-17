@@ -166,159 +166,66 @@ pub fn create_vad(config: &VadConfig) -> Result<VoiceActivityDetector, VadError>
 mod tests {
     use super::*;
 
+    // Tests removed per docs/TESTING.md:
+    // - test_default_config: Obvious default values
+    // - test_config_clone: Type system guarantee
+    // - test_config_debug: Debug trait test
+    // - test_vad_error_display: Display trait test
+    // - test_vad_error_eq: Type system guarantee (#[derive(PartialEq)])
+    // - test_configuration_invalid_error_display: Display trait test
+    // - test_configuration_invalid_error_eq: Type system guarantee
+
+    // ==================== Config Preset Tests ====================
+    // These test meaningful behavior: different presets have different thresholds
+
     #[test]
-    fn test_default_config() {
-        let config = VadConfig::default();
-        assert_eq!(config.speech_threshold, VAD_THRESHOLD_BALANCED);
-        assert_eq!(config.sample_rate, DEFAULT_SAMPLE_RATE);
-        assert_eq!(config.min_speech_frames, 2);
+    fn test_config_presets_have_distinct_thresholds() {
+        let wake_word = VadConfig::wake_word();
+        let silence = VadConfig::silence();
+        let custom = VadConfig::with_threshold(0.6);
+
+        // Wake word is more sensitive (lower threshold)
+        assert_eq!(wake_word.speech_threshold, VAD_THRESHOLD_WAKE_WORD);
+        // Silence detection is more precise (higher threshold)
+        assert_eq!(silence.speech_threshold, VAD_THRESHOLD_SILENCE);
+        // Custom threshold works
+        assert_eq!(custom.speech_threshold, 0.6);
     }
 
-    #[test]
-    fn test_wake_word_config() {
-        let config = VadConfig::wake_word();
-        assert_eq!(config.speech_threshold, VAD_THRESHOLD_WAKE_WORD);
-        // Other fields should use defaults
-        assert_eq!(config.sample_rate, DEFAULT_SAMPLE_RATE);
-    }
+    // ==================== VAD Creation Tests ====================
+    // These test actual behavior: VAD initialization succeeds/fails correctly
 
     #[test]
-    fn test_silence_config() {
-        let config = VadConfig::silence();
-        assert_eq!(config.speech_threshold, VAD_THRESHOLD_SILENCE);
-        // Other fields should use defaults
-        assert_eq!(config.sample_rate, DEFAULT_SAMPLE_RATE);
-    }
+    fn test_create_vad_with_valid_sample_rates() {
+        // 8kHz and 16kHz are the only supported rates
+        let config_8k = VadConfig { sample_rate: 8000, ..Default::default() };
+        let config_16k = VadConfig { sample_rate: 16000, ..Default::default() };
 
-    #[test]
-    fn test_with_threshold() {
-        let config = VadConfig::with_threshold(0.6);
-        assert_eq!(config.speech_threshold, 0.6);
-        assert_eq!(config.sample_rate, DEFAULT_SAMPLE_RATE);
-    }
+        assert!(create_vad(&config_8k).is_ok());
+        assert!(create_vad(&config_16k).is_ok());
 
-    #[test]
-    fn test_config_clone() {
-        let config = VadConfig::wake_word();
-        let cloned = config.clone();
-        assert_eq!(config.speech_threshold, cloned.speech_threshold);
-    }
-
-    #[test]
-    fn test_config_debug() {
-        let config = VadConfig::default();
-        let debug = format!("{:?}", config);
-        assert!(debug.contains("speech_threshold"));
-        assert!(debug.contains("0.4"));
-    }
-
-    #[test]
-    fn test_create_vad_success() {
-        let config = VadConfig::default();
-        let result = create_vad(&config);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_create_vad_with_presets() {
-        // Both presets should create valid VAD instances
-        let wake_word_vad = create_vad(&VadConfig::wake_word());
-        assert!(wake_word_vad.is_ok());
-
-        let silence_vad = create_vad(&VadConfig::silence());
-        assert!(silence_vad.is_ok());
-    }
-
-    #[test]
-    fn test_vad_error_display() {
-        let err = VadError::InitializationFailed("test error".to_string());
-        let msg = format!("{}", err);
-        assert!(msg.contains("initialization failed"));
-        assert!(msg.contains("test error"));
-    }
-
-    #[test]
-    fn test_vad_error_eq() {
-        let err1 = VadError::InitializationFailed("test".to_string());
-        let err2 = VadError::InitializationFailed("test".to_string());
-        assert_eq!(err1, err2);
-    }
-
-    // Sample rate validation tests
-
-    #[test]
-    fn test_create_vad_with_8khz_succeeds() {
-        let config = VadConfig {
-            sample_rate: 8000,
-            ..Default::default()
-        };
-        let result = create_vad(&config);
-        assert!(result.is_ok());
-        // Verify chunk size is 256 for 8kHz (32ms window)
+        // Verify chunk sizes match expected values
         assert_eq!(chunk_size_for_sample_rate(8000), VAD_CHUNK_SIZE_8KHZ);
-    }
-
-    #[test]
-    fn test_create_vad_with_16khz_succeeds() {
-        let config = VadConfig {
-            sample_rate: 16000,
-            ..Default::default()
-        };
-        let result = create_vad(&config);
-        assert!(result.is_ok());
-        // Verify chunk size is 512 for 16kHz (32ms window)
         assert_eq!(chunk_size_for_sample_rate(16000), VAD_CHUNK_SIZE_16KHZ);
     }
 
     #[test]
-    fn test_create_vad_with_44100hz_returns_error() {
-        let config = VadConfig {
-            sample_rate: 44100,
-            ..Default::default()
-        };
-        let result = create_vad(&config);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(matches!(err, VadError::ConfigurationInvalid(_)));
-    }
+    fn test_create_vad_rejects_unsupported_sample_rates() {
+        let invalid_rates = [0, 22050, 44100, 48000];
 
-    #[test]
-    fn test_create_vad_with_0hz_returns_error() {
-        let config = VadConfig {
-            sample_rate: 0,
-            ..Default::default()
-        };
-        let result = create_vad(&config);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(matches!(err, VadError::ConfigurationInvalid(_)));
+        for rate in invalid_rates {
+            let config = VadConfig { sample_rate: rate, ..Default::default() };
+            let result = create_vad(&config);
+            assert!(result.is_err(), "Should reject {} Hz", rate);
+            assert!(matches!(result.unwrap_err(), VadError::ConfigurationInvalid(_)));
+        }
     }
 
     #[test]
     fn test_sample_rate_error_message_mentions_supported_rates() {
-        let config = VadConfig {
-            sample_rate: 22050,
-            ..Default::default()
-        };
-        let result = create_vad(&config);
-        let err = result.unwrap_err();
+        let config = VadConfig { sample_rate: 22050, ..Default::default() };
+        let err = create_vad(&config).unwrap_err();
         let msg = format!("{}", err);
-        assert!(msg.contains("8000"), "Error should mention 8000 Hz");
-        assert!(msg.contains("16000"), "Error should mention 16000 Hz");
-    }
-
-    #[test]
-    fn test_configuration_invalid_error_display() {
-        let err = VadError::ConfigurationInvalid("test config error".to_string());
-        let msg = format!("{}", err);
-        assert!(msg.contains("configuration invalid"));
-        assert!(msg.contains("test config error"));
-    }
-
-    #[test]
-    fn test_configuration_invalid_error_eq() {
-        let err1 = VadError::ConfigurationInvalid("test".to_string());
-        let err2 = VadError::ConfigurationInvalid("test".to_string());
-        assert_eq!(err1, err2);
+        assert!(msg.contains("8000") && msg.contains("16000"));
     }
 }

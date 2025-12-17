@@ -108,19 +108,9 @@ fn test_error_variants_invalid_input() {
     );
 }
 
-#[test]
-fn test_error_debug_format() {
-    let error = WavEncodingError::IoError("test".to_string());
-    let debug_str = format!("{:?}", error);
-    assert!(debug_str.contains("IoError"));
-}
-
-#[test]
-fn test_error_clone() {
-    let error = WavEncodingError::EncodingError("test".to_string());
-    let cloned = error.clone();
-    assert_eq!(error, cloned);
-}
+// Tests removed per docs/TESTING.md:
+// - test_error_debug_format: Debug trait test
+// - test_error_clone: Type system guarantee
 
 // =============================================================================
 // Validation Tests

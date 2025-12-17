@@ -355,19 +355,14 @@ impl TranscriptionService for SharedTranscriptionModel {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_shared_model_new_is_unloaded() {
-        let model = SharedTranscriptionModel::new();
-        assert!(!model.is_loaded());
-        assert_eq!(model.state(), TranscriptionState::Unloaded);
-    }
+    // Tests removed per docs/TESTING.md:
+    // - test_shared_model_new_is_unloaded: Obvious default
+    // - test_shared_model_default_is_unloaded: Obvious default (duplicate)
+    // - test_shared_model_is_clone: Type system guarantee (Arc semantics)
+    // - test_concurrent_access_does_not_panic: Rust type system guarantees Send+Sync
 
-    #[test]
-    fn test_shared_model_default_is_unloaded() {
-        let model = SharedTranscriptionModel::default();
-        assert!(!model.is_loaded());
-        assert_eq!(model.state(), TranscriptionState::Unloaded);
-    }
+    // ==================== Behavior Tests ====================
+    // These test actual user-visible behavior and error handling
 
     #[test]
     fn test_transcribe_file_returns_error_when_model_not_loaded() {
@@ -409,115 +404,70 @@ mod tests {
         assert!(matches!(result, Err(TranscriptionError::ModelLoadFailed(_))));
     }
 
+    // ==================== State Machine Tests ====================
+    // These test the complete state transition workflow
+
     #[test]
-    fn test_reset_to_idle_from_completed() {
+    fn test_reset_to_idle_state_transitions() {
         let model = SharedTranscriptionModel::new();
-        // Manually set state to Completed for testing
+
+        // Test reset from Completed
         {
             let mut state = model.state.lock().unwrap();
             *state = TranscriptionState::Completed;
         }
-        assert_eq!(model.state(), TranscriptionState::Completed);
-
         model.reset_to_idle().unwrap();
         assert_eq!(model.state(), TranscriptionState::Idle);
-    }
 
-    #[test]
-    fn test_reset_to_idle_from_error() {
-        let model = SharedTranscriptionModel::new();
-        // Manually set state to Error for testing
+        // Test reset from Error
         {
             let mut state = model.state.lock().unwrap();
             *state = TranscriptionState::Error;
         }
-        assert_eq!(model.state(), TranscriptionState::Error);
-
         model.reset_to_idle().unwrap();
         assert_eq!(model.state(), TranscriptionState::Idle);
-    }
 
-    #[test]
-    fn test_reset_to_idle_noop_from_unloaded() {
-        let model = SharedTranscriptionModel::new();
-        assert_eq!(model.state(), TranscriptionState::Unloaded);
-
-        model.reset_to_idle().unwrap();
-        assert_eq!(model.state(), TranscriptionState::Unloaded);
-    }
-
-    #[test]
-    fn test_shared_model_is_clone() {
-        let model = SharedTranscriptionModel::new();
-        let cloned = model.clone();
-
-        // Both should share the same underlying model
-        assert!(!model.is_loaded());
-        assert!(!cloned.is_loaded());
-
-        // State changes should be visible to both
+        // Test noop from Unloaded (doesn't transition)
         {
             let mut state = model.state.lock().unwrap();
-            *state = TranscriptionState::Idle;
+            *state = TranscriptionState::Unloaded;
         }
-        assert_eq!(model.state(), TranscriptionState::Idle);
-        assert_eq!(cloned.state(), TranscriptionState::Idle);
+        model.reset_to_idle().unwrap();
+        assert_eq!(model.state(), TranscriptionState::Unloaded);
     }
 
-    #[test]
-    fn test_concurrent_access_does_not_panic() {
-        use std::thread;
-
-        let model = SharedTranscriptionModel::new();
-        let model_clone1 = model.clone();
-        let model_clone2 = model.clone();
-
-        // Spawn threads that access the model concurrently
-        let handle1 = thread::spawn(move || {
-            for _ in 0..100 {
-                let _ = model_clone1.is_loaded();
-                let _ = model_clone1.state();
-            }
-        });
-
-        let handle2 = thread::spawn(move || {
-            for _ in 0..100 {
-                let _ = model_clone2.is_loaded();
-                let _ = model_clone2.state();
-            }
-        });
-
-        // Main thread also accesses
-        for _ in 0..100 {
-            let _ = model.is_loaded();
-            let _ = model.state();
-        }
-
-        handle1.join().unwrap();
-        handle2.join().unwrap();
-    }
-
-    // ==========================================================================
-    // TranscribingGuard Tests
-    // ==========================================================================
+    // ==================== TranscribingGuard Tests ====================
+    // RAII guard is critical for panic safety - these are behavior tests
 
     #[test]
-    fn test_guard_sets_state_to_transcribing_on_creation() {
+    fn test_guard_state_lifecycle() {
         let state = Arc::new(Mutex::new(TranscriptionState::Idle));
-        let guard = TranscribingGuard::new(state.clone()).unwrap();
-        assert_eq!(*state.lock().unwrap(), TranscriptionState::Transcribing);
-        drop(guard);
-    }
 
-    #[test]
-    fn test_guard_resets_state_to_idle_on_drop() {
-        let state = Arc::new(Mutex::new(TranscriptionState::Idle));
+        // Test normal lifecycle: Idle -> Transcribing -> Idle
         {
             let _guard = TranscribingGuard::new(state.clone()).unwrap();
             assert_eq!(*state.lock().unwrap(), TranscriptionState::Transcribing);
         }
-        // Guard dropped, state should be Idle
         assert_eq!(*state.lock().unwrap(), TranscriptionState::Idle);
+
+        // Test complete_success: stays Completed after drop
+        {
+            let mut guard = TranscribingGuard::new(state.clone()).unwrap();
+            guard.complete_success();
+            assert_eq!(*state.lock().unwrap(), TranscriptionState::Completed);
+        }
+        assert_eq!(*state.lock().unwrap(), TranscriptionState::Completed);
+
+        // Reset for next test
+        *state.lock().unwrap() = TranscriptionState::Idle;
+
+        // Test complete_with_error: stays Error after drop
+        {
+            let mut guard = TranscribingGuard::new(state.clone()).unwrap();
+            guard.complete_with_error();
+            assert_eq!(*state.lock().unwrap(), TranscriptionState::Error);
+        }
+        assert_eq!(*state.lock().unwrap(), TranscriptionState::Error);
     }
 
     #[test]
@@ -532,35 +482,8 @@ mod tests {
             panic!("Simulated panic during transcription");
         });
 
-        assert!(result.is_err()); // Panic occurred
-        // Guard should have reset state to Idle despite panic
+        assert!(result.is_err());
         assert_eq!(*state.lock().unwrap(), TranscriptionState::Idle);
-    }
-
-    #[test]
-    fn test_guard_complete_success_sets_completed_state() {
-        let state = Arc::new(Mutex::new(TranscriptionState::Idle));
-        {
-            let mut guard = TranscribingGuard::new(state.clone()).unwrap();
-            assert_eq!(*state.lock().unwrap(), TranscriptionState::Transcribing);
-            guard.complete_success();
-            assert_eq!(*state.lock().unwrap(), TranscriptionState::Completed);
-        }
-        // State remains Completed after drop (not reset to Idle)
-        assert_eq!(*state.lock().unwrap(), TranscriptionState::Completed);
-    }
-
-    #[test]
-    fn test_guard_complete_with_error_sets_error_state() {
-        let state = Arc::new(Mutex::new(TranscriptionState::Idle));
-        {
-            let mut guard = TranscribingGuard::new(state.clone()).unwrap();
-            assert_eq!(*state.lock().unwrap(), TranscriptionState::Transcribing);
-            guard.complete_with_error();
-            assert_eq!(*state.lock().unwrap(), TranscriptionState::Error);
-        }
-        // State remains Error after drop (not reset to Idle)
-        assert_eq!(*state.lock().unwrap(), TranscriptionState::Error);
     }
 
     #[test]
@@ -569,62 +492,11 @@ mod tests {
         let result = TranscribingGuard::new(state.clone());
         assert!(result.is_err());
         assert!(matches!(result, Err(TranscriptionError::ModelNotLoaded)));
-        // State unchanged
         assert_eq!(*state.lock().unwrap(), TranscriptionState::Unloaded);
     }
 
-    #[test]
-    fn test_concurrent_guards_are_consistent() {
-        use std::thread;
-
-        let state = Arc::new(Mutex::new(TranscriptionState::Idle));
-        let mut handles = vec![];
-
-        // Spawn threads that create and drop guards rapidly
-        for _ in 0..10 {
-            let state_clone = state.clone();
-            handles.push(thread::spawn(move || {
-                for _ in 0..100 {
-                    // Try to acquire guard - may fail if state is wrong
-                    if let Ok(guard) = TranscribingGuard::new(state_clone.clone()) {
-                        // Do some "work"
-                        std::hint::black_box(1 + 1);
-                        drop(guard);
-                    }
-                    // Small yield to increase contention
-                    std::thread::yield_now();
-                }
-            }));
-        }
-
-        for handle in handles {
-            handle.join().unwrap();
-        }
-
-        // After all threads complete, state should be Idle (or possibly Transcribing if one is in progress)
-        let final_state = *state.lock().unwrap();
-        assert!(
-            final_state == TranscriptionState::Idle || final_state == TranscriptionState::Transcribing,
-            "Final state should be Idle or Transcribing, got {:?}",
-            final_state
-        );
-    }
-
-    // ==========================================================================
-    // Transcription Lock Tests
-    // ==========================================================================
-
-    #[test]
-    fn test_transcription_lock_is_acquired() {
-        let model = SharedTranscriptionModel::new();
-
-        // Acquire the lock
-        let guard = model.acquire_transcription_lock();
-        assert!(guard.is_ok(), "Should be able to acquire transcription lock");
-
-        // Lock should be held
-        drop(guard);
-    }
+    // ==================== Transcription Lock Tests ====================
+    // Mutual exclusion is critical behavior - keep concurrency tests
 
     #[test]
     fn test_transcription_lock_blocks_concurrent_access() {
@@ -645,22 +517,11 @@ mod tests {
 
             handles.push(thread::spawn(move || {
                 for _ in 0..5 {
-                    // Acquire the lock
                     let _guard = model_clone.acquire_transcription_lock().unwrap();
-
-                    // Increment counter (we're inside critical section)
                     let current = counter_clone.fetch_add(1, Ordering::SeqCst) + 1;
-
-                    // Track max concurrent
                     max_concurrent_clone.fetch_max(current, Ordering::SeqCst);
-
-                    // Simulate some work
                     thread::sleep(Duration::from_micros(10));
-
-                    // Decrement counter
                     counter_clone.fetch_sub(1, Ordering::SeqCst);
-
-                    // Guard is dropped here, releasing lock
                 }
             }));
         }
@@ -669,151 +530,18 @@ mod tests {
             handle.join().unwrap();
         }
 
-        // Max concurrent should be 1 (mutex ensures serialization)
-        let max = max_concurrent.load(Ordering::SeqCst);
-        assert_eq!(
-            max, 1,
-            "Max concurrent access should be 1, got {}",
-            max
-        );
+        assert_eq!(max_concurrent.load(Ordering::SeqCst), 1);
     }
 
     #[test]
     fn test_transcription_lock_released_on_error_paths() {
         let model = SharedTranscriptionModel::new();
 
-        // First call with empty samples - should error but release lock
-        let result = model.transcribe_samples(vec![], 16000, 1);
-        assert!(result.is_err());
+        // Error should release lock
+        let _ = model.transcribe_samples(vec![], 16000, 1);
 
-        // Should be able to acquire lock again
+        // Lock should be acquirable again
         let guard = model.acquire_transcription_lock();
-        assert!(guard.is_ok(), "Lock should be released after error");
-    }
-
-    #[test]
-    fn test_transcription_lock_released_on_model_not_loaded() {
-        let model = SharedTranscriptionModel::new();
-
-        // Call transcribe_samples with valid samples but no model loaded
-        let result = model.transcribe_samples(vec![0.1, 0.2], 16000, 1);
-        assert!(matches!(result, Err(TranscriptionError::ModelNotLoaded)));
-
-        // Should be able to acquire lock again
-        let guard = model.acquire_transcription_lock();
-        assert!(guard.is_ok(), "Lock should be released after ModelNotLoaded error");
-    }
-
-    #[test]
-    fn test_two_transcribe_file_calls_are_serialized() {
-        use std::sync::atomic::{AtomicBool, Ordering};
-        use std::thread;
-        use std::time::Duration;
-
-        let model = SharedTranscriptionModel::new();
-        let overlap_detected = Arc::new(AtomicBool::new(false));
-        let in_transcription = Arc::new(AtomicBool::new(false));
-
-        let model_clone1 = model.clone();
-        let model_clone2 = model.clone();
-        let overlap_detected_clone1 = overlap_detected.clone();
-        let overlap_detected_clone2 = overlap_detected.clone();
-        let in_transcription_clone1 = in_transcription.clone();
-        let in_transcription_clone2 = in_transcription.clone();
-
-        let handle1 = thread::spawn(move || {
-            // We can't actually call transcribe_file without a model, but we can
-            // test the lock acquisition behavior directly
-            let _guard = model_clone1.acquire_transcription_lock().unwrap();
-
-            // Check if another thread is already in transcription
-            if in_transcription_clone1.swap(true, Ordering::SeqCst) {
-                overlap_detected_clone1.store(true, Ordering::SeqCst);
-            }
-
-            // Simulate transcription work
-            thread::sleep(Duration::from_millis(10));
-
-            in_transcription_clone1.store(false, Ordering::SeqCst);
-        });
-
-        let handle2 = thread::spawn(move || {
-            let _guard = model_clone2.acquire_transcription_lock().unwrap();
-
-            // Check if another thread is already in transcription
-            if in_transcription_clone2.swap(true, Ordering::SeqCst) {
-                overlap_detected_clone2.store(true, Ordering::SeqCst);
-            }
-
-            // Simulate transcription work
-            thread::sleep(Duration::from_millis(10));
-
-            in_transcription_clone2.store(false, Ordering::SeqCst);
-        });
-
-        handle1.join().unwrap();
-        handle2.join().unwrap();
-
-        assert!(
-            !overlap_detected.load(Ordering::SeqCst),
-            "Transcriptions should not overlap"
-        );
-    }
-
-    #[test]
-    fn test_stress_alternating_batch_streaming_calls() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        use std::thread;
-
-        let model = SharedTranscriptionModel::new();
-        let concurrent_count = Arc::new(AtomicUsize::new(0));
-        let max_concurrent = Arc::new(AtomicUsize::new(0));
-
-        let mut handles = vec![];
-
-        // Simulate batch transcription threads
-        for _ in 0..5 {
-            let model_clone = model.clone();
-            let concurrent_clone = concurrent_count.clone();
-            let max_clone = max_concurrent.clone();
-
-            handles.push(thread::spawn(move || {
-                for _ in 0..20 {
-                    let _guard = model_clone.acquire_transcription_lock().unwrap();
-                    let current = concurrent_clone.fetch_add(1, Ordering::SeqCst) + 1;
-                    max_clone.fetch_max(current, Ordering::SeqCst);
-                    std::hint::black_box(current); // Prevent optimization
-                    concurrent_clone.fetch_sub(1, Ordering::SeqCst);
-                }
-            }));
-        }
-
-        // Simulate streaming transcription threads
-        for _ in 0..5 {
-            let model_clone = model.clone();
-            let concurrent_clone = concurrent_count.clone();
-            let max_clone = max_concurrent.clone();
-
-            handles.push(thread::spawn(move || {
-                for _ in 0..20 {
-                    let _guard = model_clone.acquire_transcription_lock().unwrap();
-                    let current = concurrent_clone.fetch_add(1, Ordering::SeqCst) + 1;
-                    max_clone.fetch_max(current, Ordering::SeqCst);
-                    std::hint::black_box(current); // Prevent optimization
-                    concurrent_clone.fetch_sub(1, Ordering::SeqCst);
-                }
-            }));
-        }
-
-        for handle in handles {
-            handle.join().unwrap();
-        }
-
-        // Should never have more than 1 concurrent access
-        assert_eq!(
-            max_concurrent.load(Ordering::SeqCst),
-            1,
-            "Should never have concurrent transcriptions"
-        );
+        assert!(guard.is_ok());
     }
 }

@@ -62,55 +62,11 @@ pub fn list_input_devices() -> Vec<AudioInputDevice> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_audio_input_device_struct_serializes_correctly() {
-        let device = AudioInputDevice {
-            name: "Test Microphone".to_string(),
-            is_default: true,
-        };
-
-        let json = serde_json::to_string(&device).expect("Should serialize");
-        assert!(json.contains("Test Microphone"));
-        assert!(json.contains("is_default"));
-        assert!(json.contains("true"));
-
-        let deserialized: AudioInputDevice =
-            serde_json::from_str(&json).expect("Should deserialize");
-        assert_eq!(deserialized, device);
-    }
-
-    #[test]
-    fn test_audio_input_device_clone() {
-        let device = AudioInputDevice {
-            name: "Cloneable Device".to_string(),
-            is_default: false,
-        };
-
-        let cloned = device.clone();
-        assert_eq!(cloned.name, device.name);
-        assert_eq!(cloned.is_default, device.is_default);
-    }
-
-    #[test]
-    fn test_audio_input_device_debug() {
-        let device = AudioInputDevice {
-            name: "Debug Device".to_string(),
-            is_default: true,
-        };
-
-        let debug_str = format!("{:?}", device);
-        assert!(debug_str.contains("AudioInputDevice"));
-        assert!(debug_str.contains("Debug Device"));
-        assert!(debug_str.contains("is_default: true"));
-    }
-
-    #[test]
-    fn test_list_input_devices_returns_vec() {
-        // This test verifies the function returns a Vec (may be empty on CI)
-        let devices = list_input_devices();
-        // Just verify it's a Vec - content depends on hardware
-        assert!(devices.len() >= 0); // Always true, but documents intent
-    }
+    // Tests removed per docs/TESTING.md:
+    // - test_audio_input_device_struct_serializes_correctly: Serialization derives
+    // - test_audio_input_device_clone: Type system guarantee
+    // - test_audio_input_device_debug: Debug trait derives
+    // - test_list_input_devices_returns_vec: Always-true assertion
 
     #[test]
     fn test_list_devices_default_first() {

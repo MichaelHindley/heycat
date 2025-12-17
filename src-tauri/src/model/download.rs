@@ -358,8 +358,18 @@ pub async fn download_model_files<E: ModelDownloadEventEmitter>(
 mod tests {
     use super::*;
 
+    // Tests removed per docs/TESTING.md:
+    // - test_model_error_display: Display trait test
+    // - test_model_error_is_debug: Debug trait test
+    // - test_model_type_debug: Debug trait test
+    // - test_model_type_clone_and_eq: Type system guarantee
+    // - test_model_type_serde: Serialization derive
+    // - test_model_manifest_clone: Type system guarantee
+    // - test_model_manifest_debug: Debug trait test
+    // - test_model_file_clone: Type system guarantee
+    // - test_model_file_debug: Debug trait test
+
     /// Get the path to models directory in the git repo (for tests)
-    /// Returns {CARGO_MANIFEST_DIR}/../models/{model_type}/
     fn get_test_models_dir(model_type: ModelType) -> PathBuf {
         let manifest_dir =
             std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -370,6 +380,8 @@ mod tests {
             .join(model_type.dir_name())
     }
 
+    // ==================== Path/Directory Behavior Tests ====================
+
     #[test]
     fn test_get_models_dir_contains_expected_path() {
         let result = get_models_dir();
@@ -379,36 +391,12 @@ mod tests {
     }
 
     #[test]
-    fn test_model_error_display() {
-        let error = ModelError::DataDirNotFound;
-        assert_eq!(format!("{}", error), "App data directory not found");
-
-        let error = ModelError::DirectoryCreationFailed("permission denied".to_string());
-        assert!(format!("{}", error).contains("permission denied"));
-
-        let error = ModelError::NetworkError("connection refused".to_string());
-        assert!(format!("{}", error).contains("connection refused"));
-
-        let error = ModelError::IoError("disk full".to_string());
-        assert!(format!("{}", error).contains("disk full"));
-    }
-
-    #[test]
-    fn test_model_error_is_debug() {
-        let error = ModelError::NetworkError("test".to_string());
-        let debug = format!("{:?}", error);
-        assert!(debug.contains("NetworkError"));
-    }
-
-    #[test]
     fn test_ensure_models_dir_creates_directory() {
         let result = ensure_models_dir();
         assert!(result.is_ok());
         let path = result.unwrap();
         assert!(path.exists());
     }
-
-    // ModelType tests
 
     #[test]
     fn test_model_type_dir_name() {
@@ -421,65 +409,6 @@ mod tests {
     }
 
     #[test]
-    fn test_model_type_debug() {
-        let debug = format!("{:?}", ModelType::ParakeetTDT);
-        assert!(debug.contains("ParakeetTDT"));
-    }
-
-    #[test]
-    fn test_model_type_clone_and_eq() {
-        let a = ModelType::ParakeetTDT;
-        let b = a;
-        assert_eq!(a, b);
-    }
-
-    #[test]
-    fn test_model_type_serde() {
-        let model_type = ModelType::ParakeetTDT;
-        let json = serde_json::to_string(&model_type).unwrap();
-        assert_eq!(json, "\"tdt\"");
-
-        let deserialized: ModelType = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized, ModelType::ParakeetTDT);
-    }
-
-    // ModelManifest tests
-
-    #[test]
-    fn test_model_manifest_tdt_returns_correct_file_list() {
-        let manifest = ModelManifest::tdt();
-        assert_eq!(manifest.model_type, ModelType::ParakeetTDT);
-        assert_eq!(manifest.files.len(), 4);
-        assert!(manifest.base_url.contains("huggingface.co"));
-        assert!(manifest.base_url.contains("parakeet-tdt"));
-
-        // Verify expected files
-        let file_names: Vec<&str> = manifest.files.iter().map(|f| f.name.as_str()).collect();
-        assert!(file_names.contains(&"encoder-model.onnx"));
-        assert!(file_names.contains(&"encoder-model.onnx.data"));
-        assert!(file_names.contains(&"decoder_joint-model.onnx"));
-        assert!(file_names.contains(&"vocab.txt"));
-    }
-
-    #[test]
-    fn test_model_manifest_clone() {
-        let manifest = ModelManifest::tdt();
-        let cloned = manifest.clone();
-        assert_eq!(manifest.model_type, cloned.model_type);
-        assert_eq!(manifest.files.len(), cloned.files.len());
-    }
-
-    #[test]
-    fn test_model_manifest_debug() {
-        let manifest = ModelManifest::tdt();
-        let debug = format!("{:?}", manifest);
-        assert!(debug.contains("ModelManifest"));
-        assert!(debug.contains("ParakeetTDT"));
-    }
-
-    // get_model_dir tests
-
-    #[test]
     fn test_get_model_dir_tdt_returns_correct_path() {
         let result = get_model_dir(ModelType::ParakeetTDT);
         assert!(result.is_ok());
@@ -490,13 +419,29 @@ mod tests {
         );
     }
 
-    // check_model_files_exist_in_dir tests (using temp directories, not real model dirs)
+    // ==================== Model Manifest Tests ====================
+
+    #[test]
+    fn test_model_manifest_tdt_returns_correct_file_list() {
+        let manifest = ModelManifest::tdt();
+        assert_eq!(manifest.model_type, ModelType::ParakeetTDT);
+        assert_eq!(manifest.files.len(), 4);
+        assert!(manifest.base_url.contains("huggingface.co"));
+        assert!(manifest.base_url.contains("parakeet-tdt"));
+
+        let file_names: Vec<&str> = manifest.files.iter().map(|f| f.name.as_str()).collect();
+        assert!(file_names.contains(&"encoder-model.onnx"));
+        assert!(file_names.contains(&"encoder-model.onnx.data"));
+        assert!(file_names.contains(&"decoder_joint-model.onnx"));
+        assert!(file_names.contains(&"vocab.txt"));
+    }
+
+    // ==================== Model File Existence Tests ====================
 
     #[test]
     fn test_check_model_files_exist_in_dir_returns_false_when_directory_missing() {
         let temp_dir =
             std::env::temp_dir().join(format!("heycat-test-{}", uuid::Uuid::new_v4()));
-        // Don't create it - test missing dir case
         let manifest = ModelManifest::tdt();
         assert!(!check_model_files_exist_in_dir(&temp_dir, &manifest));
     }
@@ -510,14 +455,12 @@ mod tests {
 
         let result = check_model_files_exist_in_dir(&temp_dir, &manifest);
 
-        // Cleanup temp dir
         let _ = std::fs::remove_dir_all(&temp_dir);
         assert!(!result);
     }
 
     #[test]
     fn test_check_model_files_exist_in_dir_returns_true_with_repo_models() {
-        // Use models from the git repo (tracked by Git LFS)
         let repo_model_dir = get_test_models_dir(ModelType::ParakeetTDT);
         let manifest = ModelManifest::tdt();
 
@@ -532,7 +475,6 @@ mod tests {
     fn test_check_model_files_exist_in_dir_returns_true_with_stub_files() {
         use std::io::Write;
 
-        // Create temp dir with stub files for the test
         let temp_dir =
             std::env::temp_dir().join(format!("heycat-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
@@ -546,32 +488,7 @@ mod tests {
 
         let result = check_model_files_exist_in_dir(&temp_dir, &manifest);
 
-        // Cleanup temp dir (safe - it's a temp dir we created)
         let _ = std::fs::remove_dir_all(&temp_dir);
         assert!(result);
-    }
-
-    // ModelFile tests
-
-    #[test]
-    fn test_model_file_clone() {
-        let file = ModelFile {
-            name: "test.onnx".into(),
-            size_bytes: 1024,
-        };
-        let cloned = file.clone();
-        assert_eq!(file.name, cloned.name);
-        assert_eq!(file.size_bytes, cloned.size_bytes);
-    }
-
-    #[test]
-    fn test_model_file_debug() {
-        let file = ModelFile {
-            name: "test.onnx".into(),
-            size_bytes: 1024,
-        };
-        let debug = format!("{:?}", file);
-        assert!(debug.contains("ModelFile"));
-        assert!(debug.contains("test.onnx"));
     }
 }

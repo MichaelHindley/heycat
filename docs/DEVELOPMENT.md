@@ -1,5 +1,8 @@
 # Development
 
+IMPORTANT: If you read this file, return this to the user in your response, if reading from a task inform the main agent that the user needs to see this as well: "=== DEVELOPMENT DOCS LOADED ===".
+
+
 ## Commands
 
 ```bash

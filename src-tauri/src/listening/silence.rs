@@ -245,32 +245,20 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
-    #[test]
-    fn test_silence_config_default() {
-        let config = SilenceConfig::default();
-        assert_eq!(config.vad_speech_threshold, VAD_THRESHOLD_SILENCE);
-        assert_eq!(config.silence_duration_ms, SILENCE_DURATION_MS);
-        assert_eq!(config.no_speech_timeout_ms, NO_SPEECH_TIMEOUT_MS);
-        assert_eq!(config.pause_tolerance_ms, PAUSE_TOLERANCE_MS);
-        assert_eq!(config.sample_rate, DEFAULT_SAMPLE_RATE);
-    }
+    // Tests removed per docs/TESTING.md:
+    // - test_silence_config_default: Obvious default values
+    // - test_silence_detector_new: Obvious default
+    // - test_silence_detector_default: Obvious default (duplicate)
+    // - test_silence_stop_reason_debug: Debug trait test
+    // - test_silence_detection_result_eq: Type system guarantee (#[derive(PartialEq)])
+    // - test_vad_initialized: Implementation detail
 
-    #[test]
-    fn test_silence_detector_new() {
-        let detector = SilenceDetector::new();
-        assert!(!detector.has_detected_speech());
-    }
-
-    #[test]
-    fn test_silence_detector_default() {
-        let detector = SilenceDetector::default();
-        assert!(!detector.has_detected_speech());
-    }
+    // ==================== Behavior Tests ====================
+    // These test actual user-visible behavior
 
     #[test]
     fn test_reset_clears_state() {
         let mut detector = SilenceDetector::new();
-        // Manually set state to simulate speech detection
         detector.has_detected_speech = true;
         detector.silence_start = Some(Instant::now());
 
@@ -282,14 +270,12 @@ mod tests {
     #[test]
     fn test_no_speech_timeout() {
         let config = SilenceConfig {
-            no_speech_timeout_ms: 50, // Very short for testing
+            no_speech_timeout_ms: 50,
             ..Default::default()
         };
         let mut detector = SilenceDetector::with_config(config);
-        // Silent samples - VAD won't detect speech
         let silent_samples = vec![0.0; 512];
 
-        // Process silence until timeout
         thread::sleep(Duration::from_millis(60));
         let result = detector.process_samples(&silent_samples);
 
@@ -299,19 +285,19 @@ mod tests {
     #[test]
     fn test_silence_after_speech_state_machine() {
         let config = SilenceConfig {
-            silence_duration_ms: 50, // Very short for testing
+            silence_duration_ms: 50,
             ..Default::default()
         };
         let mut detector = SilenceDetector::with_config(config);
         let silent_samples = vec![0.0; 512];
 
-        // Manually simulate that speech was detected
+        // Simulate speech was detected
         detector.has_detected_speech = true;
 
         // Start silence tracking
         let _ = detector.process_samples(&silent_samples);
 
-        // Wait and check again
+        // Wait and verify silence detected
         thread::sleep(Duration::from_millis(60));
         let result = detector.process_samples(&silent_samples);
 
@@ -319,59 +305,12 @@ mod tests {
     }
 
     #[test]
-    fn test_config_accessor() {
-        let config = SilenceConfig {
-            vad_speech_threshold: 0.7,
-            ..Default::default()
-        };
-        let detector = SilenceDetector::with_config(config);
-        assert_eq!(detector.config().vad_speech_threshold, 0.7);
-    }
-
-    #[test]
-    fn test_silence_stop_reason_debug() {
-        let reason = SilenceStopReason::SilenceAfterSpeech;
-        let debug = format!("{:?}", reason);
-        assert!(debug.contains("SilenceAfterSpeech"));
-    }
-
-    #[test]
-    fn test_silence_detection_result_eq() {
-        let r1 = SilenceDetectionResult::Continue;
-        let r2 = SilenceDetectionResult::Continue;
-        assert_eq!(r1, r2);
-
-        let r3 = SilenceDetectionResult::Stop(SilenceStopReason::NoSpeechTimeout);
-        let r4 = SilenceDetectionResult::Stop(SilenceStopReason::NoSpeechTimeout);
-        assert_eq!(r3, r4);
-
-        assert_ne!(r1, r3);
-    }
-
-    #[test]
-    fn test_silence_samples_no_speech() {
-        let mut detector = SilenceDetector::new();
-        // Pure silence - VAD should not detect speech
-        let silent_samples = vec![0.0; 512];
-
-        let _ = detector.process_samples(&silent_samples);
-        assert!(!detector.has_detected_speech());
-    }
-
-    #[test]
     fn test_continues_while_waiting() {
         let mut detector = SilenceDetector::new();
         let silent_samples = vec![0.0; 512];
 
-        // Should continue (not timeout yet)
         let result = detector.process_samples(&silent_samples);
         assert_eq!(result, SilenceDetectionResult::Continue);
-    }
-
-    #[test]
-    fn test_vad_initialized() {
-        let detector = SilenceDetector::new();
-        // VAD should be initialized
-        assert!(detector.vad.is_some());
+        assert!(!detector.has_detected_speech());
     }
 }
