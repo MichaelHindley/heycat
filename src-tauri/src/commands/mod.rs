@@ -21,7 +21,7 @@ use crate::events::{
     TranscriptionCompletedPayload, TranscriptionErrorPayload, TranscriptionEventEmitter,
     TranscriptionStartedPayload,
 };
-use crate::audio::AudioThreadHandle;
+use crate::audio::{AudioInputDevice, AudioThreadHandle};
 use crate::parakeet::SharedTranscriptionModel;
 use crate::recording::{AudioData, RecordingManager, RecordingMetadata, RecordingState};
 use crate::warn;
@@ -571,6 +571,19 @@ pub fn get_listening_status(
     recording_state: State<'_, ProductionState>,
 ) -> Result<ListeningStatus, String> {
     get_listening_status_impl(listening_state.as_ref(), recording_state.as_ref())
+}
+
+// =============================================================================
+// Audio Device Commands
+// =============================================================================
+
+/// List all available audio input devices
+///
+/// Returns a list of audio input devices sorted with the default device first.
+/// Returns an empty array (not an error) when no devices are available.
+#[tauri::command]
+pub fn list_audio_devices() -> Vec<AudioInputDevice> {
+    crate::audio::list_input_devices()
 }
 
 #[cfg(test)]

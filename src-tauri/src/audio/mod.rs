@@ -5,6 +5,9 @@ use std::sync::{Arc, Mutex};
 mod cpal_backend;
 pub use cpal_backend::CpalBackend;
 
+mod device;
+pub use device::{list_input_devices, AudioInputDevice};
+
 pub mod thread;
 pub use thread::AudioThreadHandle;
 

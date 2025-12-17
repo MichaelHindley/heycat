@@ -237,6 +237,7 @@ pub fn run() {
             commands::enable_listening,
             commands::disable_listening,
             commands::get_listening_status,
+            commands::list_audio_devices,
             model::check_parakeet_model_status,
             model::download_model,
             voice_commands::get_commands,
