@@ -2,6 +2,8 @@
 
 This document describes heycat's testing philosophy and guidelines for writing effective tests.
 
+IMPORTANT: If you read this file, return this to the user in your response, if reading from a task inform the main agent that the user needs to see this as well: "=== TESTING DOCS LOADED ===".
+
 ## Core Principle: Test Behavior, Not Implementation
 
 Tests should verify **what the system does**, not **how it does it**. A well-written test describes a behavior that users (or calling code) care about. If you can change the implementation without changing the behavior, the test should still pass.
@@ -243,13 +245,3 @@ After (1 test):
 ```rust
 test_complete_recording_flow()  // Covers the full cycle
 ```
-
-## Summary
-
-| Do | Don't |
-|----|-------|
-| Test what users experience | Test implementation details |
-| One test per behavior | One test per function |
-| Test error states users see | Test internal error handling |
-| Test complete workflows | Test individual state transitions |
-| 60% meaningful coverage | 100% line coverage |

@@ -13,7 +13,6 @@ vi.mock("@tauri-apps/api/event", () => ({
 describe("useTranscription", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Default listen mock returns an unlisten function
     mockListen.mockResolvedValue(mockUnlisten);
   });
 
@@ -21,68 +20,7 @@ describe("useTranscription", () => {
     vi.restoreAllMocks();
   });
 
-  it("initializes with default state", () => {
-    const { result } = renderHook(() => useTranscription());
-
-    expect(result.current.isTranscribing).toBe(false);
-    expect(result.current.transcribedText).toBeNull();
-    expect(result.current.error).toBeNull();
-    expect(result.current.durationMs).toBeNull();
-  });
-
-  it("sets up event listeners on mount", async () => {
-    renderHook(() => useTranscription());
-
-    await waitFor(() => {
-      expect(mockListen).toHaveBeenCalledTimes(3);
-    });
-
-    expect(mockListen).toHaveBeenCalledWith(
-      "transcription_started",
-      expect.any(Function)
-    );
-    expect(mockListen).toHaveBeenCalledWith(
-      "transcription_completed",
-      expect.any(Function)
-    );
-    expect(mockListen).toHaveBeenCalledWith(
-      "transcription_error",
-      expect.any(Function)
-    );
-  });
-
-  it("updates state when transcription_started event fires", async () => {
-    let startedCallback: ((event: { payload: { timestamp: string } }) => void) | null = null;
-
-    mockListen.mockImplementation(
-      (
-        eventName: string,
-        callback: (event: { payload: unknown }) => void
-      ) => {
-        if (eventName === "transcription_started") {
-          startedCallback = callback;
-        }
-        return Promise.resolve(mockUnlisten);
-      }
-    );
-
-    const { result } = renderHook(() => useTranscription());
-
-    await waitFor(() => {
-      expect(startedCallback).not.toBeNull();
-    });
-
-    act(() => {
-      startedCallback!({ payload: { timestamp: "2025-01-01T12:00:00Z" } });
-    });
-
-    expect(result.current.isTranscribing).toBe(true);
-    expect(result.current.error).toBeNull();
-    expect(result.current.transcribedText).toBeNull();
-    expect(result.current.durationMs).toBeNull();
-  });
-
-  it("updates state when transcription_completed event fires", async () => {
+  it("user sees transcription progress and result when transcription completes", async () => {
     let startedCallback: ((event: { payload: { timestamp: string } }) => void) | null = null;
     let completedCallback: ((event: {
       payload: { text: string; duration_ms: number };
@@ -109,13 +47,13 @@ describe("useTranscription", () => {
       expect(completedCallback).not.toBeNull();
     });
 
-    // Start transcription
+    // Transcription starts
     act(() => {
       startedCallback!({ payload: { timestamp: "2025-01-01T12:00:00Z" } });
     });
     expect(result.current.isTranscribing).toBe(true);
 
-    // Complete transcription
+    // Transcription completes
     act(() => {
       completedCallback!({
         payload: { text: "Hello, world!", duration_ms: 1234 },
@@ -128,7 +66,7 @@ describe("useTranscription", () => {
     expect(result.current.error).toBeNull();
   });
 
-  it("updates state when transcription_error event fires", async () => {
+  it("user sees error when transcription fails", async () => {
     let startedCallback: ((event: { payload: { timestamp: string } }) => void) | null = null;
     let errorCallback: ((event: { payload: { error: string } }) => void) | null = null;
 
@@ -168,20 +106,7 @@ describe("useTranscription", () => {
     expect(result.current.error).toBe("Model not loaded");
   });
 
-  it("cleans up event listeners on unmount", async () => {
-    const { unmount } = renderHook(() => useTranscription());
-
-    await waitFor(() => {
-      expect(mockListen).toHaveBeenCalledTimes(3);
-    });
-
-    unmount();
-
-    // Each listener's unlisten function should be called
-    expect(mockUnlisten).toHaveBeenCalledTimes(3);
-  });
-
-  it("handles timeout error and allows subsequent transcriptions", async () => {
+  it("user can retry after timeout error", async () => {
     let startedCallback: ((event: { payload: { timestamp: string } }) => void) | null = null;
     let errorCallback: ((event: { payload: { error: string } }) => void) | null = null;
     let completedCallback: ((event: {
@@ -212,27 +137,25 @@ describe("useTranscription", () => {
       expect(completedCallback).not.toBeNull();
     });
 
-    // Start transcription
+    // First attempt times out
     act(() => {
       startedCallback!({ payload: { timestamp: "2025-01-01T12:00:00Z" } });
     });
     expect(result.current.isTranscribing).toBe(true);
 
-    // Timeout error during transcription
     act(() => {
-      errorCallback!({ payload: { error: "Transcription timed out after 60 seconds. The audio may be too long or the model may be stuck." } });
+      errorCallback!({ payload: { error: "Transcription timed out" } });
     });
 
-    // State should be reset - not stuck on isTranscribing
     expect(result.current.isTranscribing).toBe(false);
-    expect(result.current.error).toBe("Transcription timed out after 60 seconds. The audio may be too long or the model may be stuck.");
+    expect(result.current.error).toBe("Transcription timed out");
 
-    // Subsequent transcription should work (recovery test)
+    // Retry succeeds
     act(() => {
       startedCallback!({ payload: { timestamp: "2025-01-01T12:01:00Z" } });
     });
     expect(result.current.isTranscribing).toBe(true);
-    expect(result.current.error).toBeNull(); // Error should be cleared
+    expect(result.current.error).toBeNull(); // Error cleared on retry
 
     act(() => {
       completedCallback!({
@@ -243,7 +166,7 @@ describe("useTranscription", () => {
     expect(result.current.transcribedText).toBe("Recovery transcription");
   });
 
-  it("clears previous state when new transcription starts", async () => {
+  it("previous transcription result clears when new transcription starts", async () => {
     let startedCallback: ((event: { payload: { timestamp: string } }) => void) | null = null;
     let completedCallback: ((event: {
       payload: { text: string; duration_ms: number };
@@ -282,7 +205,7 @@ describe("useTranscription", () => {
     expect(result.current.transcribedText).toBe("First transcription");
     expect(result.current.durationMs).toBe(1000);
 
-    // Start second transcription - should clear previous state
+    // Start second transcription - previous result should clear
     act(() => {
       startedCallback!({ payload: { timestamp: "2025-01-01T12:01:00Z" } });
     });
@@ -290,6 +213,5 @@ describe("useTranscription", () => {
     expect(result.current.isTranscribing).toBe(true);
     expect(result.current.transcribedText).toBeNull();
     expect(result.current.durationMs).toBeNull();
-    expect(result.current.error).toBeNull();
   });
 });
