@@ -69,6 +69,7 @@ impl AudioThreadHandle {
     /// # Arguments
     /// * `buffer` - The audio buffer to capture samples into
     #[must_use = "this returns a Result that should be handled"]
+    #[allow(dead_code)] // Convenience wrapper for start_with_device(buffer, None)
     pub fn start(&self, buffer: AudioBuffer) -> Result<u32, AudioThreadError> {
         self.start_with_device(buffer, None)
     }
