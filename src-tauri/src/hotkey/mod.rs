@@ -15,6 +15,9 @@ mod integration_test;
 /// The keyboard shortcut for recording (platform-agnostic)
 pub const RECORDING_SHORTCUT: &str = "CmdOrControl+Shift+R";
 
+/// The keyboard shortcut for cancel (Escape key)
+pub const ESCAPE_SHORTCUT: &str = "Escape";
+
 /// Errors that can occur during hotkey registration
 #[derive(Debug, Clone, PartialEq)]
 pub enum HotkeyError {
@@ -78,6 +81,26 @@ impl<B: ShortcutBackend> HotkeyService<B> {
     pub fn unregister_recording_shortcut(&self) -> Result<(), HotkeyError> {
         self.backend
             .unregister(RECORDING_SHORTCUT)
+            .map_err(|e| map_backend_error(&e))
+    }
+
+    /// Register the Escape key shortcut for cancellation
+    ///
+    /// The Escape key listener should only be active during recording
+    /// to avoid conflicts with Escape key usage in other contexts.
+    pub fn register_escape_shortcut(
+        &self,
+        callback: Box<dyn Fn() + Send + Sync>,
+    ) -> Result<(), HotkeyError> {
+        self.backend
+            .register(ESCAPE_SHORTCUT, callback)
+            .map_err(|e| map_backend_error(&e))
+    }
+
+    /// Unregister the Escape key shortcut
+    pub fn unregister_escape_shortcut(&self) -> Result<(), HotkeyError> {
+        self.backend
+            .unregister(ESCAPE_SHORTCUT)
             .map_err(|e| map_backend_error(&e))
     }
 }

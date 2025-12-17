@@ -571,3 +571,267 @@ fn test_silence_detection_respects_enabled_flag() {
     let det = detectors.lock().unwrap();
     assert!(!det.is_running(), "Detectors should not start when disabled");
 }
+
+// === Escape Key Listener Tests ===
+
+/// Mock shortcut backend that tracks registered/unregistered shortcuts
+#[derive(Default)]
+struct MockShortcutBackend {
+    registered: Arc<Mutex<Vec<String>>>,
+    callbacks: Arc<Mutex<std::collections::HashMap<String, Box<dyn Fn() + Send + Sync>>>>,
+}
+
+impl MockShortcutBackend {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    /// Check if a shortcut is currently registered
+    fn is_registered(&self, shortcut: &str) -> bool {
+        self.registered.lock().unwrap().contains(&shortcut.to_string())
+    }
+
+    /// Simulate pressing a registered shortcut (triggers callback)
+    fn simulate_press(&self, shortcut: &str) {
+        if let Some(callback) = self.callbacks.lock().unwrap().get(shortcut) {
+            callback();
+        }
+    }
+}
+
+impl crate::hotkey::ShortcutBackend for MockShortcutBackend {
+    fn register(&self, shortcut: &str, callback: Box<dyn Fn() + Send + Sync>) -> Result<(), String> {
+        let mut registered = self.registered.lock().unwrap();
+        if registered.contains(&shortcut.to_string()) {
+            return Err("Shortcut already registered".to_string());
+        }
+        registered.push(shortcut.to_string());
+        self.callbacks.lock().unwrap().insert(shortcut.to_string(), callback);
+        Ok(())
+    }
+
+    fn unregister(&self, shortcut: &str) -> Result<(), String> {
+        let mut registered = self.registered.lock().unwrap();
+        if let Some(pos) = registered.iter().position(|s| s == shortcut) {
+            registered.remove(pos);
+            self.callbacks.lock().unwrap().remove(shortcut);
+            Ok(())
+        } else {
+            Err("Shortcut not registered".to_string())
+        }
+    }
+}
+
+#[test]
+fn test_escape_listener_registered_when_recording_starts() {
+    // Escape key listener should be registered when recording starts
+    ensure_test_model_files();
+
+    let emitter = MockEmitter::new();
+    let backend = Arc::new(MockShortcutBackend::new());
+    let callback_count = Arc::new(Mutex::new(0));
+    let callback_count_clone = callback_count.clone();
+
+    let mut integration: TestIntegration =
+        HotkeyIntegration::with_debounce(emitter.clone(), 0)
+            .with_shortcut_backend(backend.clone())
+            .with_escape_callback(Arc::new(move || {
+                *callback_count_clone.lock().unwrap() += 1;
+            }));
+    let state = Mutex::new(RecordingManager::new());
+
+    // Before recording, Escape should not be registered
+    assert!(!backend.is_registered("Escape"), "Escape should not be registered before recording");
+
+    // Start recording
+    integration.handle_toggle(&state);
+    assert_eq!(state.lock().unwrap().get_state(), RecordingState::Recording);
+
+    // Escape should now be registered
+    assert!(backend.is_registered("Escape"), "Escape should be registered after recording starts");
+}
+
+#[test]
+fn test_escape_callback_fires_during_recording() {
+    // Escape key callback should fire when pressed during recording
+    ensure_test_model_files();
+
+    let emitter = MockEmitter::new();
+    let backend = Arc::new(MockShortcutBackend::new());
+    let callback_count = Arc::new(Mutex::new(0));
+    let callback_count_clone = callback_count.clone();
+
+    let mut integration: TestIntegration =
+        HotkeyIntegration::with_debounce(emitter.clone(), 0)
+            .with_shortcut_backend(backend.clone())
+            .with_escape_callback(Arc::new(move || {
+                *callback_count_clone.lock().unwrap() += 1;
+            }));
+    let state = Mutex::new(RecordingManager::new());
+
+    // Start recording
+    integration.handle_toggle(&state);
+
+    // Simulate Escape press
+    backend.simulate_press("Escape");
+
+    // Callback should have been invoked
+    assert_eq!(*callback_count.lock().unwrap(), 1, "Callback should fire when Escape pressed during recording");
+}
+
+#[test]
+fn test_escape_listener_unregistered_when_recording_stops() {
+    // Escape key listener should be unregistered when recording stops
+    ensure_test_model_files();
+
+    let emitter = MockEmitter::new();
+    let backend = Arc::new(MockShortcutBackend::new());
+    let callback_count = Arc::new(Mutex::new(0));
+    let callback_count_clone = callback_count.clone();
+
+    let mut integration: TestIntegration =
+        HotkeyIntegration::with_debounce(emitter.clone(), 0)
+            .with_shortcut_backend(backend.clone())
+            .with_escape_callback(Arc::new(move || {
+                *callback_count_clone.lock().unwrap() += 1;
+            }));
+    let state = Mutex::new(RecordingManager::new());
+
+    // Start recording
+    integration.handle_toggle(&state);
+    assert!(backend.is_registered("Escape"), "Escape should be registered during recording");
+
+    // Stop recording
+    integration.handle_toggle(&state);
+    assert_eq!(state.lock().unwrap().get_state(), RecordingState::Idle);
+
+    // Escape should be unregistered
+    assert!(!backend.is_registered("Escape"), "Escape should be unregistered after recording stops");
+}
+
+#[test]
+fn test_escape_callback_does_not_fire_when_not_recording() {
+    // After stopping, Escape callback should not fire (listener unregistered)
+    ensure_test_model_files();
+
+    let emitter = MockEmitter::new();
+    let backend = Arc::new(MockShortcutBackend::new());
+    let callback_count = Arc::new(Mutex::new(0));
+    let callback_count_clone = callback_count.clone();
+
+    let mut integration: TestIntegration =
+        HotkeyIntegration::with_debounce(emitter.clone(), 0)
+            .with_shortcut_backend(backend.clone())
+            .with_escape_callback(Arc::new(move || {
+                *callback_count_clone.lock().unwrap() += 1;
+            }));
+    let state = Mutex::new(RecordingManager::new());
+
+    // Start and stop recording
+    integration.handle_toggle(&state);
+    integration.handle_toggle(&state);
+
+    // Try to simulate Escape press (but listener is gone)
+    backend.simulate_press("Escape");
+
+    // Callback should NOT have been invoked (listener was unregistered)
+    assert_eq!(*callback_count.lock().unwrap(), 0, "Callback should not fire when not recording");
+}
+
+#[test]
+fn test_escape_listener_multiple_cycles() {
+    // Multiple start/stop cycles should work correctly
+    ensure_test_model_files();
+
+    let emitter = MockEmitter::new();
+    let backend = Arc::new(MockShortcutBackend::new());
+    let callback_count = Arc::new(Mutex::new(0));
+    let callback_count_clone = callback_count.clone();
+
+    let mut integration: TestIntegration =
+        HotkeyIntegration::with_debounce(emitter.clone(), 0)
+            .with_shortcut_backend(backend.clone())
+            .with_escape_callback(Arc::new(move || {
+                *callback_count_clone.lock().unwrap() += 1;
+            }));
+    let state = Mutex::new(RecordingManager::new());
+
+    // Cycle 1: Start -> Escape fires -> Stop
+    integration.handle_toggle(&state);
+    assert!(backend.is_registered("Escape"));
+    backend.simulate_press("Escape");
+    assert_eq!(*callback_count.lock().unwrap(), 1);
+    integration.handle_toggle(&state);
+    assert!(!backend.is_registered("Escape"));
+
+    // Cycle 2: Start -> Escape fires -> Stop
+    integration.handle_toggle(&state);
+    assert!(backend.is_registered("Escape"));
+    backend.simulate_press("Escape");
+    assert_eq!(*callback_count.lock().unwrap(), 2);
+    integration.handle_toggle(&state);
+    assert!(!backend.is_registered("Escape"));
+
+    // Cycle 3: Start -> Stop (no Escape press)
+    integration.handle_toggle(&state);
+    assert!(backend.is_registered("Escape"));
+    integration.handle_toggle(&state);
+    assert!(!backend.is_registered("Escape"));
+
+    // Total callback count should be 2 (from the two presses)
+    assert_eq!(*callback_count.lock().unwrap(), 2);
+}
+
+#[test]
+fn test_escape_listener_without_backend_gracefully_skips() {
+    // Without backend configured, escape registration should be skipped gracefully
+    ensure_test_model_files();
+
+    let emitter = MockEmitter::new();
+    let callback_count = Arc::new(Mutex::new(0));
+    let callback_count_clone = callback_count.clone();
+
+    // Only callback configured, no backend
+    let mut integration: TestIntegration =
+        HotkeyIntegration::with_debounce(emitter.clone(), 0)
+            .with_escape_callback(Arc::new(move || {
+                *callback_count_clone.lock().unwrap() += 1;
+            }));
+    let state = Mutex::new(RecordingManager::new());
+
+    // Start recording - should work without backend
+    let accepted = integration.handle_toggle(&state);
+    assert!(accepted, "Recording should start even without escape backend");
+    assert_eq!(state.lock().unwrap().get_state(), RecordingState::Recording);
+
+    // Stop recording - should work
+    let accepted = integration.handle_toggle(&state);
+    assert!(accepted, "Recording should stop");
+    assert_eq!(state.lock().unwrap().get_state(), RecordingState::Idle);
+}
+
+#[test]
+fn test_escape_listener_without_callback_gracefully_skips() {
+    // Without callback configured, escape registration should be skipped gracefully
+    ensure_test_model_files();
+
+    let emitter = MockEmitter::new();
+    let backend = Arc::new(MockShortcutBackend::new());
+
+    // Only backend configured, no callback
+    let mut integration: TestIntegration =
+        HotkeyIntegration::with_debounce(emitter.clone(), 0)
+            .with_shortcut_backend(backend.clone());
+    let state = Mutex::new(RecordingManager::new());
+
+    // Start recording
+    integration.handle_toggle(&state);
+    assert_eq!(state.lock().unwrap().get_state(), RecordingState::Recording);
+
+    // Escape should NOT be registered (no callback)
+    assert!(!backend.is_registered("Escape"), "Escape should not register without callback");
+
+    // Stop recording
+    integration.handle_toggle(&state);
+    assert_eq!(state.lock().unwrap().get_state(), RecordingState::Idle);
+}

@@ -11,6 +11,7 @@ use crate::events::{
     TranscriptionCompletedPayload, TranscriptionErrorPayload, TranscriptionEventEmitter,
     TranscriptionStartedPayload,
 };
+use crate::hotkey::ShortcutBackend;
 use crate::listening::{ListeningManager, ListeningPipeline, RecordingDetectors, SilenceConfig};
 use crate::model::{check_model_exists_for_type, ModelType};
 use crate::recording::{RecordingManager, RecordingState};
@@ -107,6 +108,12 @@ pub struct HotkeyIntegration<R: RecordingEventEmitter, T: TranscriptionEventEmit
     pub(crate) silence_detection_enabled: bool,
     /// Custom silence configuration for hotkey recordings (optional)
     pub(crate) silence_config: Option<SilenceConfig>,
+    /// Optional shortcut backend for Escape key registration (boxed to avoid generic parameter)
+    shortcut_backend: Option<Arc<dyn ShortcutBackend + Send + Sync>>,
+    /// Callback invoked when Escape key is pressed during recording
+    escape_callback: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Whether Escape key is currently registered (to track cleanup)
+    escape_registered: bool,
 }
 
 impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmitter + 'static, C: CommandEventEmitter + 'static> HotkeyIntegration<R, T, C> {
@@ -132,6 +139,9 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             recording_detectors: None,
             silence_detection_enabled: true,
             silence_config: None,
+            shortcut_backend: None,
+            escape_callback: None,
+            escape_registered: false,
         }
     }
 
@@ -252,6 +262,26 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         self
     }
 
+    /// Add shortcut backend for Escape key registration (builder pattern)
+    ///
+    /// When configured with an escape callback, the Escape key listener will be
+    /// automatically registered when recording starts and unregistered when
+    /// recording stops. This enables cancel functionality via Escape key.
+    pub fn with_shortcut_backend(mut self, backend: Arc<dyn ShortcutBackend + Send + Sync>) -> Self {
+        self.shortcut_backend = Some(backend);
+        self
+    }
+
+    /// Set the callback to invoke when Escape key is pressed during recording (builder pattern)
+    ///
+    /// The callback will only fire when recording is in progress. The Escape key
+    /// listener is automatically registered when recording starts and unregistered
+    /// when recording stops.
+    pub fn with_escape_callback(mut self, callback: Arc<dyn Fn() + Send + Sync>) -> Self {
+        self.escape_callback = Some(callback);
+        self
+    }
+
     /// Create with custom debounce duration (for testing)
     #[cfg(test)]
     pub fn with_debounce(recording_emitter: R, debounce_ms: u64) -> Self {
@@ -275,6 +305,9 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             recording_detectors: None,
             silence_detection_enabled: true,
             silence_config: None,
+            shortcut_backend: None,
+            escape_callback: None,
+            escape_registered: false,
         }
     }
 
@@ -340,6 +373,9 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                             });
                         info!("Recording started, emitted recording_started event");
 
+                        // Register Escape key listener for cancel functionality
+                        self.register_escape_listener();
+
                         // Start silence detection if enabled and configured
                         self.start_silence_detection(state);
 
@@ -356,6 +392,9 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             }
             RecordingState::Recording => {
                 info!("Stopping recording (manual stop via hotkey)...");
+
+                // Unregister Escape key listener first
+                self.unregister_escape_listener();
 
                 // Stop silence detection first to prevent it from interfering
                 // Manual stop takes precedence over auto-stop
@@ -1082,6 +1121,74 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             if det.is_running() {
                 info!("[silence_detection] Stopping monitoring (manual stop)");
                 det.stop_monitoring();
+            }
+        }
+    }
+
+    /// Register the Escape key listener for cancel functionality
+    ///
+    /// Called when recording starts. Only registers if both shortcut_backend
+    /// and escape_callback are configured. The listener is automatically
+    /// unregistered when recording stops.
+    fn register_escape_listener(&mut self) {
+        // Skip if already registered or not configured
+        if self.escape_registered {
+            debug!("Escape listener already registered, skipping");
+            return;
+        }
+
+        let backend = match &self.shortcut_backend {
+            Some(b) => b.clone(),
+            None => {
+                debug!("No shortcut backend configured, skipping Escape registration");
+                return;
+            }
+        };
+
+        let callback = match &self.escape_callback {
+            Some(c) => c.clone(),
+            None => {
+                debug!("No escape callback configured, skipping Escape registration");
+                return;
+            }
+        };
+
+        // Register using the ESCAPE_SHORTCUT constant
+        match backend.register(super::ESCAPE_SHORTCUT, Box::new(move || callback())) {
+            Ok(()) => {
+                self.escape_registered = true;
+                info!("Escape key listener registered for recording cancel");
+            }
+            Err(e) => {
+                warn!("Failed to register Escape key listener: {}", e);
+                // Continue anyway - cancel via Escape just won't work
+            }
+        }
+    }
+
+    /// Unregister the Escape key listener
+    ///
+    /// Called when recording stops (either normally or via cancellation).
+    /// Safe to call even if listener was never registered.
+    fn unregister_escape_listener(&mut self) {
+        if !self.escape_registered {
+            return;
+        }
+
+        let backend = match &self.shortcut_backend {
+            Some(b) => b.clone(),
+            None => return,
+        };
+
+        match backend.unregister(super::ESCAPE_SHORTCUT) {
+            Ok(()) => {
+                self.escape_registered = false;
+                debug!("Escape key listener unregistered");
+            }
+            Err(e) => {
+                warn!("Failed to unregister Escape key listener: {}", e);
+                // Mark as unregistered anyway to allow re-registration
+                self.escape_registered = false;
             }
         }
     }
