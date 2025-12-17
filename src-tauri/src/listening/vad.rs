@@ -2,8 +2,8 @@
 // Shared between WakeWordDetector (listening) and SilenceDetector (recording)
 
 use crate::audio_constants::{
-    chunk_size_for_sample_rate, DEFAULT_SAMPLE_RATE, VAD_CHUNK_SIZE_16KHZ, VAD_CHUNK_SIZE_8KHZ,
-    VAD_THRESHOLD_BALANCED, VAD_THRESHOLD_SILENCE, VAD_THRESHOLD_WAKE_WORD,
+    chunk_size_for_sample_rate, DEFAULT_SAMPLE_RATE, VAD_THRESHOLD_BALANCED, VAD_THRESHOLD_SILENCE,
+    VAD_THRESHOLD_WAKE_WORD,
 };
 use voice_activity_detector::VoiceActivityDetector;
 
@@ -165,6 +165,7 @@ pub fn create_vad(config: &VadConfig) -> Result<VoiceActivityDetector, VadError>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio_constants::{VAD_CHUNK_SIZE_16KHZ, VAD_CHUNK_SIZE_8KHZ};
 
     // Tests removed per docs/TESTING.md:
     // - test_default_config: Obvious default values

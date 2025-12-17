@@ -185,20 +185,8 @@ fn test_custom_threshold() {
     assert!(matches!(result, MatchResult::NoMatch));
 }
 
-#[test]
-fn test_match_result_serialization() {
-    let result = MatchResult::Exact {
-        command: MatchedCommand {
-            id: Uuid::new_v4(),
-            trigger: "open slack".to_string(),
-        },
-        parameters: HashMap::new(),
-    };
-
-    let json = serde_json::to_string(&result).unwrap();
-    assert!(json.contains("Exact"));
-    assert!(json.contains("open slack"));
-}
+// test_match_result_serialization removed per docs/TESTING.md:
+// - Serialization format tests are low-value (derive macros handle correctly)
 
 #[test]
 fn test_best_match_selected_when_not_ambiguous() {
