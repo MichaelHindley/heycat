@@ -15,6 +15,8 @@ heycat is a Tauri v2 desktop application with a React + TypeScript frontend and 
 
 ## Key Entry Points
 
+IMPORTANT: You must use these to discover the stated topics. Dont assume things within the areas each entry point describes.
+
 ### Development
 **When:** Starting dev server, building, type-checking, setting up prerequisites
 **File:** docs/DEVELOPMENT.md
@@ -34,7 +36,7 @@ heycat is a Tauri v2 desktop application with a React + TypeScript frontend and 
 
 
 ### TCR (Test-Commit-Refactor)
-**When:** Running tests, checking coverage, test-driven development
+**When:** Writing tests, Running tests, checking coverage, test-driven development
 **File:** docs/TESTING.md
 
 Quick reference: `tcr check "bun run test && cd src-tauri && cargo test"`

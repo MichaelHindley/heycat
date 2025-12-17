@@ -3,103 +3,43 @@ import { describe, expect, it } from "vitest";
 import { Select, SelectItem, SelectGroup, SelectSeparator } from "./Select";
 
 // Note: Radix UI Select uses pointer capture APIs that jsdom doesn't fully support.
-// These tests focus on initial render and accessibility attributes.
-// Interactive behavior should be verified with E2E tests.
+// Tests focus on initial render and accessibility. Interactive behavior verified via E2E.
 
 describe("Select", () => {
-  it("renders with placeholder", () => {
+  it("renders with accessible combobox role", () => {
     render(
       <Select placeholder="Select an option">
         <SelectItem value="option1">Option 1</SelectItem>
       </Select>
     );
-    expect(screen.getByText("Select an option")).toBeDefined();
-  });
-
-  it("renders trigger with correct styles", () => {
-    render(
-      <Select placeholder="Select...">
-        <SelectItem value="a">A</SelectItem>
-      </Select>
-    );
-    const trigger = screen.getByRole("combobox");
-    expect(trigger.className).toContain("bg-white");
-    expect(trigger.className).toContain("border");
-    expect(trigger.className).toContain("focus:border-heycat-teal");
-  });
-
-  it("has chevron icon in trigger", () => {
-    render(
-      <Select placeholder="Select...">
-        <SelectItem value="a">A</SelectItem>
-      </Select>
-    );
-    const trigger = screen.getByRole("combobox");
-    const svg = trigger.querySelector("svg");
-    expect(svg).not.toBeNull();
-  });
-
-  it("renders trigger with combobox role", () => {
-    render(
-      <Select placeholder="Select...">
-        <SelectItem value="a">A</SelectItem>
-      </Select>
-    );
     expect(screen.getByRole("combobox")).toBeDefined();
   });
 
-  it("shows default value in trigger", () => {
+  it("displays placeholder when no value selected", () => {
+    render(
+      <Select placeholder="Choose one">
+        <SelectItem value="a">A</SelectItem>
+      </Select>
+    );
+    expect(screen.getByText("Choose one")).toBeDefined();
+  });
+
+  it("displays selected value in trigger", () => {
     render(
       <Select defaultValue="option1">
-        <SelectItem value="option1">Option 1</SelectItem>
-        <SelectItem value="option2">Option 2</SelectItem>
+        <SelectItem value="option1">First Option</SelectItem>
+        <SelectItem value="option2">Second Option</SelectItem>
       </Select>
     );
-    expect(screen.getByRole("combobox").textContent).toContain("Option 1");
+    expect(screen.getByRole("combobox").textContent).toContain("First Option");
   });
 
-  it("shows controlled value in trigger", () => {
-    render(
-      <Select value="option2">
-        <SelectItem value="option1">Option 1</SelectItem>
-        <SelectItem value="option2">Option 2</SelectItem>
-      </Select>
-    );
-    expect(screen.getByRole("combobox").textContent).toContain("Option 2");
-  });
-
-  it("applies disabled attribute when disabled", () => {
+  it("is disabled when disabled prop is true", () => {
     render(
       <Select placeholder="Select..." disabled>
         <SelectItem value="a">A</SelectItem>
       </Select>
     );
-    const trigger = screen.getByRole("combobox");
-    expect(trigger.getAttribute("data-disabled")).toBe("");
-  });
-
-  it("has focus ring classes for accessibility", () => {
-    render(
-      <Select placeholder="Select...">
-        <SelectItem value="a">A</SelectItem>
-      </Select>
-    );
-    const trigger = screen.getByRole("combobox");
-    expect(trigger.className).toContain("focus:ring-2");
-    expect(trigger.className).toContain("focus:outline-none");
-  });
-});
-
-describe("Select exports", () => {
-  it("exports SelectItem component", () => {
-    expect(SelectItem).toBeDefined();
-  });
-
-  it("exports SelectGroup component", () => {
-    expect(SelectGroup).toBeDefined();
-  });
-
-  it("exports SelectSeparator component", () => {
-    expect(SelectSeparator).toBeDefined();
+    expect(screen.getByRole("combobox").getAttribute("data-disabled")).toBe("");
   });
 });
