@@ -25,7 +25,13 @@ export function useAutoStartListening(): void {
         );
 
         if (autoStartOnLaunch) {
-          await invoke("enable_listening");
+          // Get selected device from settings
+          const selectedDevice = await store.get<string | null>(
+            "audio.selectedDevice"
+          );
+          await invoke("enable_listening", {
+            deviceName: selectedDevice ?? undefined,
+          });
         }
       } catch {
         // Silently ignore errors - this is a best-effort feature

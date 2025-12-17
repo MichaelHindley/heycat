@@ -1,5 +1,6 @@
 /* v8 ignore file -- @preserve */
 import { useRecording } from "../hooks/useRecording";
+import { useSettings } from "../hooks/useSettings";
 import "./RecordingIndicator.css";
 
 export interface RecordingIndicatorProps {
@@ -12,7 +13,10 @@ export function RecordingIndicator({
   className = "",
   isBlocked = false,
 }: RecordingIndicatorProps) {
-  const { isRecording, error } = useRecording();
+  const { settings } = useSettings();
+  const { isRecording, error } = useRecording({
+    deviceName: settings.audio.selectedDevice,
+  });
 
   const stateClass = isBlocked
     ? "recording-indicator--blocked"

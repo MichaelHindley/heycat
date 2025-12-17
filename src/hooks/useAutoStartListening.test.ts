@@ -44,13 +44,37 @@ describe("useAutoStartListening", () => {
   });
 
   it("calls enable_listening when autoStartOnLaunch is true", async () => {
-    mockStore.get.mockResolvedValue(true);
+    mockStore.get.mockImplementation((key: string) => {
+      if (key === "listening.autoStartOnLaunch") return Promise.resolve(true);
+      if (key === "audio.selectedDevice") return Promise.resolve(null);
+      return Promise.resolve(undefined);
+    });
 
     renderHook(() => useAutoStartListening());
 
     await vi.waitFor(() => {
       expect(mockStore.get).toHaveBeenCalledWith("listening.autoStartOnLaunch");
-      expect(mockInvoke).toHaveBeenCalledWith("enable_listening");
+      expect(mockStore.get).toHaveBeenCalledWith("audio.selectedDevice");
+      expect(mockInvoke).toHaveBeenCalledWith("enable_listening", {
+        deviceName: undefined,
+      });
+    });
+  });
+
+  it("calls enable_listening with selected device when set", async () => {
+    mockStore.get.mockImplementation((key: string) => {
+      if (key === "listening.autoStartOnLaunch") return Promise.resolve(true);
+      if (key === "audio.selectedDevice")
+        return Promise.resolve("My Headset Microphone");
+      return Promise.resolve(undefined);
+    });
+
+    renderHook(() => useAutoStartListening());
+
+    await vi.waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledWith("enable_listening", {
+        deviceName: "My Headset Microphone",
+      });
     });
   });
 

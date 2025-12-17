@@ -3,6 +3,7 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { primaryMonitor, LogicalPosition } from "@tauri-apps/api/window";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { useRecording } from "./useRecording";
+import { useSettings } from "./useSettings";
 
 const OVERLAY_LABEL = "cat-overlay";
 const OVERLAY_SIZE = 120;
@@ -60,7 +61,10 @@ async function calculateOverlayPosition(): Promise<{ x: number; y: number } | nu
 }
 
 export function useCatOverlay() {
-  const { isRecording } = useRecording();
+  const { settings } = useSettings();
+  const { isRecording } = useRecording({
+    deviceName: settings.audio.selectedDevice,
+  });
   const [isListening, setIsListening] = useState(false);
   const [isMicUnavailable, setIsMicUnavailable] = useState(false);
   const initializedRef = useRef(false);

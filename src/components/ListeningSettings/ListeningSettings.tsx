@@ -15,7 +15,9 @@ export function ListeningSettings({ className = "" }: ListeningSettingsProps) {
     updateListeningEnabled,
     updateAutoStartListening,
   } = useSettings();
-  const { isListening, enableListening, disableListening } = useListening();
+  const { isListening, enableListening, disableListening } = useListening({
+    deviceName: settings.audio.selectedDevice,
+  });
 
   const handleToggleListening = async () => {
     const newEnabled = !settings.listening.enabled;

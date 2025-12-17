@@ -11,11 +11,15 @@ import { useCatOverlay } from "./hooks/useCatOverlay";
 import { useAutoStartListening } from "./hooks/useAutoStartListening";
 import { useAudioErrorHandler } from "./hooks/useAudioErrorHandler";
 import { useRecording } from "./hooks/useRecording";
+import { useSettings } from "./hooks/useSettings";
 
 function App() {
+  const { settings } = useSettings();
   const { isTranscribing } = useTranscription();
   const { error: audioError, clearError } = useAudioErrorHandler();
-  const { startRecording } = useRecording();
+  const { startRecording } = useRecording({
+    deviceName: settings.audio.selectedDevice,
+  });
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("history");
   useCatOverlay();
   useAutoStartListening();
