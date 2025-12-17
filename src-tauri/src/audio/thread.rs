@@ -61,19 +61,6 @@ impl AudioThreadHandle {
         }
     }
 
-    /// Start audio capture into the provided buffer
-    ///
-    /// Returns the actual sample rate of the audio device on success.
-    /// Blocks until the audio thread responds.
-    ///
-    /// # Arguments
-    /// * `buffer` - The audio buffer to capture samples into
-    #[must_use = "this returns a Result that should be handled"]
-    #[allow(dead_code)] // Convenience wrapper for start_with_device(buffer, None)
-    pub fn start(&self, buffer: AudioBuffer) -> Result<u32, AudioThreadError> {
-        self.start_with_device(buffer, None)
-    }
-
     /// Start audio capture into the provided buffer using a specific device
     ///
     /// Returns the actual sample rate of the audio device on success.
@@ -303,7 +290,7 @@ mod tests {
         let buffer = AudioBuffer::new();
 
         // Start returns sample rate on success (or CaptureError if no device)
-        let result = handle.start(buffer);
+        let result = handle.start_with_device(buffer, None);
         // Either succeeds with sample rate or fails with CaptureError (no device in CI)
         match result {
             Ok(sample_rate) => assert!(sample_rate > 0),
@@ -377,24 +364,5 @@ mod tests {
         assert!(handle.shutdown().is_ok());
     }
 
-    /// Test start delegates to start_with_device with None
-    #[test]
-    #[cfg_attr(coverage_nightly, coverage(off))]
-    fn test_start_uses_default_device() {
-        let handle = AudioThreadHandle::spawn();
-        let buffer = AudioBuffer::new();
-
-        // start() should behave like start_with_device(buffer, None)
-        let result = handle.start(buffer);
-
-        match result {
-            Ok(sample_rate) => assert!(sample_rate > 0),
-            Err(AudioThreadError::CaptureError(_)) => {} // Expected in CI without audio device
-            Err(e) => panic!("Unexpected error: {:?}", e),
-        }
-
-        // Stop and shutdown
-        let _ = handle.stop();
-        assert!(handle.shutdown().is_ok());
-    }
+    // test_start_uses_default_device removed: start() method removed (unused convenience wrapper)
 }
