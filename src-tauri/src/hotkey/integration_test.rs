@@ -653,7 +653,7 @@ fn test_escape_listener_registered_when_recording_starts() {
 
 #[test]
 fn test_escape_callback_fires_during_recording() {
-    // Escape key callback should fire when pressed during recording
+    // Escape key callback should fire when double-tap Escape is pressed during recording
     ensure_test_model_files();
 
     let emitter = MockEmitter::new();
@@ -672,11 +672,12 @@ fn test_escape_callback_fires_during_recording() {
     // Start recording
     integration.handle_toggle(&state);
 
-    // Simulate Escape press
-    backend.simulate_press("Escape");
+    // Simulate double-tap Escape (two presses within window)
+    backend.simulate_press("Escape"); // First tap
+    backend.simulate_press("Escape"); // Second tap - triggers callback
 
     // Callback should have been invoked
-    assert_eq!(*callback_count.lock().unwrap(), 1, "Callback should fire when Escape pressed during recording");
+    assert_eq!(*callback_count.lock().unwrap(), 1, "Callback should fire on double-tap Escape during recording");
 }
 
 #[test]
@@ -710,6 +711,34 @@ fn test_escape_listener_unregistered_when_recording_stops() {
 }
 
 #[test]
+fn test_single_escape_tap_does_not_trigger_cancel() {
+    // Single Escape tap should NOT trigger cancel - double-tap is required
+    ensure_test_model_files();
+
+    let emitter = MockEmitter::new();
+    let backend = Arc::new(MockShortcutBackend::new());
+    let callback_count = Arc::new(Mutex::new(0));
+    let callback_count_clone = callback_count.clone();
+
+    let mut integration: TestIntegration =
+        HotkeyIntegration::with_debounce(emitter.clone(), 0)
+            .with_shortcut_backend(backend.clone())
+            .with_escape_callback(Arc::new(move || {
+                *callback_count_clone.lock().unwrap() += 1;
+            }));
+    let state = Mutex::new(RecordingManager::new());
+
+    // Start recording
+    integration.handle_toggle(&state);
+
+    // Single Escape press - should NOT trigger callback
+    backend.simulate_press("Escape");
+
+    // Callback should NOT have been invoked (single tap ignored)
+    assert_eq!(*callback_count.lock().unwrap(), 0, "Single tap should not trigger cancel");
+}
+
+#[test]
 fn test_escape_callback_does_not_fire_when_not_recording() {
     // After stopping, Escape callback should not fire (listener unregistered)
     ensure_test_model_files();
@@ -740,7 +769,7 @@ fn test_escape_callback_does_not_fire_when_not_recording() {
 
 #[test]
 fn test_escape_listener_multiple_cycles() {
-    // Multiple start/stop cycles should work correctly
+    // Multiple start/stop cycles should work correctly with double-tap
     ensure_test_model_files();
 
     let emitter = MockEmitter::new();
@@ -756,18 +785,20 @@ fn test_escape_listener_multiple_cycles() {
             }));
     let state = Mutex::new(RecordingManager::new());
 
-    // Cycle 1: Start -> Escape fires -> Stop
+    // Cycle 1: Start -> Double-tap Escape fires -> Stop
     integration.handle_toggle(&state);
     assert!(backend.is_registered("Escape"));
-    backend.simulate_press("Escape");
+    backend.simulate_press("Escape"); // First tap
+    backend.simulate_press("Escape"); // Second tap - triggers
     assert_eq!(*callback_count.lock().unwrap(), 1);
     integration.handle_toggle(&state);
     assert!(!backend.is_registered("Escape"));
 
-    // Cycle 2: Start -> Escape fires -> Stop
+    // Cycle 2: Start -> Double-tap Escape fires -> Stop
     integration.handle_toggle(&state);
     assert!(backend.is_registered("Escape"));
-    backend.simulate_press("Escape");
+    backend.simulate_press("Escape"); // First tap
+    backend.simulate_press("Escape"); // Second tap - triggers
     assert_eq!(*callback_count.lock().unwrap(), 2);
     integration.handle_toggle(&state);
     assert!(!backend.is_registered("Escape"));
@@ -778,8 +809,74 @@ fn test_escape_listener_multiple_cycles() {
     integration.handle_toggle(&state);
     assert!(!backend.is_registered("Escape"));
 
-    // Total callback count should be 2 (from the two presses)
+    // Total callback count should be 2 (from the two double-taps)
     assert_eq!(*callback_count.lock().unwrap(), 2);
+}
+
+#[test]
+fn test_three_rapid_escape_taps_triggers_cancel_once() {
+    // Triple-tap should only trigger cancel once (same as double-tap behavior)
+    ensure_test_model_files();
+
+    let emitter = MockEmitter::new();
+    let backend = Arc::new(MockShortcutBackend::new());
+    let callback_count = Arc::new(Mutex::new(0));
+    let callback_count_clone = callback_count.clone();
+
+    let mut integration: TestIntegration =
+        HotkeyIntegration::with_debounce(emitter.clone(), 0)
+            .with_shortcut_backend(backend.clone())
+            .with_escape_callback(Arc::new(move || {
+                *callback_count_clone.lock().unwrap() += 1;
+            }));
+    let state = Mutex::new(RecordingManager::new());
+
+    // Start recording
+    integration.handle_toggle(&state);
+
+    // Triple-tap Escape
+    backend.simulate_press("Escape"); // First tap - records time
+    backend.simulate_press("Escape"); // Second tap - triggers, resets
+    backend.simulate_press("Escape"); // Third tap - starts new cycle
+
+    // Should trigger exactly once
+    assert_eq!(*callback_count.lock().unwrap(), 1, "Triple tap should trigger cancel only once");
+}
+
+#[test]
+fn test_escape_double_tap_window_is_configurable() {
+    // Double-tap window can be configured via builder
+    ensure_test_model_files();
+
+    let emitter = MockEmitter::new();
+    let backend = Arc::new(MockShortcutBackend::new());
+    let callback_count = Arc::new(Mutex::new(0));
+    let callback_count_clone = callback_count.clone();
+
+    // Configure with a very short window (10ms)
+    let mut integration: TestIntegration =
+        HotkeyIntegration::with_debounce(emitter.clone(), 0)
+            .with_shortcut_backend(backend.clone())
+            .with_escape_callback(Arc::new(move || {
+                *callback_count_clone.lock().unwrap() += 1;
+            }))
+            .with_double_tap_window(10); // 10ms window
+    let state = Mutex::new(RecordingManager::new());
+
+    // Start recording
+    integration.handle_toggle(&state);
+
+    // First tap
+    backend.simulate_press("Escape");
+
+    // Wait longer than window
+    thread::sleep(Duration::from_millis(20));
+
+    // Second tap - should NOT trigger (outside window)
+    backend.simulate_press("Escape");
+
+    // Callback should NOT have been invoked
+    assert_eq!(*callback_count.lock().unwrap(), 0, "Taps outside window should not trigger");
 }
 
 #[test]

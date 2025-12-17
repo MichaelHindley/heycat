@@ -11,6 +11,7 @@ use crate::events::{
     TranscriptionCompletedPayload, TranscriptionErrorPayload, TranscriptionEventEmitter,
     TranscriptionStartedPayload,
 };
+use crate::hotkey::double_tap::{DoubleTapDetector, DEFAULT_DOUBLE_TAP_WINDOW_MS};
 use crate::hotkey::ShortcutBackend;
 use crate::listening::{ListeningManager, ListeningPipeline, RecordingDetectors, SilenceConfig};
 use crate::model::{check_model_exists_for_type, ModelType};
@@ -110,10 +111,14 @@ pub struct HotkeyIntegration<R: RecordingEventEmitter, T: TranscriptionEventEmit
     pub(crate) silence_config: Option<SilenceConfig>,
     /// Optional shortcut backend for Escape key registration (boxed to avoid generic parameter)
     shortcut_backend: Option<Arc<dyn ShortcutBackend + Send + Sync>>,
-    /// Callback invoked when Escape key is pressed during recording
+    /// Callback invoked when double-tap Escape is detected during recording
     escape_callback: Option<Arc<dyn Fn() + Send + Sync>>,
     /// Whether Escape key is currently registered (to track cleanup)
     escape_registered: bool,
+    /// Time window for double-tap detection (default 300ms)
+    double_tap_window_ms: u64,
+    /// Double-tap detector for Escape key (created on recording start)
+    double_tap_detector: Option<Arc<Mutex<DoubleTapDetector<Box<dyn Fn() + Send + Sync>>>>>,
 }
 
 impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmitter + 'static, C: CommandEventEmitter + 'static> HotkeyIntegration<R, T, C> {
@@ -142,6 +147,8 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             shortcut_backend: None,
             escape_callback: None,
             escape_registered: false,
+            double_tap_window_ms: DEFAULT_DOUBLE_TAP_WINDOW_MS,
+            double_tap_detector: None,
         }
     }
 
@@ -272,13 +279,24 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         self
     }
 
-    /// Set the callback to invoke when Escape key is pressed during recording (builder pattern)
+    /// Set the callback to invoke when double-tap Escape is detected during recording (builder pattern)
     ///
-    /// The callback will only fire when recording is in progress. The Escape key
-    /// listener is automatically registered when recording starts and unregistered
-    /// when recording stops.
+    /// The callback will only fire when recording is in progress AND a double-tap
+    /// of the Escape key is detected within the configured time window (default 300ms).
+    /// Single Escape key presses are ignored. The Escape key listener is automatically
+    /// registered when recording starts and unregistered when recording stops.
     pub fn with_escape_callback(mut self, callback: Arc<dyn Fn() + Send + Sync>) -> Self {
         self.escape_callback = Some(callback);
+        self
+    }
+
+    /// Set the time window for double-tap detection (builder pattern)
+    ///
+    /// Default is 300ms. Two Escape key presses within this window will trigger
+    /// the cancel callback. Single presses are ignored.
+    #[allow(dead_code)]
+    pub fn with_double_tap_window(mut self, window_ms: u64) -> Self {
+        self.double_tap_window_ms = window_ms;
         self
     }
 
@@ -308,6 +326,8 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             shortcut_backend: None,
             escape_callback: None,
             escape_registered: false,
+            double_tap_window_ms: DEFAULT_DOUBLE_TAP_WINDOW_MS,
+            double_tap_detector: None,
         }
     }
 
@@ -1130,6 +1150,9 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
     /// Called when recording starts. Only registers if both shortcut_backend
     /// and escape_callback are configured. The listener is automatically
     /// unregistered when recording stops.
+    ///
+    /// Uses double-tap detection: single Escape presses are ignored, only
+    /// double-taps within the configured time window trigger the cancel callback.
     fn register_escape_listener(&mut self) {
         // Skip if already registered or not configured
         if self.escape_registered {
@@ -1153,14 +1176,32 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             }
         };
 
-        // Register using the ESCAPE_SHORTCUT constant
-        match backend.register(super::ESCAPE_SHORTCUT, Box::new(move || callback())) {
+        // Create double-tap detector with the configured window
+        // The detector wraps the callback and only invokes it on double-tap
+        let boxed_callback: Box<dyn Fn() + Send + Sync> = Box::new(move || callback());
+        let detector = Arc::new(Mutex::new(DoubleTapDetector::with_window(
+            boxed_callback,
+            self.double_tap_window_ms,
+        )));
+        self.double_tap_detector = Some(detector.clone());
+
+        // Register Escape key - each press calls on_tap() on the detector
+        match backend.register(super::ESCAPE_SHORTCUT, Box::new(move || {
+            if let Ok(mut det) = detector.lock() {
+                if det.on_tap() {
+                    debug!("Double-tap Escape detected, cancel triggered");
+                } else {
+                    trace!("Single Escape tap recorded, waiting for double-tap");
+                }
+            }
+        })) {
             Ok(()) => {
                 self.escape_registered = true;
-                info!("Escape key listener registered for recording cancel");
+                info!("Escape key listener registered for recording cancel (double-tap required)");
             }
             Err(e) => {
                 warn!("Failed to register Escape key listener: {}", e);
+                self.double_tap_detector = None; // Clean up on failure
                 // Continue anyway - cancel via Escape just won't work
             }
         }
@@ -1169,8 +1210,17 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
     /// Unregister the Escape key listener
     ///
     /// Called when recording stops (either normally or via cancellation).
-    /// Safe to call even if listener was never registered.
+    /// Safe to call even if listener was never registered. Also resets the
+    /// double-tap detector state.
     fn unregister_escape_listener(&mut self) {
+        // Reset double-tap detector state
+        if let Some(ref detector) = self.double_tap_detector {
+            if let Ok(mut det) = detector.lock() {
+                det.reset();
+            }
+        }
+        self.double_tap_detector = None;
+
         if !self.escape_registered {
             return;
         }
