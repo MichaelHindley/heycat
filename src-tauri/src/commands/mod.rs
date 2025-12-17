@@ -21,7 +21,7 @@ use crate::events::{
     TranscriptionCompletedPayload, TranscriptionErrorPayload, TranscriptionEventEmitter,
     TranscriptionStartedPayload,
 };
-use crate::audio::{AudioInputDevice, AudioThreadHandle};
+use crate::audio::{AudioDeviceError, AudioInputDevice, AudioThreadHandle, StopReason};
 use crate::parakeet::SharedTranscriptionModel;
 use crate::recording::{AudioData, RecordingManager, RecordingMetadata, RecordingState};
 use crate::warn;
@@ -158,6 +158,27 @@ pub fn start_recording(
     audio_thread: State<'_, AudioThreadState>,
     device_name: Option<String>,
 ) -> Result<(), String> {
+    // Check for audio devices first
+    let devices = crate::audio::list_input_devices();
+    if devices.is_empty() {
+        let error = AudioDeviceError::NoDevicesAvailable;
+        emit_or_warn!(app_handle, event_names::AUDIO_DEVICE_ERROR, error.clone());
+        return Err(error.to_string());
+    }
+
+    // Check if specified device exists (emit warning but don't block - will fallback to default)
+    if let Some(ref name) = device_name {
+        if !devices.iter().any(|d| &d.name == name) {
+            // Device not found - emit event but continue with fallback to default
+            let error = AudioDeviceError::DeviceNotFound {
+                device_name: name.clone(),
+            };
+            emit_or_warn!(app_handle, event_names::AUDIO_DEVICE_ERROR, error);
+            // Note: We don't return here - the backend will fallback to default device
+            // This allows recording to continue even if the preferred device is unavailable
+        }
+    }
+
     // Check model availability before starting recording (check TDT model for batch transcription)
     let model_available =
         match crate::model::check_model_exists_for_type(crate::model::ModelType::ParakeetTDT) {
@@ -174,15 +195,25 @@ pub fn start_recording(
         device_name,
     );
 
-    // Emit event on success for frontend state sync
-    if result.is_ok() {
-        emit_or_warn!(
-            app_handle,
-            event_names::RECORDING_STARTED,
-            RecordingStartedPayload {
-                timestamp: crate::events::current_timestamp(),
+    match &result {
+        Ok(()) => {
+            emit_or_warn!(
+                app_handle,
+                event_names::RECORDING_STARTED,
+                RecordingStartedPayload {
+                    timestamp: crate::events::current_timestamp(),
+                }
+            );
+        }
+        Err(err_msg) => {
+            // Emit audio device error for microphone access failures
+            if err_msg.contains("microphone") {
+                let error = AudioDeviceError::CaptureError {
+                    message: err_msg.clone(),
+                };
+                emit_or_warn!(app_handle, event_names::AUDIO_DEVICE_ERROR, error);
             }
-        );
+        }
     }
 
     result
@@ -206,6 +237,20 @@ pub fn stop_recording(
 
     // Emit event on success for frontend state sync
     if let Ok(ref metadata) = result {
+        // Check if recording was stopped due to a device error and emit appropriate event
+        if let Some(ref reason) = metadata.stop_reason {
+            match reason {
+                StopReason::StreamError => {
+                    emit_or_warn!(
+                        app_handle,
+                        event_names::AUDIO_DEVICE_ERROR,
+                        AudioDeviceError::DeviceDisconnected
+                    );
+                }
+                _ => {} // Other stop reasons (BufferFull, SilenceAfterSpeech, etc.) are not device errors
+            }
+        }
+
         emit_or_warn!(
             app_handle,
             event_names::RECORDING_STOPPED,

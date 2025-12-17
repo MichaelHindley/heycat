@@ -5,10 +5,12 @@ import App from "./App";
 import * as useRecordingModule from "./hooks/useRecording";
 import * as useTranscriptionModule from "./hooks/useTranscription";
 import * as useCatOverlayModule from "./hooks/useCatOverlay";
+import * as useAudioErrorHandlerModule from "./hooks/useAudioErrorHandler";
 
 vi.mock("./hooks/useRecording");
 vi.mock("./hooks/useCatOverlay");
 vi.mock("./hooks/useTranscription");
+vi.mock("./hooks/useAudioErrorHandler");
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockResolvedValue([]),
 }));
@@ -16,6 +18,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 const mockUseRecording = vi.mocked(useRecordingModule.useRecording);
 const mockUseTranscription = vi.mocked(useTranscriptionModule.useTranscription);
 const mockUseCatOverlay = vi.mocked(useCatOverlayModule.useCatOverlay);
+const mockUseAudioErrorHandler = vi.mocked(useAudioErrorHandlerModule.useAudioErrorHandler);
 
 describe("App Integration", () => {
   const defaultRecordingMock: useRecordingModule.UseRecordingResult = {
@@ -33,11 +36,17 @@ describe("App Integration", () => {
     durationMs: null,
   };
 
+  const defaultAudioErrorMock: useAudioErrorHandlerModule.UseAudioErrorHandlerReturn = {
+    error: null,
+    clearError: vi.fn(),
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockUseRecording.mockReturnValue(defaultRecordingMock);
     mockUseTranscription.mockReturnValue(defaultTranscriptionMock);
     mockUseCatOverlay.mockReturnValue({ isRecording: false });
+    mockUseAudioErrorHandler.mockReturnValue(defaultAudioErrorMock);
   });
 
   it("renders RecordingIndicator component without errors", async () => {

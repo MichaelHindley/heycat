@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { RecordingsList } from "../RecordingsView";
 import { CommandSettings } from "../CommandSettings";
 import { TranscriptionSettings } from "../TranscriptionSettings";
@@ -10,10 +10,30 @@ export type SidebarTab = "history" | "commands" | "transcription" | "listening";
 export interface SidebarProps {
   className?: string;
   defaultTab?: SidebarTab;
+  /** Controlled active tab (optional) */
+  activeTab?: SidebarTab;
+  /** Callback when tab changes (required if activeTab is provided) */
+  onTabChange?: (tab: SidebarTab) => void;
 }
 
-export function Sidebar({ className = "", defaultTab = "history" }: SidebarProps) {
-  const [activeTab, setActiveTab] = useState<SidebarTab>(defaultTab);
+export function Sidebar({
+  className = "",
+  defaultTab = "history",
+  activeTab: controlledTab,
+  onTabChange,
+}: SidebarProps) {
+  const [internalTab, setInternalTab] = useState<SidebarTab>(defaultTab);
+
+  // Use controlled tab if provided, otherwise use internal state
+  const activeTab = controlledTab ?? internalTab;
+  const setActiveTab = onTabChange ?? setInternalTab;
+
+  // Sync internal state if controlled tab changes
+  useEffect(() => {
+    if (controlledTab !== undefined) {
+      setInternalTab(controlledTab);
+    }
+  }, [controlledTab]);
 
   return (
     <aside className={`sidebar ${className}`.trim()} role="complementary">
