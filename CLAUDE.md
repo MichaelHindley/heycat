@@ -35,11 +35,9 @@ IMPORTANT: You must use these to discover the stated topics. Dont assume things 
 2. Run commands via bun: `bun <plugin-path>/agile.ts <command> [args]`
 
 
-### TCR (Test-Commit-Refactor)
+### TCR (Test-Commit-Refactor) - Writing and Running tests
 **When:** Writing tests, Running tests, checking coverage, test-driven development
 **File:** docs/TESTING.md
-
-Quick reference: `tcr check "bun run test && cd src-tauri && cargo test"`
 
 ### Review Independence
 **When:** Code reviews for specs or features
