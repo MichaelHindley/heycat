@@ -10,6 +10,10 @@ export function AudioDeviceSelector() {
 
   const selectedDevice = settings.audio.selectedDevice;
 
+  // Check if selected device is currently available
+  const isSelectedDeviceAvailable =
+    selectedDevice === null || devices.some((d) => d.name === selectedDevice);
+
   // Monitor audio level for the selected device
   const { level, isMonitoring } = useAudioLevelMonitor({
     deviceName: selectedDevice,
@@ -46,15 +50,34 @@ export function AudioDeviceSelector() {
 
   return (
     <div className="audio-device-selector">
-      <label
-        htmlFor="audio-device-select"
-        className="audio-device-selector__label"
-      >
-        Microphone
-      </label>
+      <div className="audio-device-selector__header">
+        <label
+          htmlFor="audio-device-select"
+          className="audio-device-selector__label"
+        >
+          Microphone
+        </label>
+        <button
+          type="button"
+          className="audio-device-selector__refresh-button"
+          onClick={refresh}
+          title="Refresh device list"
+          aria-label="Refresh device list"
+        >
+          ↻
+        </button>
+      </div>
+
+      {!isSelectedDeviceAvailable && (
+        <div className="audio-device-selector__warning">
+          ⚠️ Selected device "{selectedDevice}" is not connected. Recording will
+          use system default.
+        </div>
+      )}
+
       <select
         id="audio-device-select"
-        className="audio-device-selector__select"
+        className={`audio-device-selector__select${!isSelectedDeviceAvailable ? " audio-device-selector__select--unavailable" : ""}`}
         value={selectedDevice ?? ""}
         onChange={handleChange}
       >
@@ -65,6 +88,12 @@ export function AudioDeviceSelector() {
             {device.isDefault ? " (Default)" : ""}
           </option>
         ))}
+        {/* Show selected device even if unavailable */}
+        {selectedDevice && !devices.some((d) => d.name === selectedDevice) && (
+          <option value={selectedDevice} disabled>
+            {selectedDevice} (Disconnected)
+          </option>
+        )}
       </select>
       <AudioLevelMeter level={level} isMonitoring={isMonitoring} />
     </div>

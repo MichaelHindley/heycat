@@ -212,4 +212,100 @@ describe("AudioDeviceSelector", () => {
     expect(screen.getByRole("progressbar")).toBeDefined();
     expect(screen.getByText(/Monitoring|Idle/)).toBeDefined();
   });
+
+  it("shows refresh button in header", async () => {
+    render(<AudioDeviceSelector />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Microphone")).toBeDefined();
+    });
+
+    const refreshButton = screen.getByRole("button", {
+      name: "Refresh device list",
+    });
+    expect(refreshButton).toBeDefined();
+  });
+
+  it("refresh button triggers device fetch", async () => {
+    const user = userEvent.setup();
+    render(<AudioDeviceSelector />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Microphone")).toBeDefined();
+    });
+
+    const refreshButton = screen.getByRole("button", {
+      name: "Refresh device list",
+    });
+    await user.click(refreshButton);
+
+    // Verify invoke was called again
+    expect(mockInvoke).toHaveBeenCalledWith("list_audio_devices");
+  });
+
+  it("shows warning when selected device is unavailable", async () => {
+    mockStore.get.mockImplementation((key: string) => {
+      if (key === "audio.selectedDevice")
+        return Promise.resolve("Disconnected USB Mic");
+      return Promise.resolve(undefined);
+    });
+
+    render(<AudioDeviceSelector />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Microphone")).toBeDefined();
+    });
+
+    // Warning should be displayed
+    expect(
+      screen.getByText(/Selected device "Disconnected USB Mic" is not connected/)
+    ).toBeDefined();
+  });
+
+  it("shows disconnected device in dropdown when unavailable", async () => {
+    mockStore.get.mockImplementation((key: string) => {
+      if (key === "audio.selectedDevice")
+        return Promise.resolve("Disconnected USB Mic");
+      return Promise.resolve(undefined);
+    });
+
+    render(<AudioDeviceSelector />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Microphone")).toBeDefined();
+    });
+
+    // Should show the disconnected device option
+    expect(screen.getByText("Disconnected USB Mic (Disconnected)")).toBeDefined();
+  });
+
+  it("does not show warning when System Default is selected", async () => {
+    mockStore.get.mockResolvedValue(null);
+
+    render(<AudioDeviceSelector />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Microphone")).toBeDefined();
+    });
+
+    // Warning should NOT be displayed
+    expect(screen.queryByText(/is not connected/)).toBeNull();
+  });
+
+  it("does not show warning when selected device is available", async () => {
+    mockStore.get.mockImplementation((key: string) => {
+      if (key === "audio.selectedDevice")
+        return Promise.resolve("USB Microphone");
+      return Promise.resolve(undefined);
+    });
+
+    render(<AudioDeviceSelector />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Microphone")).toBeDefined();
+    });
+
+    // Warning should NOT be displayed
+    expect(screen.queryByText(/is not connected/)).toBeNull();
+  });
 });

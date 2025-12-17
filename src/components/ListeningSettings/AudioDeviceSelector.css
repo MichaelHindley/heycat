@@ -5,10 +5,43 @@
   gap: 8px;
 }
 
+.audio-device-selector__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
 .audio-device-selector__label {
   font-size: 14px;
   font-weight: 500;
   color: #1f2937;
+}
+
+.audio-device-selector__refresh-button {
+  background: none;
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 8px;
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+
+.audio-device-selector__refresh-button:hover {
+  opacity: 1;
+}
+
+.audio-device-selector__warning {
+  padding: 8px 12px;
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: 4px;
+  font-size: 13px;
+  color: #856404;
+}
+
+.audio-device-selector__select--unavailable {
+  border-color: #ffc107;
 }
 
 .audio-device-selector__select {
@@ -70,6 +103,20 @@
 @media (prefers-color-scheme: dark) {
   .audio-device-selector__label {
     color: #f9fafb;
+  }
+
+  .audio-device-selector__refresh-button {
+    color: #f9fafb;
+  }
+
+  .audio-device-selector__warning {
+    background: #422006;
+    border-color: #92400e;
+    color: #fbbf24;
+  }
+
+  .audio-device-selector__select--unavailable {
+    border-color: #92400e;
   }
 
   .audio-device-selector__select {
