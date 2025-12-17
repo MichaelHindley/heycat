@@ -76,23 +76,6 @@ describe("AudioErrorDialog", () => {
     });
   });
 
-  describe("permissionDenied error", () => {
-    const error: AudioDeviceError = { type: "permissionDenied" };
-
-    it("shows correct title", () => {
-      render(<AudioErrorDialog {...defaultProps} error={error} />);
-
-      expect(screen.getByText("Microphone Access Required")).toBeDefined();
-    });
-
-    it("shows Open Settings and Try Again buttons", () => {
-      render(<AudioErrorDialog {...defaultProps} error={error} />);
-
-      expect(screen.getByText("Open Settings")).toBeDefined();
-      expect(screen.getByText("Try Again")).toBeDefined();
-    });
-  });
-
   describe("deviceDisconnected error", () => {
     const error: AudioDeviceError = { type: "deviceDisconnected" };
 

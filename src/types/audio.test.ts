@@ -20,11 +20,6 @@ describe("AudioDeviceError types", () => {
       expect(getErrorType(error)).toBe("noDevicesAvailable");
     });
 
-    it("returns permissionDenied for permissionDenied error", () => {
-      const error: AudioDeviceError = { type: "permissionDenied" };
-      expect(getErrorType(error)).toBe("permissionDenied");
-    });
-
     it("returns deviceDisconnected for deviceDisconnected error", () => {
       const error: AudioDeviceError = { type: "deviceDisconnected" };
       expect(getErrorType(error)).toBe("deviceDisconnected");
@@ -54,13 +49,6 @@ describe("AudioDeviceError types", () => {
       const error: AudioDeviceError = { type: "noDevicesAvailable" };
       expect(getErrorMessage(error)).toBe(
         "No audio input devices were found. Please connect a microphone."
-      );
-    });
-
-    it("returns appropriate message for permissionDenied", () => {
-      const error: AudioDeviceError = { type: "permissionDenied" };
-      expect(getErrorMessage(error)).toBe(
-        "Microphone access was denied. Please grant permission in System Preferences."
       );
     });
 

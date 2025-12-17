@@ -255,7 +255,7 @@ describe("useAudioErrorHandler", () => {
       expect(errorCallback).not.toBeNull();
     });
 
-    const error: AudioDeviceError = { type: "permissionDenied" };
+    const error: AudioDeviceError = { type: "noDevicesAvailable" };
 
     act(() => {
       errorCallback!({ payload: error });

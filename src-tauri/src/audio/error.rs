@@ -13,11 +13,9 @@ pub enum AudioDeviceError {
     DeviceNotFound { device_name: String },
     /// No audio input devices detected on the system
     NoDevicesAvailable,
-    /// Microphone permission denied by the operating system
-    PermissionDenied,
     /// Device disconnected during active recording
     DeviceDisconnected,
-    /// Generic capture error with details
+    /// Generic capture error with details (includes permission errors on macOS)
     #[serde(rename_all = "camelCase")]
     CaptureError { message: String },
 }
@@ -30,9 +28,6 @@ impl std::fmt::Display for AudioDeviceError {
             }
             AudioDeviceError::NoDevicesAvailable => {
                 write!(f, "No audio input devices detected")
-            }
-            AudioDeviceError::PermissionDenied => {
-                write!(f, "Microphone permission denied")
             }
             AudioDeviceError::DeviceDisconnected => {
                 write!(f, "Device disconnected during recording")
@@ -68,12 +63,6 @@ mod tests {
     }
 
     #[test]
-    fn test_permission_denied_display() {
-        let err = AudioDeviceError::PermissionDenied;
-        assert_eq!(err.to_string(), "Microphone permission denied");
-    }
-
-    #[test]
     fn test_device_disconnected_display() {
         let err = AudioDeviceError::DeviceDisconnected;
         assert_eq!(err.to_string(), "Device disconnected during recording");
@@ -102,13 +91,6 @@ mod tests {
         let err = AudioDeviceError::NoDevicesAvailable;
         let json = serde_json::to_string(&err).unwrap();
         assert!(json.contains("\"type\":\"noDevicesAvailable\""));
-    }
-
-    #[test]
-    fn test_serialize_permission_denied() {
-        let err = AudioDeviceError::PermissionDenied;
-        let json = serde_json::to_string(&err).unwrap();
-        assert!(json.contains("\"type\":\"permissionDenied\""));
     }
 
     #[test]

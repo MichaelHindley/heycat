@@ -9,7 +9,7 @@ import "./AudioErrorDialog.css";
 interface ErrorConfig {
   title: string;
   description: string;
-  actions: ("retry" | "selectDevice" | "openSettings")[];
+  actions: ("retry" | "selectDevice")[];
 }
 
 const ERROR_CONFIG: Record<AudioDeviceErrorType, ErrorConfig> = {
@@ -24,12 +24,6 @@ const ERROR_CONFIG: Record<AudioDeviceErrorType, ErrorConfig> = {
     description:
       "No audio input devices were found. Please connect a microphone.",
     actions: ["retry"],
-  },
-  permissionDenied: {
-    title: "Microphone Access Required",
-    description:
-      "heycat needs permission to access your microphone. Please grant access in System Preferences.",
-    actions: ["openSettings", "retry"],
   },
   deviceDisconnected: {
     title: "Microphone Disconnected",
@@ -71,15 +65,6 @@ export function AudioErrorDialog({
     error.type === "captureError" || error.type === "deviceNotFound"
       ? getErrorMessage(error)
       : config.description;
-
-  const handleOpenSettings = () => {
-    // On macOS, open System Preferences > Security & Privacy > Microphone
-    // This requires a shell command or Tauri API - for now, provide instructions
-    window.open(
-      "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
-      "_blank"
-    );
-  };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
@@ -125,15 +110,6 @@ export function AudioErrorDialog({
               onClick={onSelectDevice}
             >
               Select Device
-            </button>
-          )}
-          {config.actions.includes("openSettings") && (
-            <button
-              type="button"
-              className="audio-error-dialog__button audio-error-dialog__button--primary"
-              onClick={handleOpenSettings}
-            >
-              Open Settings
             </button>
           )}
           {config.actions.includes("retry") && (
