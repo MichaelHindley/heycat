@@ -37,6 +37,17 @@ impl Default for CpalBackend {
     }
 }
 
+/// Find an audio input device by name
+///
+/// Searches through all input devices and returns the one matching the given name.
+/// Returns None if no device with that name is found.
+fn find_device_by_name(name: &str) -> Option<cpal::Device> {
+    let host = cpal::default_host();
+    host.input_devices()
+        .ok()?
+        .find(|d| d.name().map(|n| n == name).unwrap_or(false))
+}
+
 /// Try to find a supported config with the target sample rate
 fn find_config_with_sample_rate(
     device: &cpal::Device,
@@ -169,6 +180,7 @@ impl AudioCaptureBackend for CpalBackend {
         &mut self,
         buffer: AudioBuffer,
         stop_signal: Option<Sender<StopReason>>,
+        device_name: Option<String>,
     ) -> Result<u32, AudioCaptureError> {
         info!("Starting audio capture (target: {}Hz)...", TARGET_SAMPLE_RATE);
 
@@ -176,11 +188,30 @@ impl AudioCaptureBackend for CpalBackend {
         let host = cpal::default_host();
         debug!("Host: {:?}", host.id());
 
-        // Get the default input device
-        let device = host.default_input_device().ok_or_else(|| {
-            error!("No input device available!");
-            AudioCaptureError::NoDeviceAvailable
-        })?;
+        // Find the requested device or fall back to default
+        let device = if let Some(ref name) = device_name {
+            match find_device_by_name(name) {
+                Some(d) => {
+                    info!("Using requested device: {}", name);
+                    d
+                }
+                None => {
+                    warn!(
+                        "Requested device '{}' not found, falling back to default",
+                        name
+                    );
+                    host.default_input_device().ok_or_else(|| {
+                        error!("No input device available!");
+                        AudioCaptureError::NoDeviceAvailable
+                    })?
+                }
+            }
+        } else {
+            host.default_input_device().ok_or_else(|| {
+                error!("No input device available!");
+                AudioCaptureError::NoDeviceAvailable
+            })?
+        };
         debug!(
             "Input device: {:?}",
             device.name().unwrap_or_else(|_| "Unknown".to_string())

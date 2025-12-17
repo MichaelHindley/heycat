@@ -319,7 +319,11 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                 let model_available = check_model_exists_for_type(ModelType::ParakeetTDT).unwrap_or(false);
 
                 // Use unified command implementation
-                match start_recording_impl(state, self.audio_thread.as_deref(), model_available) {
+                // Note: device_name is None here because hotkey integration doesn't have
+                // direct access to frontend settings. The frontend passes device_name when
+                // using the Tauri command. For hotkey-triggered recordings, we use the
+                // system default device.
+                match start_recording_impl(state, self.audio_thread.as_deref(), model_available, None) {
                     Ok(()) => {
                         self.recording_emitter
                             .emit_recording_started(RecordingStartedPayload {

@@ -24,7 +24,11 @@ pub struct StopResult {
 pub enum AudioCommand {
     /// Start capturing audio into the provided buffer
     /// Includes a response channel to return the sample rate or error
-    Start(AudioBuffer, Sender<StartResponse>),
+    Start {
+        buffer: AudioBuffer,
+        response_tx: Sender<StartResponse>,
+        device_name: Option<String>,
+    },
     /// Stop capturing audio and return result via channel
     Stop(Option<Sender<StopResult>>),
     /// Shutdown the audio thread (used in tests)
@@ -61,11 +65,36 @@ impl AudioThreadHandle {
     ///
     /// Returns the actual sample rate of the audio device on success.
     /// Blocks until the audio thread responds.
+    ///
+    /// # Arguments
+    /// * `buffer` - The audio buffer to capture samples into
     #[must_use = "this returns a Result that should be handled"]
     pub fn start(&self, buffer: AudioBuffer) -> Result<u32, AudioThreadError> {
+        self.start_with_device(buffer, None)
+    }
+
+    /// Start audio capture into the provided buffer using a specific device
+    ///
+    /// Returns the actual sample rate of the audio device on success.
+    /// If the specified device is not found, falls back to the default device.
+    /// Blocks until the audio thread responds.
+    ///
+    /// # Arguments
+    /// * `buffer` - The audio buffer to capture samples into
+    /// * `device_name` - Optional device name; None uses the default device
+    #[must_use = "this returns a Result that should be handled"]
+    pub fn start_with_device(
+        &self,
+        buffer: AudioBuffer,
+        device_name: Option<String>,
+    ) -> Result<u32, AudioThreadError> {
         let (response_tx, response_rx) = mpsc::channel();
         self.sender
-            .send(AudioCommand::Start(buffer, response_tx))
+            .send(AudioCommand::Start {
+                buffer,
+                response_tx,
+                device_name,
+            })
             .map_err(|_| AudioThreadError::ThreadDisconnected)?;
 
         // Wait for response from audio thread
@@ -189,14 +218,18 @@ fn audio_thread_main(receiver: Receiver<AudioCommand>) {
         };
 
         match command {
-            AudioCommand::Start(buffer, response_tx) => {
-                debug!("Received START command");
+            AudioCommand::Start {
+                buffer,
+                response_tx,
+                device_name,
+            } => {
+                debug!("Received START command, device={:?}", device_name);
                 // Create stop signal channel for callbacks
                 let (stop_tx, stop_rx) = mpsc::channel();
                 stop_signal_rx = Some(stop_rx);
                 pending_stop_reason = None;
 
-                let result = backend.start(buffer, Some(stop_tx));
+                let result = backend.start(buffer, Some(stop_tx), device_name);
                 match &result {
                     Ok(sample_rate) => {
                         info!("Audio capture started at {} Hz", sample_rate)
@@ -281,6 +314,86 @@ mod tests {
         assert!(handle.stop().is_ok());
 
         // Shutdown
+        assert!(handle.shutdown().is_ok());
+    }
+
+    /// Test AudioCommand::Start includes device_name field
+    #[test]
+    fn test_audio_command_start_includes_device() {
+        let buffer = AudioBuffer::new();
+        let (response_tx, _response_rx) = mpsc::channel::<StartResponse>();
+
+        // Test with Some device name
+        let cmd_with_device = AudioCommand::Start {
+            buffer: buffer.clone(),
+            response_tx: response_tx.clone(),
+            device_name: Some("Test Microphone".to_string()),
+        };
+
+        // Verify the command can hold device_name (compile-time check)
+        match cmd_with_device {
+            AudioCommand::Start { device_name, .. } => {
+                assert_eq!(device_name, Some("Test Microphone".to_string()));
+            }
+            _ => panic!("Expected Start command"),
+        }
+
+        // Test with None device name
+        let (response_tx2, _) = mpsc::channel::<StartResponse>();
+        let cmd_without_device = AudioCommand::Start {
+            buffer,
+            response_tx: response_tx2,
+            device_name: None,
+        };
+
+        match cmd_without_device {
+            AudioCommand::Start { device_name, .. } => {
+                assert!(device_name.is_none());
+            }
+            _ => panic!("Expected Start command"),
+        }
+    }
+
+    /// Test start_with_device sends correct command
+    #[test]
+    #[cfg_attr(coverage_nightly, coverage(off))]
+    fn test_start_with_device_passes_device_name() {
+        let handle = AudioThreadHandle::spawn();
+        let buffer = AudioBuffer::new();
+
+        // Start with a non-existent device - should fall back to default
+        let result = handle.start_with_device(buffer, Some("NonExistent Device".to_string()));
+
+        // Either succeeds with sample rate (fallback to default) or fails with CaptureError
+        match result {
+            Ok(sample_rate) => assert!(sample_rate > 0),
+            Err(AudioThreadError::CaptureError(_)) => {} // Expected in CI without audio device
+            Err(e) => panic!("Unexpected error: {:?}", e),
+        }
+
+        // Stop and shutdown
+        let _ = handle.stop();
+        assert!(handle.shutdown().is_ok());
+    }
+
+    /// Test start delegates to start_with_device with None
+    #[test]
+    #[cfg_attr(coverage_nightly, coverage(off))]
+    fn test_start_uses_default_device() {
+        let handle = AudioThreadHandle::spawn();
+        let buffer = AudioBuffer::new();
+
+        // start() should behave like start_with_device(buffer, None)
+        let result = handle.start(buffer);
+
+        match result {
+            Ok(sample_rate) => assert!(sample_rate > 0),
+            Err(AudioThreadError::CaptureError(_)) => {} // Expected in CI without audio device
+            Err(e) => panic!("Unexpected error: {:?}", e),
+        }
+
+        // Stop and shutdown
+        let _ = handle.stop();
         assert!(handle.shutdown().is_ok());
     }
 }

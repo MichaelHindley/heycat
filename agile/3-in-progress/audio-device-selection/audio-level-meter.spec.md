@@ -1,7 +1,7 @@
 ---
-status: in-progress
+status: completed
 created: 2025-12-15
-completed: null
+completed: 2025-12-17
 dependencies:
   - device-enumeration
   - device-selector-ui
@@ -400,3 +400,98 @@ Create a visual audio level meter that displays real-time input levels for the s
 4. Select different device → verify meter switches to new device
 5. Navigate away from settings → verify monitor stops (no device usage)
 6. Return to settings → verify monitor restarts
+
+## Review
+
+**Reviewed:** 2025-12-17
+**Reviewer:** Claude
+
+### Pre-Review Gates
+
+**Build Warning Check:**
+```
+warning: unused imports: `VAD_CHUNK_SIZE_16KHZ` and `VAD_CHUNK_SIZE_8KHZ`
+```
+PASS - No new warnings from audio level meter code. Existing warning is unrelated (VAD chunk sizes in another module).
+
+**Command Registration Check:**
+PASS - `start_audio_monitor` and `stop_audio_monitor` are registered in `src-tauri/src/lib.rs:245-246`.
+
+**Event Subscription Check:**
+PASS - `audio-level` event emitted in `src-tauri/src/commands/mod.rs:609` and listened to in `src/hooks/useAudioLevelMonitor.ts:77`.
+
+### Data Flow Trace
+
+```
+[UI Action] Device selector visible
+     |
+     v
+[Hook] src/hooks/useAudioLevelMonitor.ts:51 invoke("start_audio_monitor")
+     |
+     v
+[Command] src-tauri/src/commands/mod.rs:597 start_audio_monitor()
+     |
+     v
+[Logic] src-tauri/src/audio/monitor.rs:55 AudioMonitorHandle::start()
+     |
+     v
+[Event] emit!("audio-level") at src-tauri/src/commands/mod.rs:609
+     |
+     v
+[Listener] src/hooks/useAudioLevelMonitor.ts:77 listen("audio-level")
+     |
+     v
+[State Update] setLevel() at src/hooks/useAudioLevelMonitor.ts:84
+     |
+     v
+[UI Re-render] AudioLevelMeter component
+```
+
+### Acceptance Criteria Verification
+
+| Criterion | Status | Evidence |
+|-----------|--------|----------|
+| Audio level meter component renders a horizontal bar visualization | PASS | src/components/ListeningSettings/AudioLevelMeter.tsx:29-50 - progressbar with meter-track/fill |
+| Level updates in real-time (~20fps) when monitoring is active | PASS | src/hooks/useAudioLevelMonitor.ts:83-85 - 50ms interval; backend throttles at src-tauri/src/audio/monitor.rs:186 |
+| Meter shows levels from 0 (silence) to 100 (maximum) | PASS | aria-valuemin=0, aria-valuemax=100 at AudioLevelMeter.tsx:37-38; backend caps at 100 in monitor.rs:206 |
+| Tauri command `start_audio_monitor` starts level monitoring for specified device | PASS | src-tauri/src/commands/mod.rs:597-615 |
+| Tauri command `stop_audio_monitor` stops monitoring and releases device | PASS | src-tauri/src/commands/mod.rs:621-623 |
+| Backend emits `audio-level` events with current level (0-100) | PASS | src-tauri/src/commands/mod.rs:609 |
+| Monitor starts automatically when device selector is visible | PASS | AudioDeviceSelector.tsx:14-17 calls useAudioLevelMonitor with enabled based on loading state |
+| Monitor stops when user navigates away from settings | PASS | useAudioLevelMonitor.ts:92-101 cleanup stops monitor on unmount |
+| Level meter integrated into `AudioDeviceSelector` component | PASS | AudioDeviceSelector.tsx:69 renders AudioLevelMeter |
+| Visual design indicates "safe" (green), "optimal" (yellow), "clipping" (red) zones | PASS | AudioLevelMeter.tsx:23-27 zone classes; AudioLevelMeter.css defines colors |
+
+### Test Coverage Audit
+
+| Test Case | Status | Location |
+|-----------|--------|----------|
+| `test_level_meter_renders` | PASS | src/components/ListeningSettings/AudioLevelMeter.test.tsx:6-13 |
+| `test_level_meter_updates` | PASS | src/hooks/useAudioLevelMonitor.test.ts:84-110 |
+| `test_start_monitor_command` | PASS | src/hooks/useAudioLevelMonitor.test.ts:56-69 |
+| `test_stop_monitor_command` | PASS | src/hooks/useAudioLevelMonitor.test.ts:112-129 |
+| `test_level_event_emission` | PASS | src/hooks/useAudioLevelMonitor.test.ts:84-110 (via event callback simulation) |
+| `test_monitor_uses_selected_device` | PASS | src/hooks/useAudioLevelMonitor.test.ts:72-81 |
+| `test_cleanup_on_unmount` | PASS | src/hooks/useAudioLevelMonitor.test.ts:112-129 |
+
+Additional backend tests at src-tauri/src/audio/monitor.rs:231-259 (all passing).
+
+### Code Quality
+
+**Strengths:**
+- Clean separation: dedicated monitor thread isolates cpal::Stream (not Send+Sync)
+- Proper throttling at both backend (~20 emissions/sec) and frontend (50ms interval)
+- Robust cleanup on unmount with cancelled flag pattern
+- Good accessibility: progressbar role with aria attributes
+- BEM-style CSS class naming for maintainability
+
+**Concerns:**
+- None identified
+
+### Deferrals
+
+No deferrals found in implementation code.
+
+### Verdict
+
+**APPROVED** - All acceptance criteria verified with evidence. Complete data flow from UI to backend and back. All 7 specified test cases pass (plus additional tests). Commands registered and invoked correctly. Events emitted and listened to. No orphaned code or broken links.

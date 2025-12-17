@@ -129,12 +129,15 @@ pub trait AudioCaptureBackend {
     /// Start capturing audio into the provided buffer
     /// Returns the actual sample rate of the audio device
     ///
-    /// The optional `stop_signal` sender can be used by callbacks to signal
-    /// that recording should stop (e.g., buffer full, lock error).
+    /// # Arguments
+    /// * `buffer` - The audio buffer to capture samples into
+    /// * `stop_signal` - Optional sender to signal stop (e.g., buffer full, lock error)
+    /// * `device_name` - Optional device name to use; falls back to default if not found
     fn start(
         &mut self,
         buffer: AudioBuffer,
         stop_signal: Option<std::sync::mpsc::Sender<StopReason>>,
+        device_name: Option<String>,
     ) -> Result<u32, AudioCaptureError>;
 
     /// Stop capturing audio

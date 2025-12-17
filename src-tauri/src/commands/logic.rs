@@ -41,6 +41,7 @@ pub struct RecordingStateInfo {
 /// * `state` - The recording manager state
 /// * `audio_thread` - Optional audio thread handle for starting capture
 /// * `model_available` - Whether the transcription model is available
+/// * `device_name` - Optional device name to use; falls back to default if not found
 ///
 /// # Errors
 /// Returns an error string if:
@@ -53,8 +54,12 @@ pub fn start_recording_impl(
     state: &Mutex<RecordingManager>,
     audio_thread: Option<&AudioThreadHandle>,
     model_available: bool,
+    device_name: Option<String>,
 ) -> Result<(), String> {
-    debug!("start_recording_impl called, model_available={}", model_available);
+    debug!(
+        "start_recording_impl called, model_available={}, device={:?}",
+        model_available, device_name
+    );
 
     // Check model availability first
     if !model_available {
@@ -87,7 +92,7 @@ pub fn start_recording_impl(
 
     // Start audio capture if audio thread is available
     if let Some(audio_thread) = audio_thread {
-        match audio_thread.start(buffer) {
+        match audio_thread.start_with_device(buffer, device_name) {
             Ok(sample_rate) => {
                 // Update with actual sample rate from device
                 manager.set_sample_rate(sample_rate);

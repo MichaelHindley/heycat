@@ -148,11 +148,15 @@ impl ListeningEventEmitter for TauriEventEmitter {
 }
 
 /// Start recording audio from the microphone
+///
+/// # Arguments
+/// * `device_name` - Optional device name to use; falls back to default if not found
 #[tauri::command]
 pub fn start_recording(
     app_handle: AppHandle,
     state: State<'_, ProductionState>,
     audio_thread: State<'_, AudioThreadState>,
+    device_name: Option<String>,
 ) -> Result<(), String> {
     // Check model availability before starting recording (check TDT model for batch transcription)
     let model_available =
@@ -163,7 +167,12 @@ pub fn start_recording(
                 false
             }
         };
-    let result = start_recording_impl(state.as_ref(), Some(audio_thread.as_ref()), model_available);
+    let result = start_recording_impl(
+        state.as_ref(),
+        Some(audio_thread.as_ref()),
+        model_available,
+        device_name,
+    );
 
     // Emit event on success for frontend state sync
     if result.is_ok() {

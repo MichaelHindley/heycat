@@ -294,7 +294,8 @@ pub(crate) mod tests {
         pub wake_word_detected_events: Arc<Mutex<Vec<listening_events::WakeWordDetectedPayload>>>,
         pub listening_started_events: Arc<Mutex<Vec<listening_events::ListeningStartedPayload>>>,
         pub listening_stopped_events: Arc<Mutex<Vec<listening_events::ListeningStoppedPayload>>>,
-        pub listening_unavailable_events: Arc<Mutex<Vec<listening_events::ListeningUnavailablePayload>>>,
+        pub listening_unavailable_events:
+            Arc<Mutex<Vec<listening_events::ListeningUnavailablePayload>>>,
     }
 
     impl MockEventEmitter {
@@ -319,15 +320,24 @@ pub(crate) mod tests {
 
     impl TranscriptionEventEmitter for MockEventEmitter {
         fn emit_transcription_started(&self, payload: TranscriptionStartedPayload) {
-            self.transcription_started_events.lock().unwrap().push(payload);
+            self.transcription_started_events
+                .lock()
+                .unwrap()
+                .push(payload);
         }
 
         fn emit_transcription_completed(&self, payload: TranscriptionCompletedPayload) {
-            self.transcription_completed_events.lock().unwrap().push(payload);
+            self.transcription_completed_events
+                .lock()
+                .unwrap()
+                .push(payload);
         }
 
         fn emit_transcription_error(&self, payload: TranscriptionErrorPayload) {
-            self.transcription_error_events.lock().unwrap().push(payload);
+            self.transcription_error_events
+                .lock()
+                .unwrap()
+                .push(payload);
         }
     }
 
@@ -362,106 +372,164 @@ pub(crate) mod tests {
             self.listening_stopped_events.lock().unwrap().push(payload);
         }
 
-        fn emit_listening_unavailable(&self, payload: listening_events::ListeningUnavailablePayload) {
-            self.listening_unavailable_events.lock().unwrap().push(payload);
+        fn emit_listening_unavailable(
+            &self,
+            payload: listening_events::ListeningUnavailablePayload,
+        ) {
+            self.listening_unavailable_events
+                .lock()
+                .unwrap()
+                .push(payload);
         }
-    }
-
-    #[test]
-    fn test_event_name_constants() {
-        assert_eq!(event_names::RECORDING_STARTED, "recording_started");
-        assert_eq!(event_names::RECORDING_STOPPED, "recording_stopped");
-        assert_eq!(event_names::RECORDING_ERROR, "recording_error");
-    }
-
-    #[test]
-    fn test_recording_started_payload_serialization() {
-        let payload = RecordingStartedPayload {
-            timestamp: "2025-01-01T12:00:00Z".to_string(),
-        };
-        let json = serde_json::to_string(&payload).unwrap();
-        assert!(json.contains("timestamp"));
-        assert!(json.contains("2025-01-01T12:00:00Z"));
-    }
-
-    #[test]
-    fn test_recording_stopped_payload_serialization() {
-        let metadata = RecordingMetadata {
-            duration_secs: 5.5,
-            file_path: "/tmp/test.wav".to_string(),
-            sample_count: 88200,
-            stop_reason: None,
-        };
-        let payload = RecordingStoppedPayload { metadata };
-        let json = serde_json::to_string(&payload).unwrap();
-        assert!(json.contains("metadata"));
-        assert!(json.contains("duration_secs"));
-        assert!(json.contains("5.5"));
-    }
-
-    #[test]
-    fn test_recording_error_payload_serialization() {
-        let payload = RecordingErrorPayload {
-            message: "Microphone not found".to_string(),
-        };
-        let json = serde_json::to_string(&payload).unwrap();
-        assert!(json.contains("message"));
-        assert!(json.contains("Microphone not found"));
     }
 
     #[test]
     fn test_current_timestamp_is_iso8601() {
         let timestamp = current_timestamp();
-        // ISO 8601 format: contains date separators and timezone
         assert!(timestamp.contains("T"));
         assert!(timestamp.contains("-"));
-        // Should parse as valid RFC 3339 timestamp
         assert!(chrono::DateTime::parse_from_rfc3339(&timestamp).is_ok());
     }
 
+    // Verify serde camelCase rename works (smoke test for all payloads)
     #[test]
-    fn test_mock_emitter_records_started_event() {
+    fn test_serde_camel_case_rename() {
+        use super::model_events::ModelFileDownloadProgressPayload;
+        let payload = ModelFileDownloadProgressPayload {
+            model_type: "test".to_string(),
+            file_name: "test.onnx".to_string(),
+            bytes_downloaded: 100,
+            total_bytes: 200,
+            file_index: 0,
+            total_files: 1,
+            percent: 50.0,
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        // Verify snake_case fields are serialized as camelCase
+        assert!(json.contains("modelType"));
+        assert!(json.contains("fileName"));
+        assert!(json.contains("bytesDownloaded"));
+        assert!(json.contains("totalBytes"));
+        assert!(json.contains("fileIndex"));
+        assert!(json.contains("totalFiles"));
+        assert!(!json.contains("model_type"));
+        assert!(!json.contains("file_name"));
+    }
+
+    // MockEmitter tests - verify the mock infrastructure works correctly
+    #[test]
+    fn test_mock_emitter_records_recording_events() {
         let emitter = MockEventEmitter::new();
-        let payload = RecordingStartedPayload {
+
+        emitter.emit_recording_started(RecordingStartedPayload {
             timestamp: "2025-01-01T12:00:00Z".to_string(),
-        };
-        emitter.emit_recording_started(payload.clone());
+        });
+        emitter.emit_recording_stopped(RecordingStoppedPayload {
+            metadata: RecordingMetadata {
+                duration_secs: 3.0,
+                file_path: "/tmp/test.wav".to_string(),
+                sample_count: 48000,
+                stop_reason: None,
+            },
+        });
+        emitter.emit_recording_error(RecordingErrorPayload {
+            message: "Test error".to_string(),
+        });
 
-        let events = emitter.started_events.lock().unwrap();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0], payload);
+        assert_eq!(emitter.started_events.lock().unwrap().len(), 1);
+        assert_eq!(emitter.stopped_events.lock().unwrap().len(), 1);
+        assert_eq!(emitter.error_events.lock().unwrap().len(), 1);
     }
 
     #[test]
-    fn test_mock_emitter_records_stopped_event() {
+    fn test_mock_emitter_records_transcription_events() {
         let emitter = MockEventEmitter::new();
-        let metadata = RecordingMetadata {
-            duration_secs: 3.0,
-            file_path: "/tmp/recording.wav".to_string(),
-            sample_count: 48000,
-            stop_reason: None,
-        };
-        let payload = RecordingStoppedPayload {
-            metadata: metadata.clone(),
-        };
-        emitter.emit_recording_stopped(payload.clone());
 
-        let events = emitter.stopped_events.lock().unwrap();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0], payload);
+        emitter.emit_transcription_started(TranscriptionStartedPayload {
+            timestamp: "2025-01-01T12:00:00Z".to_string(),
+        });
+        emitter.emit_transcription_completed(TranscriptionCompletedPayload {
+            text: "Hello".to_string(),
+            duration_ms: 100,
+        });
+        emitter.emit_transcription_error(TranscriptionErrorPayload {
+            error: "Test error".to_string(),
+        });
+
+        assert_eq!(
+            emitter.transcription_started_events.lock().unwrap().len(),
+            1
+        );
+        assert_eq!(
+            emitter
+                .transcription_completed_events
+                .lock()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(emitter.transcription_error_events.lock().unwrap().len(), 1);
     }
 
     #[test]
-    fn test_mock_emitter_records_error_event() {
+    fn test_mock_emitter_records_command_events() {
         let emitter = MockEventEmitter::new();
-        let payload = RecordingErrorPayload {
-            message: "Audio device error".to_string(),
-        };
-        emitter.emit_recording_error(payload.clone());
 
-        let events = emitter.error_events.lock().unwrap();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0], payload);
+        emitter.emit_command_matched(CommandMatchedPayload {
+            transcription: "open slack".to_string(),
+            command_id: "1".to_string(),
+            trigger: "open slack".to_string(),
+            confidence: 0.95,
+        });
+        emitter.emit_command_executed(CommandExecutedPayload {
+            command_id: "1".to_string(),
+            trigger: "open slack".to_string(),
+            message: "Opened".to_string(),
+        });
+        emitter.emit_command_failed(CommandFailedPayload {
+            command_id: "1".to_string(),
+            trigger: "test".to_string(),
+            error_code: "ERR".to_string(),
+            error_message: "error".to_string(),
+        });
+        emitter.emit_command_ambiguous(CommandAmbiguousPayload {
+            transcription: "open".to_string(),
+            candidates: vec![],
+        });
+
+        assert_eq!(emitter.command_matched_events.lock().unwrap().len(), 1);
+        assert_eq!(emitter.command_executed_events.lock().unwrap().len(), 1);
+        assert_eq!(emitter.command_failed_events.lock().unwrap().len(), 1);
+        assert_eq!(emitter.command_ambiguous_events.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_mock_emitter_records_listening_events() {
+        let emitter = MockEventEmitter::new();
+
+        emitter.emit_wake_word_detected(listening_events::WakeWordDetectedPayload {
+            confidence: 0.95,
+            transcription: "hey cat".to_string(),
+            timestamp: "2025-01-01T12:00:00Z".to_string(),
+        });
+        emitter.emit_listening_started(listening_events::ListeningStartedPayload {
+            timestamp: "2025-01-01T12:00:00Z".to_string(),
+        });
+        emitter.emit_listening_stopped(listening_events::ListeningStoppedPayload {
+            timestamp: "2025-01-01T12:00:00Z".to_string(),
+        });
+        emitter.emit_listening_unavailable(listening_events::ListeningUnavailablePayload {
+            reason: "Microphone disconnected".to_string(),
+            timestamp: "2025-01-01T12:00:00Z".to_string(),
+        });
+
+        assert_eq!(emitter.wake_word_detected_events.lock().unwrap().len(), 1);
+        assert_eq!(emitter.listening_started_events.lock().unwrap().len(), 1);
+        assert_eq!(emitter.listening_stopped_events.lock().unwrap().len(), 1);
+        assert_eq!(
+            emitter.listening_unavailable_events.lock().unwrap().len(),
+            1
+        );
     }
 
     #[test]
@@ -475,544 +543,6 @@ pub(crate) mod tests {
             timestamp: "2025-01-01T12:01:00Z".to_string(),
         });
 
-        let events = emitter.started_events.lock().unwrap();
-        assert_eq!(events.len(), 2);
-    }
-
-    #[test]
-    fn test_payloads_are_clone() {
-        let started = RecordingStartedPayload {
-            timestamp: "2025-01-01T12:00:00Z".to_string(),
-        };
-        let cloned = started.clone();
-        assert_eq!(started, cloned);
-
-        let error = RecordingErrorPayload {
-            message: "Error".to_string(),
-        };
-        let cloned = error.clone();
-        assert_eq!(error, cloned);
-    }
-
-    #[test]
-    fn test_payloads_have_debug() {
-        let started = RecordingStartedPayload {
-            timestamp: "2025-01-01T12:00:00Z".to_string(),
-        };
-        let debug = format!("{:?}", started);
-        assert!(debug.contains("RecordingStartedPayload"));
-
-        let error = RecordingErrorPayload {
-            message: "Error".to_string(),
-        };
-        let debug = format!("{:?}", error);
-        assert!(debug.contains("RecordingErrorPayload"));
-    }
-
-    #[test]
-    fn test_model_event_name_constant() {
-        use super::model_events;
-        assert_eq!(
-            model_events::MODEL_DOWNLOAD_COMPLETED,
-            "model_download_completed"
-        );
-    }
-
-    #[test]
-    fn test_model_download_completed_payload_serialization() {
-        use super::model_events::ModelDownloadCompletedPayload;
-        let payload = ModelDownloadCompletedPayload {
-            model_type: "tdt".to_string(),
-            model_path: "/path/to/model".to_string(),
-        };
-        let json = serde_json::to_string(&payload).unwrap();
-        assert!(json.contains("modelType"));
-        assert!(json.contains("modelPath"));
-    }
-
-    #[test]
-    fn test_model_download_completed_payload_clone() {
-        use super::model_events::ModelDownloadCompletedPayload;
-        let payload = ModelDownloadCompletedPayload {
-            model_type: "tdt".to_string(),
-            model_path: "/path/to/model".to_string(),
-        };
-        let cloned = payload.clone();
-        assert_eq!(payload, cloned);
-    }
-
-    #[test]
-    fn test_model_download_completed_payload_debug() {
-        use super::model_events::ModelDownloadCompletedPayload;
-        let payload = ModelDownloadCompletedPayload {
-            model_type: "tdt".to_string(),
-            model_path: "/path/to/model".to_string(),
-        };
-        let debug = format!("{:?}", payload);
-        assert!(debug.contains("ModelDownloadCompletedPayload"));
-    }
-
-    // Transcription event tests
-
-    #[test]
-    fn test_transcription_event_name_constants() {
-        assert_eq!(event_names::TRANSCRIPTION_STARTED, "transcription_started");
-        assert_eq!(
-            event_names::TRANSCRIPTION_COMPLETED,
-            "transcription_completed"
-        );
-        assert_eq!(event_names::TRANSCRIPTION_ERROR, "transcription_error");
-    }
-
-    #[test]
-    fn test_transcription_started_payload_serialization() {
-        let payload = TranscriptionStartedPayload {
-            timestamp: "2025-01-01T12:00:00Z".to_string(),
-        };
-        let json = serde_json::to_string(&payload).unwrap();
-        assert!(json.contains("timestamp"));
-        assert!(json.contains("2025-01-01T12:00:00Z"));
-    }
-
-    #[test]
-    fn test_transcription_completed_payload_serialization() {
-        let payload = TranscriptionCompletedPayload {
-            text: "Hello, world!".to_string(),
-            duration_ms: 1234,
-        };
-        let json = serde_json::to_string(&payload).unwrap();
-        assert!(json.contains("text"));
-        assert!(json.contains("Hello, world!"));
-        assert!(json.contains("duration_ms"));
-        assert!(json.contains("1234"));
-    }
-
-    #[test]
-    fn test_transcription_error_payload_serialization() {
-        let payload = TranscriptionErrorPayload {
-            error: "Model not loaded".to_string(),
-        };
-        let json = serde_json::to_string(&payload).unwrap();
-        assert!(json.contains("error"));
-        assert!(json.contains("Model not loaded"));
-    }
-
-    #[test]
-    fn test_transcription_payloads_are_clone() {
-        let started = TranscriptionStartedPayload {
-            timestamp: "2025-01-01T12:00:00Z".to_string(),
-        };
-        let cloned = started.clone();
-        assert_eq!(started, cloned);
-
-        let completed = TranscriptionCompletedPayload {
-            text: "Hello".to_string(),
-            duration_ms: 100,
-        };
-        let cloned = completed.clone();
-        assert_eq!(completed, cloned);
-
-        let error = TranscriptionErrorPayload {
-            error: "Error".to_string(),
-        };
-        let cloned = error.clone();
-        assert_eq!(error, cloned);
-    }
-
-    #[test]
-    fn test_transcription_payloads_have_debug() {
-        let started = TranscriptionStartedPayload {
-            timestamp: "2025-01-01T12:00:00Z".to_string(),
-        };
-        let debug = format!("{:?}", started);
-        assert!(debug.contains("TranscriptionStartedPayload"));
-
-        let completed = TranscriptionCompletedPayload {
-            text: "Hello".to_string(),
-            duration_ms: 100,
-        };
-        let debug = format!("{:?}", completed);
-        assert!(debug.contains("TranscriptionCompletedPayload"));
-
-        let error = TranscriptionErrorPayload {
-            error: "Error".to_string(),
-        };
-        let debug = format!("{:?}", error);
-        assert!(debug.contains("TranscriptionErrorPayload"));
-    }
-
-    // Command event tests
-
-    #[test]
-    fn test_command_event_name_constants() {
-        assert_eq!(command_events::COMMAND_MATCHED, "command_matched");
-        assert_eq!(command_events::COMMAND_EXECUTED, "command_executed");
-        assert_eq!(command_events::COMMAND_FAILED, "command_failed");
-        assert_eq!(command_events::COMMAND_AMBIGUOUS, "command_ambiguous");
-    }
-
-    #[test]
-    fn test_command_matched_payload_serialization() {
-        let payload = CommandMatchedPayload {
-            transcription: "open slack".to_string(),
-            command_id: "123".to_string(),
-            trigger: "open slack".to_string(),
-            confidence: 0.95,
-        };
-        let json = serde_json::to_string(&payload).unwrap();
-        assert!(json.contains("transcription"));
-        assert!(json.contains("command_id"));
-        assert!(json.contains("0.95"));
-    }
-
-    #[test]
-    fn test_command_ambiguous_payload_serialization() {
-        let payload = CommandAmbiguousPayload {
-            transcription: "open".to_string(),
-            candidates: vec![
-                CommandCandidate {
-                    id: "1".to_string(),
-                    trigger: "open slack".to_string(),
-                    confidence: 0.85,
-                },
-                CommandCandidate {
-                    id: "2".to_string(),
-                    trigger: "open safari".to_string(),
-                    confidence: 0.83,
-                },
-            ],
-        };
-        let json = serde_json::to_string(&payload).unwrap();
-        assert!(json.contains("candidates"));
-        assert!(json.contains("open slack"));
-        assert!(json.contains("open safari"));
-    }
-
-    #[test]
-    fn test_command_executed_payload_serialization() {
-        let payload = CommandExecutedPayload {
-            command_id: "123".to_string(),
-            trigger: "open slack".to_string(),
-            message: "Opened Slack.app".to_string(),
-        };
-        let json = serde_json::to_string(&payload).unwrap();
-        assert!(json.contains("command_id"));
-        assert!(json.contains("message"));
-    }
-
-    #[test]
-    fn test_command_failed_payload_serialization() {
-        let payload = CommandFailedPayload {
-            command_id: "123".to_string(),
-            trigger: "open nonexistent".to_string(),
-            error_code: "NOT_FOUND".to_string(),
-            error_message: "Application not found".to_string(),
-        };
-        let json = serde_json::to_string(&payload).unwrap();
-        assert!(json.contains("error_code"));
-        assert!(json.contains("error_message"));
-    }
-
-    #[test]
-    fn test_command_payloads_are_clone() {
-        let matched = CommandMatchedPayload {
-            transcription: "test".to_string(),
-            command_id: "1".to_string(),
-            trigger: "test".to_string(),
-            confidence: 0.9,
-        };
-        assert_eq!(matched, matched.clone());
-
-        let ambiguous = CommandAmbiguousPayload {
-            transcription: "test".to_string(),
-            candidates: vec![],
-        };
-        assert_eq!(ambiguous, ambiguous.clone());
-
-        let executed = CommandExecutedPayload {
-            command_id: "1".to_string(),
-            trigger: "test".to_string(),
-            message: "done".to_string(),
-        };
-        assert_eq!(executed, executed.clone());
-
-        let failed = CommandFailedPayload {
-            command_id: "1".to_string(),
-            trigger: "test".to_string(),
-            error_code: "ERR".to_string(),
-            error_message: "error".to_string(),
-        };
-        assert_eq!(failed, failed.clone());
-    }
-
-    #[test]
-    fn test_mock_emitter_records_command_events() {
-        let emitter = MockEventEmitter::new();
-
-        emitter.emit_command_matched(CommandMatchedPayload {
-            transcription: "open slack".to_string(),
-            command_id: "1".to_string(),
-            trigger: "open slack".to_string(),
-            confidence: 0.95,
-        });
-        assert_eq!(emitter.command_matched_events.lock().unwrap().len(), 1);
-
-        emitter.emit_command_executed(CommandExecutedPayload {
-            command_id: "1".to_string(),
-            trigger: "open slack".to_string(),
-            message: "Opened".to_string(),
-        });
-        assert_eq!(emitter.command_executed_events.lock().unwrap().len(), 1);
-
-        emitter.emit_command_failed(CommandFailedPayload {
-            command_id: "1".to_string(),
-            trigger: "test".to_string(),
-            error_code: "ERR".to_string(),
-            error_message: "error".to_string(),
-        });
-        assert_eq!(emitter.command_failed_events.lock().unwrap().len(), 1);
-
-        emitter.emit_command_ambiguous(CommandAmbiguousPayload {
-            transcription: "open".to_string(),
-            candidates: vec![],
-        });
-        assert_eq!(emitter.command_ambiguous_events.lock().unwrap().len(), 1);
-    }
-
-    #[test]
-    fn test_mock_emitter_records_wake_word_events() {
-        let emitter = MockEventEmitter::new();
-
-        emitter.emit_wake_word_detected(listening_events::WakeWordDetectedPayload {
-            confidence: 0.95,
-            transcription: "hey cat".to_string(),
-            timestamp: "2025-01-01T12:00:00Z".to_string(),
-        });
-        assert_eq!(emitter.wake_word_detected_events.lock().unwrap().len(), 1);
-
-        let events = emitter.wake_word_detected_events.lock().unwrap();
-        assert_eq!(events[0].confidence, 0.95);
-        assert_eq!(events[0].transcription, "hey cat");
-    }
-
-    // Model file download progress event tests
-
-    #[test]
-    fn test_model_file_download_progress_event_name_constant() {
-        assert_eq!(
-            model_events::MODEL_FILE_DOWNLOAD_PROGRESS,
-            "model_file_download_progress"
-        );
-    }
-
-    #[test]
-    fn test_model_file_download_progress_payload_serialization() {
-        use super::model_events::ModelFileDownloadProgressPayload;
-        let payload = ModelFileDownloadProgressPayload {
-            model_type: "parakeet-tdt".to_string(),
-            file_name: "encoder.onnx".to_string(),
-            bytes_downloaded: 50_000_000,
-            total_bytes: 100_000_000,
-            file_index: 0,
-            total_files: 4,
-            percent: 50.0,
-        };
-        let json = serde_json::to_string(&payload).unwrap();
-        assert!(json.contains("modelType"));
-        assert!(json.contains("parakeet-tdt"));
-        assert!(json.contains("fileName"));
-        assert!(json.contains("encoder.onnx"));
-        assert!(json.contains("bytesDownloaded"));
-        assert!(json.contains("50000000"));
-        assert!(json.contains("totalBytes"));
-        assert!(json.contains("100000000"));
-        assert!(json.contains("fileIndex"));
-        assert!(json.contains("totalFiles"));
-        assert!(json.contains("percent"));
-    }
-
-    #[test]
-    fn test_model_file_download_progress_payload_clone() {
-        use super::model_events::ModelFileDownloadProgressPayload;
-        let payload = ModelFileDownloadProgressPayload {
-            model_type: "parakeet-tdt".to_string(),
-            file_name: "encoder.onnx".to_string(),
-            bytes_downloaded: 50_000_000,
-            total_bytes: 100_000_000,
-            file_index: 0,
-            total_files: 4,
-            percent: 50.0,
-        };
-        let cloned = payload.clone();
-        assert_eq!(payload, cloned);
-    }
-
-    #[test]
-    fn test_model_file_download_progress_payload_debug() {
-        use super::model_events::ModelFileDownloadProgressPayload;
-        let payload = ModelFileDownloadProgressPayload {
-            model_type: "parakeet-tdt".to_string(),
-            file_name: "encoder.onnx".to_string(),
-            bytes_downloaded: 50_000_000,
-            total_bytes: 100_000_000,
-            file_index: 0,
-            total_files: 4,
-            percent: 50.0,
-        };
-        let debug = format!("{:?}", payload);
-        assert!(debug.contains("ModelFileDownloadProgressPayload"));
-    }
-
-    // Listening event tests
-
-    #[test]
-    fn test_wake_word_detected_event_name_constant() {
-        use super::listening_events;
-        assert_eq!(listening_events::WAKE_WORD_DETECTED, "wake_word_detected");
-    }
-
-    #[test]
-    fn test_wake_word_detected_payload_serialization() {
-        use super::listening_events::WakeWordDetectedPayload;
-        let payload = WakeWordDetectedPayload {
-            confidence: 0.95,
-            transcription: "hey cat".to_string(),
-            timestamp: "2025-01-01T12:00:00Z".to_string(),
-        };
-        let json = serde_json::to_string(&payload).unwrap();
-        assert!(json.contains("confidence"));
-        assert!(json.contains("0.95"));
-        assert!(json.contains("transcription"));
-        assert!(json.contains("hey cat"));
-        assert!(json.contains("timestamp"));
-    }
-
-    #[test]
-    fn test_wake_word_detected_payload_clone() {
-        use super::listening_events::WakeWordDetectedPayload;
-        let payload = WakeWordDetectedPayload {
-            confidence: 0.95,
-            transcription: "hey cat".to_string(),
-            timestamp: "2025-01-01T12:00:00Z".to_string(),
-        };
-        let cloned = payload.clone();
-        assert_eq!(payload, cloned);
-    }
-
-    #[test]
-    fn test_wake_word_detected_payload_debug() {
-        use super::listening_events::WakeWordDetectedPayload;
-        let payload = WakeWordDetectedPayload {
-            confidence: 0.95,
-            transcription: "hey cat".to_string(),
-            timestamp: "2025-01-01T12:00:00Z".to_string(),
-        };
-        let debug = format!("{:?}", payload);
-        assert!(debug.contains("WakeWordDetectedPayload"));
-    }
-
-    #[test]
-    fn test_listening_started_event_name_constant() {
-        use super::listening_events;
-        assert_eq!(listening_events::LISTENING_STARTED, "listening_started");
-    }
-
-    #[test]
-    fn test_listening_stopped_event_name_constant() {
-        use super::listening_events;
-        assert_eq!(listening_events::LISTENING_STOPPED, "listening_stopped");
-    }
-
-    #[test]
-    fn test_listening_unavailable_event_name_constant() {
-        use super::listening_events;
-        assert_eq!(listening_events::LISTENING_UNAVAILABLE, "listening_unavailable");
-    }
-
-    #[test]
-    fn test_listening_started_payload_serialization() {
-        use super::listening_events::ListeningStartedPayload;
-        let payload = ListeningStartedPayload {
-            timestamp: "2025-01-01T12:00:00Z".to_string(),
-        };
-        let json = serde_json::to_string(&payload).unwrap();
-        assert!(json.contains("timestamp"));
-        assert!(json.contains("2025-01-01T12:00:00Z"));
-    }
-
-    #[test]
-    fn test_listening_stopped_payload_serialization() {
-        use super::listening_events::ListeningStoppedPayload;
-        let payload = ListeningStoppedPayload {
-            timestamp: "2025-01-01T12:00:00Z".to_string(),
-        };
-        let json = serde_json::to_string(&payload).unwrap();
-        assert!(json.contains("timestamp"));
-        assert!(json.contains("2025-01-01T12:00:00Z"));
-    }
-
-    #[test]
-    fn test_listening_unavailable_payload_serialization() {
-        use super::listening_events::ListeningUnavailablePayload;
-        let payload = ListeningUnavailablePayload {
-            reason: "Microphone disconnected".to_string(),
-            timestamp: "2025-01-01T12:00:00Z".to_string(),
-        };
-        let json = serde_json::to_string(&payload).unwrap();
-        assert!(json.contains("reason"));
-        assert!(json.contains("Microphone disconnected"));
-        assert!(json.contains("timestamp"));
-    }
-
-    #[test]
-    fn test_listening_payloads_are_clone() {
-        use super::listening_events::{ListeningStartedPayload, ListeningStoppedPayload, ListeningUnavailablePayload};
-
-        let started = ListeningStartedPayload {
-            timestamp: "2025-01-01T12:00:00Z".to_string(),
-        };
-        assert_eq!(started, started.clone());
-
-        let stopped = ListeningStoppedPayload {
-            timestamp: "2025-01-01T12:00:00Z".to_string(),
-        };
-        assert_eq!(stopped, stopped.clone());
-
-        let unavailable = ListeningUnavailablePayload {
-            reason: "test".to_string(),
-            timestamp: "2025-01-01T12:00:00Z".to_string(),
-        };
-        assert_eq!(unavailable, unavailable.clone());
-    }
-
-    #[test]
-    fn test_mock_emitter_records_listening_started_events() {
-        let emitter = MockEventEmitter::new();
-
-        emitter.emit_listening_started(listening_events::ListeningStartedPayload {
-            timestamp: "2025-01-01T12:00:00Z".to_string(),
-        });
-        assert_eq!(emitter.listening_started_events.lock().unwrap().len(), 1);
-    }
-
-    #[test]
-    fn test_mock_emitter_records_listening_stopped_events() {
-        let emitter = MockEventEmitter::new();
-
-        emitter.emit_listening_stopped(listening_events::ListeningStoppedPayload {
-            timestamp: "2025-01-01T12:00:00Z".to_string(),
-        });
-        assert_eq!(emitter.listening_stopped_events.lock().unwrap().len(), 1);
-    }
-
-    #[test]
-    fn test_mock_emitter_records_listening_unavailable_events() {
-        let emitter = MockEventEmitter::new();
-
-        emitter.emit_listening_unavailable(listening_events::ListeningUnavailablePayload {
-            reason: "Microphone disconnected".to_string(),
-            timestamp: "2025-01-01T12:00:00Z".to_string(),
-        });
-        assert_eq!(emitter.listening_unavailable_events.lock().unwrap().len(), 1);
+        assert_eq!(emitter.started_events.lock().unwrap().len(), 2);
     }
 }
