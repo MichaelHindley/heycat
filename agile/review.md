@@ -1,6 +1,6 @@
 # Integration-Focused Review
 
-You are reviewing a spec for a **Tauri v2 desktop application** with React frontend and Rust backend. The primary failure mode is code that exists but is not wired up end-to-end.
+You are reviewing a spec for a **Tauri v2 desktop application** with React frontend and Rust backend. One of the primary failure modes is code that exists but is not wired up end-to-end.
 
 ## Pre-Review Gates (Automated)
 
@@ -33,7 +33,7 @@ grep -rn "listen<" src/hooks --include="*.ts" | grep -oP '"[a-z_]+"'
 
 ---
 
-## Manual Review (5 Questions)
+## Manual Review (6 Questions)
 
 ### 1. Is the code wired up end-to-end?
 
@@ -107,6 +107,36 @@ Paste the output from Pre-Review Gates above:
 [paste output]
 ```
 
+### 6. Frontend-Only Integration Check (for UI specs without backend changes)
+
+When the spec creates hooks or components but no backend commands/events:
+
+#### App Entry Point Verification
+```bash
+# Find where the component's parent is rendered
+grep -rn "AppShell\|<App" src/ --include="*.tsx" | head -5
+```
+
+Check the app entry point (usually `src/App.tsx`):
+- [ ] New hooks are called here (not just in intermediate components)
+- [ ] New state is passed to child components (not hardcoded values)
+- [ ] Dynamic data flows from hooks → props → component
+
+#### Hardcoded Value Check
+```bash
+# Look for hardcoded status/state props where dynamic should be
+grep -rn 'status="idle"\|status="ready"\|isRecording={false}' src/App.tsx src/components/
+```
+**NEEDS_WORK if state that should come from a hook is hardcoded.**
+
+#### Hook Usage Check
+For each new hook created:
+| Hook | Created In | Called In | Passes Data To |
+|------|------------|-----------|----------------|
+| [name] | hooks/useX.ts | App.tsx:NN | Component.prop |
+
+**NEEDS_WORK if "Called In" is only test files or component files (not app entry point).**
+
 ---
 
 ## Verdict
@@ -115,7 +145,7 @@ Paste the output from Pre-Review Gates above:
 All of the following must be true:
 - [ ] All automated checks pass (no warnings, all registrations verified)
 - [ ] All new code is reachable from production (not test-only)
-- [ ] Data flow is complete with no broken links
+- [ ] Data flow is complete with no broken links (backend-frontend AND frontend-only)
 - [ ] All deferrals reference tracking specs
 
 ### NEEDS_WORK
