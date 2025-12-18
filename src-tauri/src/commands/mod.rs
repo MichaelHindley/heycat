@@ -876,5 +876,58 @@ pub fn get_recording_shortcut(app_handle: AppHandle) -> String {
         .unwrap_or_else(|| crate::hotkey::RECORDING_SHORTCUT.to_string())
 }
 
+// =============================================================================
+// Keyboard Capture Commands (for fn key and special key recording)
+// =============================================================================
+
+/// Type alias for keyboard capture state
+pub type KeyboardCaptureState = Arc<Mutex<crate::keyboard_capture::KeyboardCapture>>;
+
+/// Start capturing keyboard events for shortcut recording
+///
+/// This uses IOKit HID to capture all keyboard events including the fn key,
+/// which JavaScript's KeyboardEvent API cannot detect. Captured keys are
+/// emitted via the "shortcut_key_captured" event.
+///
+/// Requires Input Monitoring permission on macOS.
+#[tauri::command]
+pub fn start_shortcut_recording(
+    app_handle: AppHandle,
+    capture_state: State<'_, KeyboardCaptureState>,
+) -> Result<(), String> {
+    crate::info!("Starting shortcut recording...");
+
+    let mut capture = capture_state.lock().map_err(|e| e.to_string())?;
+
+    if capture.is_running() {
+        return Err("Shortcut recording is already running".to_string());
+    }
+
+    let app_handle_clone = app_handle.clone();
+    capture.start(move |event| {
+        // Emit the captured key event to the frontend
+        if let Err(e) = app_handle_clone.emit(event_names::SHORTCUT_KEY_CAPTURED, &event) {
+            crate::warn!("Failed to emit shortcut_key_captured event: {}", e);
+        }
+    })?;
+
+    crate::info!("Shortcut recording started");
+    Ok(())
+}
+
+/// Stop capturing keyboard events
+#[tauri::command]
+pub fn stop_shortcut_recording(
+    capture_state: State<'_, KeyboardCaptureState>,
+) -> Result<(), String> {
+    crate::info!("Stopping shortcut recording...");
+
+    let mut capture = capture_state.lock().map_err(|e| e.to_string())?;
+    capture.stop()?;
+
+    crate::info!("Shortcut recording stopped");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests;

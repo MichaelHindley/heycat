@@ -9,6 +9,13 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => mockInvoke(...args),
 }));
 
+// Mock Tauri listen
+const mockUnlisten = vi.fn();
+const mockListen = vi.fn(() => Promise.resolve(mockUnlisten));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: (...args: unknown[]) => mockListen(...args),
+}));
+
 describe("ShortcutEditor", () => {
   const defaultProps = {
     open: true,
@@ -21,6 +28,7 @@ describe("ShortcutEditor", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockInvoke.mockResolvedValue(undefined);
+    mockListen.mockReturnValue(Promise.resolve(mockUnlisten));
   });
 
   describe("Theming", () => {
@@ -57,6 +65,21 @@ describe("ShortcutEditor", () => {
       await waitFor(() => {
         expect(screen.getByText("Press your shortcut...")).toBeDefined();
         expect(screen.getByRole("button", { name: "Recording..." })).toBeDefined();
+      });
+    });
+
+    it("starts backend keyboard capture when entering recording mode", async () => {
+      const user = userEvent.setup();
+      render(<ShortcutEditor {...defaultProps} />);
+
+      await user.click(screen.getByRole("button", { name: "Record New Shortcut" }));
+
+      await waitFor(() => {
+        // Backend capture commands should be called
+        expect(mockInvoke).toHaveBeenCalledWith("suspend_recording_shortcut");
+        expect(mockInvoke).toHaveBeenCalledWith("start_shortcut_recording");
+        // Should listen for key capture events
+        expect(mockListen).toHaveBeenCalledWith("shortcut_key_captured", expect.any(Function));
       });
     });
 
@@ -141,6 +164,119 @@ describe("ShortcutEditor", () => {
 
       const saveButton = screen.getByRole("button", { name: "Save" });
       expect(saveButton.hasAttribute("disabled")).toBe(true);
+    });
+  });
+
+  describe("Backend Key Capture Integration", () => {
+    it("records shortcut when backend emits non-modifier key event", async () => {
+      // Capture the event callback when listen is called
+      let capturedCallback: ((event: { payload: unknown }) => void) | undefined;
+      mockListen.mockImplementation((_eventName: string, callback: (event: { payload: unknown }) => void) => {
+        capturedCallback = callback;
+        return Promise.resolve(mockUnlisten);
+      });
+
+      const user = userEvent.setup();
+      const onSave = vi.fn();
+      render(<ShortcutEditor {...defaultProps} onSave={onSave} />);
+
+      // Enter recording mode
+      await user.click(screen.getByRole("button", { name: "Record New Shortcut" }));
+
+      await waitFor(() => {
+        expect(capturedCallback).toBeDefined();
+      });
+
+      // Simulate backend emitting a key event with fn modifier
+      capturedCallback?.({
+        payload: {
+          key_code: 0x04, // A key
+          key_name: "A",
+          fn_key: true,
+          command: true,
+          control: false,
+          alt: false,
+          shift: false,
+          pressed: true,
+        },
+      });
+
+      // Should show the recorded shortcut
+      await waitFor(() => {
+        expect(screen.getByText("fn⌘A")).toBeDefined();
+      });
+
+      // Save button should be enabled now
+      const saveButton = screen.getByRole("button", { name: "Save" });
+      expect(saveButton.hasAttribute("disabled")).toBe(false);
+    });
+
+    it("ignores key release events", async () => {
+      let capturedCallback: ((event: { payload: unknown }) => void) | undefined;
+      mockListen.mockImplementation((_eventName: string, callback: (event: { payload: unknown }) => void) => {
+        capturedCallback = callback;
+        return Promise.resolve(mockUnlisten);
+      });
+
+      const user = userEvent.setup();
+      render(<ShortcutEditor {...defaultProps} />);
+
+      await user.click(screen.getByRole("button", { name: "Record New Shortcut" }));
+
+      await waitFor(() => {
+        expect(capturedCallback).toBeDefined();
+      });
+
+      // Simulate backend emitting a key release event
+      capturedCallback?.({
+        payload: {
+          key_code: 0x04,
+          key_name: "A",
+          fn_key: false,
+          command: false,
+          control: false,
+          alt: false,
+          shift: false,
+          pressed: false, // Release event
+        },
+      });
+
+      // Should still be recording
+      expect(screen.getByText("Press your shortcut...")).toBeDefined();
+    });
+
+    it("ignores modifier-only key events", async () => {
+      let capturedCallback: ((event: { payload: unknown }) => void) | undefined;
+      mockListen.mockImplementation((_eventName: string, callback: (event: { payload: unknown }) => void) => {
+        capturedCallback = callback;
+        return Promise.resolve(mockUnlisten);
+      });
+
+      const user = userEvent.setup();
+      render(<ShortcutEditor {...defaultProps} />);
+
+      await user.click(screen.getByRole("button", { name: "Record New Shortcut" }));
+
+      await waitFor(() => {
+        expect(capturedCallback).toBeDefined();
+      });
+
+      // Simulate backend emitting a modifier-only event
+      capturedCallback?.({
+        payload: {
+          key_code: 0xE3,
+          key_name: "Command",
+          fn_key: false,
+          command: true,
+          control: false,
+          alt: false,
+          shift: false,
+          pressed: true,
+        },
+      });
+
+      // Should still be recording (modifier-only events are ignored)
+      expect(screen.getByText("Press your shortcut...")).toBeDefined();
     });
   });
 });

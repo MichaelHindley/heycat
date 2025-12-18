@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { X } from "lucide-react";
 import { Button } from "../../components/ui";
 
@@ -11,61 +12,67 @@ export interface ShortcutEditorProps {
   onSave: (displayShortcut: string, backendShortcut: string) => void;
 }
 
-// Convert key event to display string (e.g., "⌘⇧R")
-function formatKeyForDisplay(e: KeyboardEvent): string {
+// Backend captured key event structure
+interface CapturedKeyEvent {
+  key_code: number;
+  key_name: string;
+  fn_key: boolean;
+  command: boolean;
+  control: boolean;
+  alt: boolean;
+  shift: boolean;
+  pressed: boolean;
+}
+
+// Convert backend key event to display string (e.g., "fn⌘⇧R")
+function formatBackendKeyForDisplay(event: CapturedKeyEvent): string {
   const parts: string[] = [];
 
-  // Add modifiers in standard order
-  if (e.metaKey) parts.push("⌘");
-  if (e.ctrlKey) parts.push("⌃");
-  if (e.altKey) parts.push("⌥");
-  if (e.shiftKey) parts.push("⇧");
+  // Add modifiers in standard order (fn first since it's special)
+  if (event.fn_key) parts.push("fn");
+  if (event.command) parts.push("⌘");
+  if (event.control) parts.push("⌃");
+  if (event.alt) parts.push("⌥");
+  if (event.shift) parts.push("⇧");
 
   // Add the main key (excluding modifier keys themselves)
-  const key = e.key;
-  if (!["Meta", "Control", "Alt", "Shift"].includes(key)) {
-    // Special key mappings
+  const isModifierKey = ["Command", "Control", "Alt", "Shift", "fn"].includes(event.key_name);
+  if (!isModifierKey) {
+    // Special key mappings for display
     const keyMap: Record<string, string> = {
-      ArrowUp: "↑",
-      ArrowDown: "↓",
-      ArrowLeft: "←",
-      ArrowRight: "→",
+      Up: "↑",
+      Down: "↓",
+      Left: "←",
+      Right: "→",
       Enter: "↵",
       Backspace: "⌫",
       Delete: "⌦",
       Escape: "Esc",
       Tab: "⇥",
-      " ": "Space",
+      Space: "Space",
     };
-    parts.push(keyMap[key] || key.toUpperCase());
+    parts.push(keyMap[event.key_name] || event.key_name);
   }
 
   return parts.join("");
 }
 
-// Convert key event to backend format (e.g., "Command+Shift+R")
-// Uses exact modifiers pressed, not CmdOrControl shorthand
-function formatKeyForBackend(e: KeyboardEvent): string {
+// Convert backend key event to backend format (e.g., "Function+Command+Shift+R")
+function formatBackendKeyForBackend(event: CapturedKeyEvent): string {
   const parts: string[] = [];
 
-  // Add modifiers in standard order - use exact keys pressed
-  if (e.metaKey) parts.push("Command");  // Cmd key on Mac
-  if (e.ctrlKey) parts.push("Control");  // Ctrl key
-  if (e.altKey) parts.push("Alt");
-  if (e.shiftKey) parts.push("Shift");
+  // Add modifiers in standard order
+  // Note: Tauri's global-shortcut uses "Function" for fn key
+  if (event.fn_key) parts.push("Function");
+  if (event.command) parts.push("Command");
+  if (event.control) parts.push("Control");
+  if (event.alt) parts.push("Alt");
+  if (event.shift) parts.push("Shift");
 
   // Add the main key (excluding modifier keys themselves)
-  const key = e.key;
-  if (!["Meta", "Control", "Alt", "Shift"].includes(key)) {
-    // Normalize key names for the backend
-    const keyMap: Record<string, string> = {
-      ArrowUp: "Up",
-      ArrowDown: "Down",
-      ArrowLeft: "Left",
-      ArrowRight: "Right",
-      " ": "Space",
-    };
-    parts.push(keyMap[key] || key.toUpperCase());
+  const isModifierKey = ["Command", "Control", "Alt", "Shift", "fn"].includes(event.key_name);
+  if (!isModifierKey) {
+    parts.push(event.key_name);
   }
 
   return parts.join("+");
@@ -85,6 +92,7 @@ export function ShortcutEditor({
   } | null>(null);
   const [shortcutSuspended, setShortcutSuspended] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const unlistenRef = useRef<UnlistenFn | null>(null);
 
   // Suspend global shortcut when entering recording mode
   const suspendShortcut = useCallback(async () => {
@@ -108,6 +116,28 @@ export function ShortcutEditor({
     }
   }, [shortcutSuspended]);
 
+  // Start backend keyboard capture
+  const startCapture = useCallback(async () => {
+    try {
+      // Start the backend keyboard capture
+      await invoke("start_shortcut_recording");
+      console.log("[ShortcutEditor] Backend keyboard capture started");
+    } catch (error) {
+      console.error("Failed to start keyboard capture:", error);
+      setRecording(false);
+    }
+  }, []);
+
+  // Stop backend keyboard capture
+  const stopCapture = useCallback(async () => {
+    try {
+      await invoke("stop_shortcut_recording");
+      console.log("[ShortcutEditor] Backend keyboard capture stopped");
+    } catch (error) {
+      console.error("Failed to stop keyboard capture:", error);
+    }
+  }, []);
+
   // Reset state when modal opens
   useEffect(() => {
     if (open) {
@@ -117,43 +147,63 @@ export function ShortcutEditor({
     }
   }, [open]);
 
-  // Handle keyboard events when recording
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      if (!recording) return;
-
-      e.preventDefault();
-      e.stopPropagation();
-
-      // Record any key (with or without modifiers)
-      // Skip if only a modifier key is pressed by itself
-      const isModifierKey = ["Meta", "Control", "Alt", "Shift"].includes(e.key);
-
-      console.log("[ShortcutEditor] Key pressed:", e.key, "isModifier:", isModifierKey, "recording:", recording);
-
-      if (!isModifierKey) {
-        const display = formatKeyForDisplay(e);
-        const backend = formatKeyForBackend(e);
-        console.log("[ShortcutEditor] Recording shortcut - display:", display, "backend:", backend);
-        setRecordedShortcut({ display, backend });
-        setRecording(false);
-        // Don't resume here - wait for save/cancel to resume or update
-      }
-    },
-    [recording]
-  );
-
-  // Add/remove keyboard listener
+  // Handle backend key events when recording
   useEffect(() => {
-    if (recording) {
-      console.log("[ShortcutEditor] Adding keydown listener, recording:", recording);
-      window.addEventListener("keydown", handleKeyDown, true);
-      return () => {
-        console.log("[ShortcutEditor] Removing keydown listener");
-        window.removeEventListener("keydown", handleKeyDown, true);
-      };
+    if (!recording) {
+      // Clean up listener when not recording
+      if (unlistenRef.current) {
+        unlistenRef.current();
+        unlistenRef.current = null;
+      }
+      return;
     }
-  }, [recording, handleKeyDown]);
+
+    // Start backend capture and listen for events
+    let isMounted = true;
+
+    const setupCapture = async () => {
+      // Start backend capture
+      await startCapture();
+
+      // Listen for captured key events
+      const unlisten = await listen<CapturedKeyEvent>("shortcut_key_captured", (event) => {
+        if (!isMounted) return;
+
+        const keyEvent = event.payload;
+        console.log("[ShortcutEditor] Key captured from backend:", keyEvent);
+
+        // Only process key press events (not releases)
+        if (!keyEvent.pressed) return;
+
+        // Check if this is just a modifier key by itself
+        const isModifierKey = ["Command", "Control", "Alt", "Shift", "fn"].includes(keyEvent.key_name);
+
+        if (!isModifierKey) {
+          // Non-modifier key pressed - record the shortcut
+          const display = formatBackendKeyForDisplay(keyEvent);
+          const backend = formatBackendKeyForBackend(keyEvent);
+          console.log("[ShortcutEditor] Recording shortcut - display:", display, "backend:", backend);
+          setRecordedShortcut({ display, backend });
+          setRecording(false);
+          // Stop capture after recording
+          stopCapture();
+        }
+      });
+
+      unlistenRef.current = unlisten;
+    };
+
+    setupCapture();
+
+    return () => {
+      isMounted = false;
+      if (unlistenRef.current) {
+        unlistenRef.current();
+        unlistenRef.current = null;
+      }
+      stopCapture();
+    };
+  }, [recording, startCapture, stopCapture]);
 
   // Handle click outside to close
   useEffect(() => {
@@ -161,6 +211,7 @@ export function ShortcutEditor({
 
     const handleClickOutside = (e: MouseEvent) => {
       if (dialogRef.current && !dialogRef.current.contains(e.target as Node)) {
+        stopCapture();
         resumeShortcut();
         onOpenChange(false);
       }
@@ -168,14 +219,15 @@ export function ShortcutEditor({
 
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [open, onOpenChange, resumeShortcut]);
+  }, [open, onOpenChange, resumeShortcut, stopCapture]);
 
-  // Handle Escape to close (when not recording)
+  // Handle Escape to close (when not recording) - still use JS event for this
   useEffect(() => {
     if (!open) return;
 
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !recording) {
+        stopCapture();
         resumeShortcut();
         onOpenChange(false);
       }
@@ -183,7 +235,7 @@ export function ShortcutEditor({
 
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
-  }, [open, recording, onOpenChange, resumeShortcut]);
+  }, [open, recording, onOpenChange, resumeShortcut, stopCapture]);
 
   if (!open) return null;
 
@@ -216,6 +268,7 @@ export function ShortcutEditor({
         <button
           type="button"
           onClick={() => {
+            stopCapture();
             resumeShortcut();
             onOpenChange(false);
           }}
@@ -284,6 +337,7 @@ export function ShortcutEditor({
 
           <div className="flex gap-2">
             <Button variant="ghost" onClick={() => {
+              stopCapture();
               resumeShortcut();
               onOpenChange(false);
             }}>
@@ -304,7 +358,7 @@ export function ShortcutEditor({
 
         {/* Help text */}
         <p className="mt-4 text-xs text-text-secondary text-center">
-          Press any key or combination (e.g., F1, ⌘R, ⌘⇧R)
+          Press any key or combination (e.g., fn, F1, ⌘R, fn⌘R)
         </p>
       </div>
     </div>

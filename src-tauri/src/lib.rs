@@ -8,6 +8,7 @@ mod audio_constants;
 mod commands;
 mod events;
 mod hotkey;
+mod keyboard_capture;
 mod listening;
 mod model;
 mod parakeet;
@@ -275,6 +276,10 @@ pub fn run() {
             // Store service in state for cleanup on exit
             app.manage(service);
 
+            // Create keyboard capture state for shortcut recording with fn key support
+            let keyboard_capture = Arc::new(Mutex::new(keyboard_capture::KeyboardCapture::new()));
+            app.manage(keyboard_capture);
+
             info!("Setup complete! Ready to record.");
             Ok(())
         })
@@ -316,7 +321,9 @@ pub fn run() {
             commands::suspend_recording_shortcut,
             commands::resume_recording_shortcut,
             commands::update_recording_shortcut,
-            commands::get_recording_shortcut
+            commands::get_recording_shortcut,
+            commands::start_shortcut_recording,
+            commands::stop_shortcut_recording
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

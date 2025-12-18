@@ -16,6 +16,7 @@ pub mod event_names {
     pub const TRANSCRIPTION_STARTED: &str = "transcription_started";
     pub const TRANSCRIPTION_COMPLETED: &str = "transcription_completed";
     pub const TRANSCRIPTION_ERROR: &str = "transcription_error";
+    pub const SHORTCUT_KEY_CAPTURED: &str = "shortcut_key_captured";
 }
 
 /// Command-related event names
