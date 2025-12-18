@@ -12,6 +12,7 @@ mod listening;
 mod model;
 mod parakeet;
 mod recording;
+mod transcription;
 mod voice_commands;
 
 use std::sync::{Arc, Mutex};
@@ -146,6 +147,32 @@ pub fn run() {
                 info!("TDT model not found, batch transcription and wake word detection will require download first");
             }
 
+            // Create RecordingTranscriptionService for unified transcription flow
+            // This service is used by stop_recording command, HotkeyIntegration, and wake word flow
+            debug!("Creating RecordingTranscriptionService...");
+            let transcription_service_emitter = Arc::new(commands::TauriEventEmitter::new(app.handle().clone()));
+            let mut transcription_service = transcription::RecordingTranscriptionService::new(
+                shared_transcription_model.clone(),
+                transcription_service_emitter,
+                recording_state.clone(),
+                app.handle().clone(),
+            );
+
+            // Wire up voice command integration to transcription service if available
+            if let (Some(ref registry), Some(ref matcher), Some(ref dispatcher)) = (&command_registry, &command_matcher, &action_dispatcher) {
+                let service_command_emitter = Arc::new(commands::TauriEventEmitter::new(app.handle().clone()));
+                transcription_service = transcription_service
+                    .with_command_registry(registry.clone())
+                    .with_command_matcher(matcher.clone())
+                    .with_action_dispatcher(dispatcher.clone())
+                    .with_command_emitter(service_command_emitter);
+                debug!("Voice commands wired to TranscriptionService");
+            }
+
+            let transcription_service = Arc::new(transcription_service);
+            app.manage(transcription_service.clone());
+            debug!("RecordingTranscriptionService created and managed");
+
             // Create a wrapper to pass to HotkeyIntegration (it needs owned value, not Arc)
             let recording_emitter = commands::TauriEventEmitter::new(app.handle().clone());
             let command_emitter = Arc::new(commands::TauriEventEmitter::new(app.handle().clone()));
@@ -153,6 +180,13 @@ pub fn run() {
             // Create shortcut backend for Escape key registration (used by HotkeyIntegration)
             let escape_backend: Arc<dyn hotkey::ShortcutBackend + Send + Sync> =
                 Arc::new(hotkey::TauriShortcutBackend::new(app.handle().clone()));
+
+            // Create transcription callback that delegates to TranscriptionService
+            let transcription_service_for_callback = transcription_service.clone();
+            let transcription_callback: Arc<dyn Fn(String) + Send + Sync> =
+                Arc::new(move |file_path: String| {
+                    transcription_service_for_callback.process_recording(file_path);
+                });
 
             let mut integration_builder = hotkey::HotkeyIntegration::<
                 commands::TauriEventEmitter,
@@ -168,9 +202,10 @@ pub fn run() {
                 .with_command_emitter(command_emitter)
                 .with_listening_pipeline(listening_pipeline.clone())
                 .with_recording_detectors(recording_detectors.clone())
-                .with_shortcut_backend(escape_backend);
+                .with_shortcut_backend(escape_backend)
+                .with_transcription_callback(transcription_callback);
 
-            // Wire up voice command integration if available
+            // Wire up voice command integration if available (still needed for HotkeyIntegration's silence detection callback)
             if let (Some(registry), Some(matcher), Some(dispatcher)) = (command_registry, command_matcher, action_dispatcher) {
                 integration_builder = integration_builder
                     .with_command_registry(registry)

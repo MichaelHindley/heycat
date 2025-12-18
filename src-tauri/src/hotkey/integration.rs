@@ -119,6 +119,9 @@ pub struct HotkeyIntegration<R: RecordingEventEmitter, T: TranscriptionEventEmit
     double_tap_window_ms: u64,
     /// Double-tap detector for Escape key (created on recording start)
     double_tap_detector: Option<Arc<Mutex<DoubleTapDetector<Box<dyn Fn() + Send + Sync>>>>>,
+    /// Optional transcription callback - when set, delegates transcription to external service
+    /// This enables HotkeyIntegration to use TranscriptionService without tight coupling
+    transcription_callback: Option<Arc<dyn Fn(String) + Send + Sync>>,
 }
 
 impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmitter + 'static, C: CommandEventEmitter + 'static> HotkeyIntegration<R, T, C> {
@@ -149,6 +152,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             escape_registered: false,
             double_tap_window_ms: DEFAULT_DOUBLE_TAP_WINDOW_MS,
             double_tap_detector: None,
+            transcription_callback: None,
         }
     }
 
@@ -305,6 +309,19 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         self
     }
 
+    /// Set the transcription callback (builder pattern)
+    ///
+    /// When set, spawn_transcription will delegate to this callback instead of
+    /// performing transcription inline. This enables integration with
+    /// RecordingTranscriptionService while avoiding code duplication.
+    pub fn with_transcription_callback(
+        mut self,
+        callback: Arc<dyn Fn(String) + Send + Sync>,
+    ) -> Self {
+        self.transcription_callback = Some(callback);
+        self
+    }
+
     /// Set the escape callback after construction
     ///
     /// This allows setting the callback after the integration is wrapped in Arc<Mutex<>>,
@@ -342,6 +359,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             escape_registered: false,
             double_tap_window_ms: DEFAULT_DOUBLE_TAP_WINDOW_MS,
             double_tap_detector: None,
+            transcription_callback: None,
         }
     }
 
@@ -490,8 +508,21 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
     ///
     /// This method is public so it can be called from the wake word recording flow
     /// (via the coordinator) in addition to the hotkey recording flow.
+    ///
+    /// When a transcription_callback is configured (via with_transcription_callback),
+    /// this method delegates to that callback instead of performing transcription inline.
+    /// This enables integration with RecordingTranscriptionService.
     #[cfg_attr(coverage_nightly, coverage(off))]
     pub fn spawn_transcription(&self, file_path: String) {
+        // If a transcription callback is configured, delegate to it
+        // This enables HotkeyIntegration to use TranscriptionService without duplication
+        if let Some(ref callback) = self.transcription_callback {
+            info!("Delegating transcription to external service for: {}", file_path);
+            callback(file_path);
+            return;
+        }
+
+        // Fallback: inline transcription (for backward compatibility and tests)
         // Check all required components are present
         let shared_model = match &self.shared_transcription_model {
             Some(m) => m.clone(),

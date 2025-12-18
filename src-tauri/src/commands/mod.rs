@@ -56,6 +56,9 @@ pub type HotkeyIntegrationState = Arc<Mutex<crate::hotkey::HotkeyIntegration<Tau
 /// Type alias for recording detectors state
 pub type RecordingDetectorsState = Arc<Mutex<crate::listening::RecordingDetectors>>;
 
+/// Type alias for transcription service state
+pub type TranscriptionServiceState = Arc<crate::transcription::RecordingTranscriptionService<TauriEventEmitter, TauriEventEmitter>>;
+
 /// Tauri AppHandle-based event emitter for production use
 pub struct TauriEventEmitter {
     app_handle: AppHandle,
@@ -224,12 +227,17 @@ pub fn start_recording(
 }
 
 /// Stop recording and save the audio to a WAV file
+///
+/// After successfully stopping the recording, this command triggers transcription
+/// via the TranscriptionService. This enables button-initiated recordings to get
+/// the same transcription flow as hotkey-initiated recordings.
 #[tauri::command]
 pub fn stop_recording(
     app_handle: AppHandle,
     state: State<'_, ProductionState>,
     audio_thread: State<'_, AudioThreadState>,
     listening_state: State<'_, ListeningState>,
+    transcription_service: State<'_, TranscriptionServiceState>,
 ) -> Result<RecordingMetadata, String> {
     // Check if listening mode is enabled to determine return state
     let return_to_listening = listening_state
@@ -262,6 +270,12 @@ pub fn stop_recording(
                 metadata: metadata.clone(),
             }
         );
+
+        // Trigger transcription via TranscriptionService
+        // This is what enables button-initiated recordings to get transcribed
+        if !metadata.file_path.is_empty() {
+            transcription_service.process_recording(metadata.file_path.clone());
+        }
     }
 
     result
