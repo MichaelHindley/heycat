@@ -1,5 +1,5 @@
 /* v8 ignore file -- @preserve */
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import "./App.css";
 import { RecordingIndicator } from "./components/RecordingIndicator";
 import { TranscriptionIndicator } from "./components/TranscriptionIndicator";
@@ -15,6 +15,7 @@ import { useAudioErrorHandler } from "./hooks/useAudioErrorHandler";
 import { useRecording } from "./hooks/useRecording";
 import { useSettings } from "./hooks/useSettings";
 import { useUIMode } from "./hooks/useUIMode";
+import { useAppStatus } from "./hooks/useAppStatus";
 
 function App() {
   const { settings } = useSettings();
@@ -23,11 +24,26 @@ function App() {
   const { startRecording } = useRecording({
     deviceName: settings.audio.selectedDevice,
   });
+  const { status: appStatus, isRecording } = useAppStatus();
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("history");
   const [navItem, setNavItem] = useState("dashboard");
   const { mode, toggle } = useUIMode();
+  const [recordingDuration, setRecordingDuration] = useState(0);
   useCatOverlay();
   useAutoStartListening();
+
+  // Track recording duration
+  useEffect(() => {
+    if (!isRecording) {
+      setRecordingDuration(0);
+      return;
+    }
+    setRecordingDuration(0);
+    const interval = setInterval(() => {
+      setRecordingDuration((prev) => prev + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isRecording]);
 
   const handleRetry = useCallback(() => {
     clearError();
@@ -47,7 +63,8 @@ function App() {
         <AppShell
           activeNavItem={navItem}
           onNavigate={setNavItem}
-          status="idle"
+          status={appStatus}
+          recordingDuration={isRecording ? recordingDuration : undefined}
           footerStateDescription="Ready for your command."
         >
           <div className="flex items-center justify-center h-full text-text-secondary">

@@ -6,11 +6,15 @@ import * as useRecordingModule from "./hooks/useRecording";
 import * as useTranscriptionModule from "./hooks/useTranscription";
 import * as useCatOverlayModule from "./hooks/useCatOverlay";
 import * as useAudioErrorHandlerModule from "./hooks/useAudioErrorHandler";
+import * as useListeningModule from "./hooks/useListening";
+import * as useAppStatusModule from "./hooks/useAppStatus";
 
 vi.mock("./hooks/useRecording");
 vi.mock("./hooks/useCatOverlay");
 vi.mock("./hooks/useTranscription");
 vi.mock("./hooks/useAudioErrorHandler");
+vi.mock("./hooks/useListening");
+vi.mock("./hooks/useAppStatus");
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockResolvedValue([]),
 }));
@@ -19,6 +23,8 @@ const mockUseRecording = vi.mocked(useRecordingModule.useRecording);
 const mockUseTranscription = vi.mocked(useTranscriptionModule.useTranscription);
 const mockUseCatOverlay = vi.mocked(useCatOverlayModule.useCatOverlay);
 const mockUseAudioErrorHandler = vi.mocked(useAudioErrorHandlerModule.useAudioErrorHandler);
+const mockUseListening = vi.mocked(useListeningModule.useListening);
+const mockUseAppStatus = vi.mocked(useAppStatusModule.useAppStatus);
 
 describe("App Integration", () => {
   const defaultRecordingMock: useRecordingModule.UseRecordingResult = {
@@ -43,12 +49,31 @@ describe("App Integration", () => {
     clearError: vi.fn(),
   };
 
+  const defaultListeningMock: useListeningModule.UseListeningReturn = {
+    isListening: false,
+    isWakeWordDetected: false,
+    isMicAvailable: true,
+    error: null,
+    enableListening: vi.fn(),
+    disableListening: vi.fn(),
+  };
+
+  const defaultAppStatusMock: useAppStatusModule.UseAppStatusResult = {
+    status: "idle",
+    isRecording: false,
+    isTranscribing: false,
+    isListening: false,
+    error: null,
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockUseRecording.mockReturnValue(defaultRecordingMock);
     mockUseTranscription.mockReturnValue(defaultTranscriptionMock);
     mockUseCatOverlay.mockReturnValue({ isRecording: false });
     mockUseAudioErrorHandler.mockReturnValue(defaultAudioErrorMock);
+    mockUseListening.mockReturnValue(defaultListeningMock);
+    mockUseAppStatus.mockReturnValue(defaultAppStatusMock);
   });
 
   it("renders RecordingIndicator component without errors", async () => {
@@ -70,6 +95,11 @@ describe("App Integration", () => {
 
     mockUseRecording.mockReturnValue({
       ...defaultRecordingMock,
+      isRecording: true,
+    });
+    mockUseAppStatus.mockReturnValue({
+      ...defaultAppStatusMock,
+      status: "recording",
       isRecording: true,
     });
 
