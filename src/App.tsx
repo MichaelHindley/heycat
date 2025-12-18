@@ -9,7 +9,7 @@ import { Sidebar, SidebarTab } from "./components/Sidebar";
 import { AppShell } from "./components/layout/AppShell";
 import { ToastProvider } from "./components/overlays";
 import { UIToggle } from "./components/dev";
-import { Dashboard, Commands, Recordings } from "./pages";
+import { Dashboard, Commands, Recordings, Settings } from "./pages";
 import { useTranscription } from "./hooks/useTranscription";
 import { useCatOverlay } from "./hooks/useCatOverlay";
 import { useAutoStartListening } from "./hooks/useAutoStartListening";
@@ -72,7 +72,8 @@ function App() {
           {navItem === "dashboard" && <Dashboard onNavigate={setNavItem} />}
           {navItem === "commands" && <Commands onNavigate={setNavItem} />}
           {navItem === "recordings" && <Recordings onNavigate={setNavItem} />}
-          {navItem !== "dashboard" && navItem !== "commands" && navItem !== "recordings" && (
+          {navItem === "settings" && <Settings onNavigate={setNavItem} />}
+          {navItem !== "dashboard" && navItem !== "commands" && navItem !== "recordings" && navItem !== "settings" && (
             <div className="flex items-center justify-center h-full text-text-secondary">
               <p>Page coming soon</p>
             </div>

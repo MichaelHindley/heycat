@@ -1,0 +1,158 @@
+import { useState } from "react";
+import { Card, CardContent, LabeledToggle, Button } from "../../components/ui";
+import { useSettings } from "../../hooks/useSettings";
+import { useToast } from "../../components/overlays";
+import { ShortcutEditor } from "./ShortcutEditor";
+
+export interface GeneralSettingsProps {
+  className?: string;
+}
+
+export function GeneralSettings({ className = "" }: GeneralSettingsProps) {
+  const { settings, updateAutoStartListening } = useSettings();
+  const { toast } = useToast();
+
+  // Local state for settings that don't have hooks yet
+  const [launchAtLogin, setLaunchAtLogin] = useState(false);
+  const [notifications, setNotifications] = useState(true);
+
+  // Shortcut editor modal state
+  const [isShortcutEditorOpen, setIsShortcutEditorOpen] = useState(false);
+
+  const handleLaunchAtLoginChange = async (checked: boolean) => {
+    setLaunchAtLogin(checked);
+    toast({
+      type: "success",
+      title: "Setting saved",
+      description: `Launch at login ${checked ? "enabled" : "disabled"}.`,
+    });
+  };
+
+  const handleAutoStartListeningChange = async (checked: boolean) => {
+    await updateAutoStartListening(checked);
+    toast({
+      type: "success",
+      title: "Setting saved",
+      description: `Auto-start listening ${checked ? "enabled" : "disabled"}.`,
+    });
+  };
+
+  const handleNotificationsChange = async (checked: boolean) => {
+    setNotifications(checked);
+    toast({
+      type: "success",
+      title: "Setting saved",
+      description: `Notifications ${checked ? "enabled" : "disabled"}.`,
+    });
+  };
+
+  return (
+    <div className={`space-y-6 ${className}`.trim()}>
+      {/* General Settings Section */}
+      <section>
+        <h2 className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-4">
+          General
+        </h2>
+        <Card>
+          <CardContent className="space-y-4 divide-y divide-border">
+            <div className="pt-0">
+              <LabeledToggle
+                label="Launch at Login"
+                description="Start HeyCat when you log in to your Mac"
+                checked={launchAtLogin}
+                onCheckedChange={handleLaunchAtLoginChange}
+              />
+            </div>
+            <div className="pt-4">
+              <LabeledToggle
+                label="Auto-start Listening"
+                description="Begin listening for wake word on app launch"
+                checked={settings.listening.autoStartOnLaunch}
+                onCheckedChange={handleAutoStartListeningChange}
+              />
+            </div>
+            <div className="pt-4">
+              <LabeledToggle
+                label="Notifications"
+                description="Show notifications for transcription results"
+                checked={notifications}
+                onCheckedChange={handleNotificationsChange}
+              />
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* Keyboard Shortcuts Section */}
+      <section>
+        <h2 className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-4">
+          Keyboard Shortcuts
+        </h2>
+        <Card>
+          <CardContent className="space-y-3">
+            {/* Toggle Recording */}
+            <div className="flex items-center justify-between py-2">
+              <div>
+                <span className="text-sm font-medium text-text-primary">
+                  Toggle Recording
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <kbd className="px-2 py-1 text-xs font-mono bg-surface border border-border rounded">
+                  ⌘⇧R
+                </kbd>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setIsShortcutEditorOpen(true)}
+                >
+                  Change
+                </Button>
+              </div>
+            </div>
+
+            {/* Cancel Recording */}
+            <div className="flex items-center justify-between py-2 border-t border-border">
+              <div>
+                <span className="text-sm font-medium text-text-primary">
+                  Cancel Recording
+                </span>
+              </div>
+              <kbd className="px-2 py-1 text-xs font-mono bg-surface border border-border rounded">
+                Esc Esc
+              </kbd>
+            </div>
+
+            {/* Open Command Palette */}
+            <div className="flex items-center justify-between py-2 border-t border-border">
+              <div>
+                <span className="text-sm font-medium text-text-primary">
+                  Open Command Palette
+                </span>
+              </div>
+              <kbd className="px-2 py-1 text-xs font-mono bg-surface border border-border rounded">
+                ⌘K
+              </kbd>
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* Shortcut Editor Modal */}
+      <ShortcutEditor
+        open={isShortcutEditorOpen}
+        onOpenChange={setIsShortcutEditorOpen}
+        shortcutName="Toggle Recording"
+        currentShortcut="⌘⇧R"
+        onSave={(newShortcut) => {
+          toast({
+            type: "success",
+            title: "Shortcut updated",
+            description: `Toggle Recording is now ${newShortcut}.`,
+          });
+          setIsShortcutEditorOpen(false);
+        }}
+      />
+    </div>
+  );
+}
