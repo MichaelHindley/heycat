@@ -25,7 +25,7 @@ function App() {
   });
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("history");
   const [navItem, setNavItem] = useState("dashboard");
-  const { mode } = useUIMode();
+  const { mode, toggle } = useUIMode();
   useCatOverlay();
   useAutoStartListening();
 
@@ -54,7 +54,7 @@ function App() {
             <p>New UI - Page content coming soon</p>
           </div>
         </AppShell>
-        <UIToggle />
+        <UIToggle mode={mode} onToggle={toggle} />
       </>
     );
   }
@@ -76,7 +76,7 @@ function App() {
           onDismiss={clearError}
         />
       </div>
-      <UIToggle />
+      <UIToggle mode={mode} onToggle={toggle} />
     </>
   );
 }
