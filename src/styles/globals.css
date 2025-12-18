@@ -245,3 +245,30 @@ body {
   box-shadow: var(--shadow-glow);
   animation: breathe 2s ease-in-out infinite;
 }
+
+/* Status Pill Animations */
+@keyframes status-pill-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
+  }
+}
+
+@keyframes status-pill-breathe {
+  0%, 100% {
+    box-shadow: 0 0 10px rgba(91, 181, 181, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(91, 181, 181, 0.6);
+  }
+}
+
+.status-pill-pulse {
+  animation: status-pill-pulse 1.5s ease-in-out infinite;
+}
+
+.status-pill-breathe {
+  animation: status-pill-breathe 2s ease-in-out infinite;
+}

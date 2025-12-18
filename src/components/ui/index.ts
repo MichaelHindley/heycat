@@ -50,6 +50,14 @@ export type {
   ListeningGlowProps,
 } from "./StatusIndicator";
 
+// Status Pill (ui.md 2.2, 3.4, 5.3)
+export { StatusPill, AutoTimerStatusPill } from "./StatusPill";
+export type {
+  StatusPillProps,
+  StatusPillStatus,
+  AutoTimerStatusPillProps,
+} from "./StatusPill";
+
 // Audio Level Meter (ui.md 3.4)
 export { AudioLevelMeter, MiniAudioMeter } from "./AudioLevelMeter";
 export type { AudioLevelMeterProps, MiniAudioMeterProps } from "./AudioLevelMeter";
