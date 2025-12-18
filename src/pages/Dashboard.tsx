@@ -274,7 +274,7 @@ function TranscriptionBadge({ recording }: { recording: RecordingInfo }) {
 
   // Default to pending since we don't track transcription status yet
   return (
-    <span className="px-2 py-1 text-xs font-medium rounded-full bg-neutral-100 text-text-secondary">
+    <span className="px-2 py-1 text-xs font-medium rounded-full bg-text-secondary/10 text-text-secondary">
       Pending
     </span>
   );

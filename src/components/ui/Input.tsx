@@ -8,19 +8,19 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
   ({ error = false, className = "", ...props }, ref) => {
     const baseStyles = `
       w-full
-      bg-white
+      bg-surface
       border rounded-[var(--radius-sm)]
       px-3.5 py-2.5
       text-base text-text-primary
-      placeholder:text-neutral-400
+      placeholder:text-text-secondary
       transition-all duration-[var(--duration-fast)] ease-[var(--ease-default)]
       focus:outline-none focus:border-heycat-teal focus:ring-2 focus:ring-heycat-teal/10
-      disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-neutral-100
+      disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-text-secondary/10
     `;
 
     const borderColor = error
       ? "border-error focus:border-error focus:ring-error/10"
-      : "border-neutral-300";
+      : "border-border";
 
     return (
       <input
@@ -44,20 +44,20 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
   ({ error = false, className = "", ...props }, ref) => {
     const baseStyles = `
       w-full
-      bg-white
+      bg-surface
       border rounded-[var(--radius-sm)]
       px-3.5 py-2.5
       text-base text-text-primary
-      placeholder:text-neutral-400
+      placeholder:text-text-secondary
       transition-all duration-[var(--duration-fast)] ease-[var(--ease-default)]
       focus:outline-none focus:border-heycat-teal focus:ring-2 focus:ring-heycat-teal/10
-      disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-neutral-100
+      disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-text-secondary/10
       resize-y min-h-[80px]
     `;
 
     const borderColor = error
       ? "border-error focus:border-error focus:ring-error/10"
-      : "border-neutral-300";
+      : "border-border";
 
     return (
       <textarea

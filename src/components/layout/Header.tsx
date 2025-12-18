@@ -58,7 +58,7 @@ export function Header({
           className="
             flex items-center gap-1.5 px-2 py-1
             text-sm text-text-secondary
-            bg-neutral-100 hover:bg-neutral-200
+            bg-text-secondary/10 hover:bg-text-secondary/20
             rounded-[var(--radius-sm)]
             transition-colors duration-[var(--duration-fast)]
           "
@@ -75,7 +75,7 @@ export function Header({
           className="
             p-2
             text-text-secondary hover:text-text-primary
-            hover:bg-neutral-100
+            hover:bg-text-secondary/10
             rounded-[var(--radius-sm)]
             transition-colors duration-[var(--duration-fast)]
           "
@@ -91,7 +91,7 @@ export function Header({
           className="
             p-2
             text-text-secondary hover:text-text-primary
-            hover:bg-neutral-100
+            hover:bg-text-secondary/10
             rounded-[var(--radius-sm)]
             transition-colors duration-[var(--duration-fast)]
           "

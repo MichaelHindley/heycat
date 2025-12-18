@@ -35,19 +35,19 @@ const SelectTrigger = forwardRef<HTMLButtonElement, SelectTriggerProps>(
       className="
         inline-flex items-center justify-between gap-2
         w-full
-        bg-white
-        border border-neutral-300 rounded-[var(--radius-sm)]
+        bg-surface
+        border border-border rounded-[var(--radius-sm)]
         px-3.5 py-2.5
         text-base text-text-primary
         transition-all duration-[var(--duration-fast)] ease-[var(--ease-default)]
         focus:outline-none focus:border-heycat-teal focus:ring-2 focus:ring-heycat-teal/10
-        disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-neutral-100
-        data-[placeholder]:text-neutral-400
+        disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-text-secondary/10
+        data-[placeholder]:text-text-secondary
       "
     >
       <SelectPrimitive.Value placeholder={placeholder} />
       <SelectPrimitive.Icon>
-        <ChevronDown className="h-4 w-4 text-neutral-400" />
+        <ChevronDown className="h-4 w-4 text-text-secondary" />
       </SelectPrimitive.Icon>
     </SelectPrimitive.Trigger>
   )
@@ -64,8 +64,8 @@ const SelectContent = forwardRef<
       ref={ref}
       className="
         overflow-hidden
-        bg-white
-        border border-neutral-200 rounded-[var(--radius-md)]
+        bg-surface
+        border border-border rounded-[var(--radius-md)]
         shadow-lg
         animate-in fade-in-0 zoom-in-95
         data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95
@@ -102,8 +102,8 @@ export const SelectItem = forwardRef<HTMLDivElement, SelectItemProps>(
         select-none
         outline-none
         transition-colors duration-[var(--duration-fast)]
-        focus:bg-heycat-cream
-        data-[highlighted]:bg-heycat-cream
+        focus:bg-heycat-orange/10
+        data-[highlighted]:bg-heycat-orange/10
         data-[disabled]:opacity-50 data-[disabled]:cursor-not-allowed
       "
       {...props}
@@ -125,7 +125,7 @@ export interface SelectGroupProps {
 
 export const SelectGroup = ({ label, children }: SelectGroupProps) => (
   <SelectPrimitive.Group>
-    <SelectPrimitive.Label className="px-8 py-1.5 text-xs font-medium text-neutral-500 uppercase tracking-wider">
+    <SelectPrimitive.Label className="px-8 py-1.5 text-xs font-medium text-text-secondary uppercase tracking-wider">
       {label}
     </SelectPrimitive.Label>
     {children}
@@ -135,7 +135,7 @@ export const SelectGroup = ({ label, children }: SelectGroupProps) => (
 SelectGroup.displayName = "SelectGroup";
 
 export const SelectSeparator = () => (
-  <SelectPrimitive.Separator className="h-px my-1 bg-neutral-200" />
+  <SelectPrimitive.Separator className="h-px my-1 bg-border" />
 );
 
 SelectSeparator.displayName = "SelectSeparator";

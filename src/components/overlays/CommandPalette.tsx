@@ -216,7 +216,7 @@ export function CommandPalette({
                         ${
                           isSelected
                             ? "bg-heycat-teal/10 text-heycat-teal"
-                            : "text-text-primary hover:bg-neutral-100"
+                            : "text-text-primary hover:bg-text-secondary/10"
                         }
                       `}
                     >

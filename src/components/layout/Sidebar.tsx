@@ -30,9 +30,8 @@ export function Sidebar({ items, activeItemId, onItemClick }: SidebarProps) {
     <aside
       className="
         w-[220px] shrink-0
-        bg-heycat-cream
+        bg-surface-elevated
         border-r border-border
-        shadow-[inset_-1px_0_3px_rgba(0,0,0,0.05)]
       "
       role="navigation"
       aria-label="Main navigation"
@@ -54,8 +53,8 @@ export function Sidebar({ items, activeItemId, onItemClick }: SidebarProps) {
                 transition-all duration-[var(--duration-fast)] ease-[var(--ease-default)]
                 ${
                   isActive
-                    ? "bg-heycat-orange-light/50 text-text-primary"
-                    : "text-text-secondary hover:bg-heycat-orange-light/25 hover:text-text-primary"
+                    ? "bg-heycat-orange/20 text-text-primary"
+                    : "text-text-secondary hover:bg-heycat-orange/10 hover:text-text-primary"
                 }
               `}
               aria-current={isActive ? "page" : undefined}

@@ -21,15 +21,15 @@ const variantStyles: Record<ButtonVariant, string> = {
     active:translate-y-0 active:shadow-sm
   `,
   secondary: `
-    bg-white
+    bg-surface
     border border-heycat-orange
     text-heycat-orange
-    hover:bg-heycat-cream
+    hover:bg-heycat-orange/10
   `,
   ghost: `
     bg-transparent
     text-text-secondary
-    hover:bg-neutral-100
+    hover:bg-text-secondary/10
   `,
   danger: `
     bg-error
