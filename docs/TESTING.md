@@ -178,6 +178,32 @@ cd src-tauri && cargo +nightly llvm-cov --fail-under-lines 60 --fail-under-funct
 
 ---
 
+## Important: Bun Test Runner Gotcha
+
+**CRITICAL:** This project uses Vitest with jsdom for DOM testing. Do NOT use Bun's native test runner.
+
+| Command | What it does | Works? |
+|---------|-------------|--------|
+| `bun test` | Runs Bun's native test runner | No jsdom support |
+| `bun run test` | Runs npm script (vitest run) | Correct |
+
+**Symptom of using wrong command:**
+```
+ReferenceError: document is not defined
+```
+
+**All TCR commands should use `bun run test`:**
+```bash
+# Correct
+bun tcr.ts check "bun run test"
+bun tcr.ts check "bun run test:coverage"
+
+# WRONG - will fail
+bun tcr.ts check "bun test"
+```
+
+---
+
 ## TCR Commands
 
 TCR (Test-Commit-Refactor) enforces test discipline. Invoke the `devloop:tcr` skill for details.
