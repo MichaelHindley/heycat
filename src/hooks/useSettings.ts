@@ -52,7 +52,7 @@ export function useSettings(): UseSettingsReturn {
     /* v8 ignore start -- @preserve */
     const initStore = async () => {
       try {
-        const storeInstance = await load(STORE_FILE, { autoSave: true });
+        const storeInstance = await load(STORE_FILE);
         if (!mounted) return;
         setStore(storeInstance);
 

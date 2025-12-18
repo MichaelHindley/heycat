@@ -19,7 +19,7 @@ export function useAutoStartListening(): void {
     /* v8 ignore start -- @preserve */
     const checkAndAutoStart = async () => {
       try {
-        const store = await load(STORE_FILE, { autoSave: false });
+        const store = await load(STORE_FILE);
         const autoStartOnLaunch = await store.get<boolean>(
           "listening.autoStartOnLaunch"
         );

@@ -12,7 +12,7 @@ import {
 import { useToast } from "../components/overlays";
 import { useRecording } from "../hooks/useRecording";
 import { useSettings } from "../hooks/useSettings";
-import { RecordingItem, type RecordingInfo, formatDuration, formatDate, formatFileSize } from "./components/RecordingItem";
+import { RecordingItem, type RecordingInfo } from "./components/RecordingItem";
 import { RecordingsEmptyState } from "./components/RecordingsEmptyState";
 
 export type FilterOption = "all" | "transcribed" | "pending";
@@ -22,7 +22,7 @@ export interface RecordingsProps {
   onNavigate?: (page: string) => void;
 }
 
-export function Recordings({ onNavigate }: RecordingsProps) {
+export function Recordings(_props: RecordingsProps) {
   const { toast } = useToast();
   const { settings } = useSettings();
   const { startRecording } = useRecording({

@@ -1,5 +1,5 @@
 import { type HTMLAttributes, forwardRef, useState, useEffect } from "react";
-import { StatusPill, type StatusPillProps } from "./StatusPill";
+import { StatusPill } from "./StatusPill";
 import { useAppStatus } from "../../hooks/useAppStatus";
 
 export interface ConnectedStatusPillProps

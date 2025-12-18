@@ -25,7 +25,7 @@ export interface CommandsProps {
   onNavigate?: (page: string) => void;
 }
 
-export function Commands({ onNavigate }: CommandsProps) {
+export function Commands(_props: CommandsProps) {
   const { toast } = useToast();
   const [commands, setCommands] = useState<CommandDto[]>([]);
   const [loading, setLoading] = useState(true);

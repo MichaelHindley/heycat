@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { Select, SelectItem, SelectGroup, SelectSeparator } from "./Select";
+import { Select, SelectItem } from "./Select";
 
 // Note: Radix UI Select uses pointer capture APIs that jsdom doesn't fully support.
 // Tests focus on initial render and accessibility. Interactive behavior verified via E2E.

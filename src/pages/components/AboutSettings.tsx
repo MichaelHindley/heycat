@@ -1,5 +1,5 @@
 import { ExternalLink, Github, FileText, Bug } from "lucide-react";
-import { Card, CardContent, Button } from "../../components/ui";
+import { Card, CardContent } from "../../components/ui";
 
 export interface AboutSettingsProps {
   className?: string;

@@ -20,7 +20,7 @@ const tabs: { id: SettingsTab; label: string }[] = [
   { id: "about", label: "About" },
 ];
 
-export function Settings({ onNavigate, initialTab = "general" }: SettingsProps) {
+export function Settings({ initialTab = "general" }: SettingsProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
 
   const handleTabChange = (tab: SettingsTab) => {

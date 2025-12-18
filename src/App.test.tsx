@@ -60,7 +60,7 @@ describe("App Integration", () => {
     cancelReason: null,
   };
 
-  const defaultMultiModelStatusMock: useMultiModelStatusModule.UseMultiModelStatusReturn = {
+  const defaultMultiModelStatusMock: useMultiModelStatusModule.UseMultiModelStatusResult = {
     models: {
       isAvailable: true,
       downloadState: "idle" as const,
@@ -68,22 +68,31 @@ describe("App Integration", () => {
       error: null,
     },
     downloadModel: vi.fn(),
-    checkStatus: vi.fn(),
+    refreshStatus: vi.fn(),
   };
 
-  const defaultSettingsMock = {
+  const defaultCatOverlayMock = {
+    isRecording: false,
+    isListening: false,
+    overlayMode: "hidden" as useCatOverlayModule.OverlayMode,
+    isMicUnavailable: false,
+  };
+
+  const defaultSettingsMock: useSettingsModule.UseSettingsReturn = {
     settings: {
       audio: { selectedDevice: null },
       listening: { enabled: false, autoStartOnLaunch: false },
     },
-    updateSettings: vi.fn(),
     isLoading: false,
     error: null,
+    updateListeningEnabled: vi.fn(),
+    updateAutoStartListening: vi.fn(),
+    updateAudioDevice: vi.fn(),
   };
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockUseCatOverlay.mockReturnValue({ isRecording: false });
+    mockUseCatOverlay.mockReturnValue(defaultCatOverlayMock);
     mockUseAppStatus.mockReturnValue(defaultAppStatusMock);
     mockUseAutoStartListening.mockReturnValue(undefined);
     mockUseListening.mockReturnValue(defaultListeningMock);

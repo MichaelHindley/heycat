@@ -2,9 +2,9 @@
  * Toast notification tests
  * Tests focus on user-visible behavior per TESTING.md guidelines
  */
-import { render, screen, act, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ToastProvider, useToast } from "../toast";
 import type { ToastOptions } from "../toast";
 

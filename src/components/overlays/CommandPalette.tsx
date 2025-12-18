@@ -1,10 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Search } from "lucide-react";
-import { Input } from "../ui";
 import {
-  commands,
   filterCommands,
-  getCommandsByCategory,
   categoryLabels,
   type Command,
   type CommandCategory,
@@ -39,7 +36,6 @@ export function CommandPalette({
   const filteredCommands = filterCommands(query);
 
   // Group filtered commands by category (preserving order)
-  const groupedCommands = getCommandsByCategory();
   const filteredGrouped = CATEGORY_ORDER.map((category) => ({
     category,
     commands: filteredCommands.filter((c) => c.category === category),

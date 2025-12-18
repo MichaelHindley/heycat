@@ -37,9 +37,7 @@ describe("useAutoStartListening", () => {
 
     // Allow async effect to run
     await vi.waitFor(() => {
-      expect(mockLoad).toHaveBeenCalledWith("settings.json", {
-        autoSave: false,
-      });
+      expect(mockLoad).toHaveBeenCalledWith("settings.json");
     });
   });
 
