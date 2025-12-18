@@ -487,4 +487,69 @@ describe("Recordings", () => {
 
     expect(mockStartRecording).toHaveBeenCalled();
   });
+
+  it("sorts recordings by newest first by default", async () => {
+    mockInvoke.mockResolvedValue(sampleRecordings);
+
+    render(<Recordings />);
+
+    await waitFor(() => {
+      expect(screen.getByText("recording_2024-01-15.wav")).toBeDefined();
+    });
+
+    // Get all recording filenames in display order
+    const recordingItems = screen.getAllByRole("listitem");
+    const filenames = recordingItems.map((item) =>
+      item.textContent?.match(/[\w_-]+\.wav/)?.[0]
+    );
+
+    // Should be sorted by newest first (quick_memo: Jan 20, recording: Jan 15, meeting: Jan 10)
+    expect(filenames[0]).toBe("quick_memo.wav");
+    expect(filenames[1]).toBe("recording_2024-01-15.wav");
+    expect(filenames[2]).toBe("meeting_notes.wav");
+  });
+
+  it("play button toggles playing state", async () => {
+    const user = userEvent.setup();
+    mockInvoke.mockResolvedValue(sampleRecordings);
+
+    render(<Recordings />);
+
+    await waitFor(() => {
+      expect(screen.getByText("recording_2024-01-15.wav")).toBeDefined();
+    });
+
+    // Find and click play button
+    const playButton = screen.getByRole("button", {
+      name: /play recording_2024-01-15.wav/i,
+    });
+    await user.click(playButton);
+
+    // After clicking, button should show "Pause"
+    expect(
+      screen.getByRole("button", { name: /pause recording_2024-01-15.wav/i })
+    ).toBeDefined();
+
+    // Click again to pause
+    await user.click(
+      screen.getByRole("button", { name: /pause recording_2024-01-15.wav/i })
+    );
+
+    // Should be back to "Play"
+    expect(
+      screen.getByRole("button", { name: /play recording_2024-01-15.wav/i })
+    ).toBeDefined();
+  });
+
+  it("shows skeleton loaders while loading", async () => {
+    // Don't resolve the promise immediately to test loading state
+    mockInvoke.mockImplementation(
+      () => new Promise(() => {}) // Never resolves
+    );
+
+    render(<Recordings />);
+
+    // Should show loading state with skeleton elements
+    expect(screen.getByRole("status", { name: /loading recordings/i })).toBeDefined();
+  });
 });

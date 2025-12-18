@@ -201,9 +201,35 @@ export function Recordings({ onNavigate }: RecordingsProps) {
 
   if (loading) {
     return (
-      <div className="p-6">
-        <div className="text-text-secondary" role="status">
-          Loading recordings...
+      <div className="p-6 space-y-6" role="status" aria-label="Loading recordings">
+        {/* Header skeleton */}
+        <header>
+          <div className="h-8 w-40 bg-surface-hover rounded animate-pulse" />
+          <div className="h-4 w-80 bg-surface-hover rounded animate-pulse mt-2" />
+        </header>
+
+        {/* Search bar skeleton */}
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="flex-1 h-11 bg-surface-hover rounded animate-pulse" />
+          <div className="w-full sm:w-40 h-11 bg-surface-hover rounded animate-pulse" />
+          <div className="w-full sm:w-40 h-11 bg-surface-hover rounded animate-pulse" />
+        </div>
+
+        {/* Recording items skeleton */}
+        <div className="space-y-2">
+          {[1, 2, 3, 4, 5].map((i) => (
+            <Card key={i}>
+              <CardContent className="flex items-center gap-3 p-4">
+                <div className="w-10 h-10 rounded-full bg-surface-hover animate-pulse flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="h-4 w-48 bg-surface-hover rounded animate-pulse" />
+                  <div className="h-3 w-32 bg-surface-hover rounded animate-pulse mt-1" />
+                </div>
+                <div className="h-6 w-20 bg-surface-hover rounded-full animate-pulse" />
+                <div className="h-4 w-4 bg-surface-hover rounded animate-pulse" />
+              </CardContent>
+            </Card>
+          ))}
         </div>
       </div>
     );

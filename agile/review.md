@@ -35,6 +35,8 @@ grep -rn "listen<" src/hooks --include="*.ts" | grep -oP '"[a-z_]+"'
 
 ## Manual Review (6 Questions)
 
+While going through the manual review, ensure to understand how to review the test implementation, it must adhere to the docs/TESTING.md instructions.
+
 ### 1. Is the code wired up end-to-end?
 
 Verify the new code is actually connected to production execution paths:

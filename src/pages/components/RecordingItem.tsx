@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { Play, Pause, MoreVertical, Copy, FolderOpen, Trash2, ChevronDown, ChevronUp } from "lucide-react";
+import { Play, Pause, Copy, FolderOpen, Trash2, ChevronDown, ChevronUp } from "lucide-react";
 import { Card, CardContent, Button } from "../../components/ui";
 
 export interface RecordingInfo {
@@ -77,21 +76,12 @@ export function RecordingItem({
     >
       <CardContent className="p-0">
         {/* Collapsed Row - Always visible */}
-        <button
-          type="button"
-          className="w-full flex items-center gap-3 p-4 text-left hover:bg-surface-hover transition-colors"
-          onClick={onToggleExpand}
-          aria-expanded={isExpanded}
-          aria-label={`${isExpanded ? "Collapse" : "Expand"} ${recording.filename}`}
-        >
+        <div className="flex items-center gap-3 p-4 hover:bg-surface-hover transition-colors">
           {/* Play/Pause Button */}
           <button
             type="button"
             className="flex items-center justify-center w-10 h-10 rounded-full bg-heycat-orange/20 text-heycat-orange hover:bg-heycat-orange hover:text-white transition-colors flex-shrink-0"
-            onClick={(e) => {
-              e.stopPropagation();
-              onPlay();
-            }}
+            onClick={onPlay}
             aria-label={isPlaying ? `Pause ${recording.filename}` : `Play ${recording.filename}`}
             disabled={hasError}
           >
@@ -102,15 +92,21 @@ export function RecordingItem({
             )}
           </button>
 
-          {/* Filename and Metadata */}
-          <div className="flex-1 min-w-0">
+          {/* Filename and Metadata - Clickable to expand */}
+          <button
+            type="button"
+            className="flex-1 min-w-0 text-left bg-transparent border-none cursor-pointer p-0"
+            onClick={onToggleExpand}
+            aria-expanded={isExpanded}
+            aria-label={`${isExpanded ? "Collapse" : "Expand"} ${recording.filename}`}
+          >
             <span className="text-sm font-medium text-text-primary truncate block">
               {recording.filename}
             </span>
             <span className="text-xs text-text-secondary">
               {formatDate(recording.created_at)} • {formatDuration(recording.duration_secs)} • {formatFileSize(recording.file_size_bytes)}
             </span>
-          </div>
+          </button>
 
           {/* Status Badge */}
           {hasError ? (
@@ -125,10 +121,7 @@ export function RecordingItem({
             <Button
               variant="secondary"
               size="sm"
-              onClick={(e) => {
-                e.stopPropagation();
-                onTranscribe();
-              }}
+              onClick={onTranscribe}
               loading={isTranscribing}
               disabled={isTranscribing}
               className="flex-shrink-0"
@@ -137,15 +130,20 @@ export function RecordingItem({
             </Button>
           )}
 
-          {/* Expand/Collapse Indicator */}
-          <div className="text-text-secondary flex-shrink-0">
+          {/* Expand/Collapse Button */}
+          <button
+            type="button"
+            className="text-text-secondary flex-shrink-0 p-1 hover:text-text-primary transition-colors bg-transparent border-none cursor-pointer"
+            onClick={onToggleExpand}
+            aria-label={isExpanded ? "Collapse details" : "Expand details"}
+          >
             {isExpanded ? (
               <ChevronUp className="h-4 w-4" />
             ) : (
               <ChevronDown className="h-4 w-4" />
             )}
-          </div>
-        </button>
+          </button>
+        </div>
 
         {/* Expanded Content */}
         {isExpanded && (
