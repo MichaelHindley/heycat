@@ -15,6 +15,8 @@ export interface AppShellProps {
   status?: "idle" | "listening" | "recording" | "processing";
   /** Status label override */
   statusLabel?: string;
+  /** Recording duration in seconds (shown when status is recording) */
+  recordingDuration?: number;
   /** Footer left section content (state description) */
   footerStateDescription?: string;
   /** Footer center content (audio meter) */
@@ -42,6 +44,7 @@ export function AppShell({
   onNavigate,
   status = "idle",
   statusLabel,
+  recordingDuration,
   footerStateDescription = "Ready for your command.",
   footerCenter,
   footerActions,
@@ -85,6 +88,7 @@ export function AppShell({
       <Header
         status={status}
         statusLabel={statusLabel}
+        recordingDuration={recordingDuration}
         onCommandPaletteOpen={open}
         onSettingsClick={onSettingsClick}
         onHelpClick={onHelpClick}

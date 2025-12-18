@@ -62,7 +62,8 @@ describe("AppShell", () => {
         <div>Content</div>
       </AppShell>
     );
-    expect(screen.getByText("Idle")).toBeDefined();
+    // StatusPill shows "Ready" for idle state per ui.md spec
+    expect(screen.getByText("Ready")).toBeDefined();
 
     rerender(
       <AppShell status="listening">
@@ -83,7 +84,7 @@ describe("AppShell", () => {
         <div>Content</div>
       </AppShell>
     );
-    expect(screen.getByText("Processing")).toBeDefined();
+    expect(screen.getByText("Processing...")).toBeDefined();
   });
 
   it("triggers header action callbacks", async () => {

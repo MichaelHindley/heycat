@@ -1,11 +1,13 @@
 import { Cat, Settings, HelpCircle, Command } from "lucide-react";
-import { StatusIndicator, type StatusIndicatorVariant } from "../ui";
+import { StatusPill, type StatusPillStatus } from "../ui";
 
 export interface HeaderProps {
   /** Current status for the status pill */
-  status?: "idle" | "listening" | "recording" | "processing";
+  status?: StatusPillStatus;
   /** Status label override */
   statusLabel?: string;
+  /** Recording duration in seconds (shown when status is recording) */
+  recordingDuration?: number;
   /** Callback when command palette trigger is clicked */
   onCommandPaletteOpen?: () => void;
   /** Callback when settings is clicked */
@@ -14,29 +16,14 @@ export interface HeaderProps {
   onHelpClick?: () => void;
 }
 
-const statusToVariant: Record<string, StatusIndicatorVariant> = {
-  idle: "idle",
-  listening: "listening",
-  recording: "recording",
-  processing: "processing",
-};
-
-const defaultStatusLabels: Record<string, string> = {
-  idle: "Idle",
-  listening: "Listening...",
-  recording: "Recording",
-  processing: "Processing",
-};
-
 export function Header({
   status = "idle",
   statusLabel,
+  recordingDuration,
   onCommandPaletteOpen,
   onSettingsClick,
   onHelpClick,
 }: HeaderProps) {
-  const displayLabel = statusLabel ?? defaultStatusLabels[status];
-
   return (
     <header
       className="h-12 flex items-center justify-between px-4 border-b border-border bg-surface shrink-0"
@@ -55,7 +42,11 @@ export function Header({
 
       {/* Center: Status Pill */}
       <div className="absolute left-1/2 -translate-x-1/2">
-        <StatusIndicator variant={statusToVariant[status]} label={displayLabel} />
+        <StatusPill
+          status={status}
+          label={statusLabel}
+          recordingDuration={recordingDuration}
+        />
       </div>
 
       {/* Right: Actions */}

@@ -58,6 +58,10 @@ export type {
   AutoTimerStatusPillProps,
 } from "./StatusPill";
 
+// Connected Status Pill (uses app state hooks)
+export { ConnectedStatusPill } from "./ConnectedStatusPill";
+export type { ConnectedStatusPillProps } from "./ConnectedStatusPill";
+
 // Audio Level Meter (ui.md 3.4)
 export { AudioLevelMeter, MiniAudioMeter } from "./AudioLevelMeter";
 export type { AudioLevelMeterProps, MiniAudioMeterProps } from "./AudioLevelMeter";
