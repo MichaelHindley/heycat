@@ -106,18 +106,14 @@ export function ShortcutEditor({
     }
   }, [shortcutSuspended]);
 
-  // Reset state when modal opens/closes
+  // Reset state when modal opens
   useEffect(() => {
     if (open) {
       setRecording(false);
       setRecordedShortcut(null);
-    } else {
-      // Ensure shortcut is resumed when modal closes
-      if (shortcutSuspended) {
-        resumeShortcut();
-      }
+      setShortcutSuspended(false);
     }
-  }, [open, shortcutSuspended, resumeShortcut]);
+  }, [open]);
 
   // Handle keyboard events when recording
   const handleKeyDown = useCallback(
@@ -131,17 +127,18 @@ export function ShortcutEditor({
       // Skip if only a modifier key is pressed by itself
       const isModifierKey = ["Meta", "Control", "Alt", "Shift"].includes(e.key);
 
+      console.log("[ShortcutEditor] Key pressed:", e.key, "isModifier:", isModifierKey, "recording:", recording);
+
       if (!isModifierKey) {
-        setRecordedShortcut({
-          display: formatKeyForDisplay(e),
-          backend: formatKeyForBackend(e),
-        });
+        const display = formatKeyForDisplay(e);
+        const backend = formatKeyForBackend(e);
+        console.log("[ShortcutEditor] Recording shortcut - display:", display, "backend:", backend);
+        setRecordedShortcut({ display, backend });
         setRecording(false);
-        // Resume the global shortcut after successful recording
-        resumeShortcut();
+        // Don't resume here - wait for save/cancel to resume or update
       }
     },
-    [recording, resumeShortcut]
+    [recording]
   );
 
   // Add/remove keyboard listener
@@ -158,13 +155,14 @@ export function ShortcutEditor({
 
     const handleClickOutside = (e: MouseEvent) => {
       if (dialogRef.current && !dialogRef.current.contains(e.target as Node)) {
+        resumeShortcut();
         onOpenChange(false);
       }
     };
 
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [open, onOpenChange]);
+  }, [open, onOpenChange, resumeShortcut]);
 
   // Handle Escape to close (when not recording)
   useEffect(() => {
@@ -172,13 +170,14 @@ export function ShortcutEditor({
 
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !recording) {
+        resumeShortcut();
         onOpenChange(false);
       }
     };
 
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
-  }, [open, recording, onOpenChange]);
+  }, [open, recording, onOpenChange, resumeShortcut]);
 
   if (!open) return null;
 
@@ -210,7 +209,10 @@ export function ShortcutEditor({
         {/* Close button */}
         <button
           type="button"
-          onClick={() => onOpenChange(false)}
+          onClick={() => {
+            resumeShortcut();
+            onOpenChange(false);
+          }}
           className="
             absolute top-4 right-4
             p-1 rounded
@@ -275,7 +277,10 @@ export function ShortcutEditor({
           </Button>
 
           <div className="flex gap-2">
-            <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            <Button variant="ghost" onClick={() => {
+              resumeShortcut();
+              onOpenChange(false);
+            }}>
               Cancel
             </Button>
             <Button

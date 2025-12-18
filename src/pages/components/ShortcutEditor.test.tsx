@@ -60,10 +60,10 @@ describe("ShortcutEditor", () => {
       });
     });
 
-    it("resumes global shortcut when modal closes while suspended", async () => {
+    it("resumes global shortcut when Cancel is clicked while suspended", async () => {
       const user = userEvent.setup();
       const onOpenChange = vi.fn();
-      const { rerender } = render(
+      render(
         <ShortcutEditor {...defaultProps} onOpenChange={onOpenChange} />
       );
 
@@ -76,14 +76,13 @@ describe("ShortcutEditor", () => {
       // Clear mock to track resume call
       mockInvoke.mockClear();
 
-      // Close modal
-      rerender(
-        <ShortcutEditor {...defaultProps} open={false} onOpenChange={onOpenChange} />
-      );
+      // Click Cancel
+      await user.click(screen.getByRole("button", { name: "Cancel" }));
 
       await waitFor(() => {
         expect(mockInvoke).toHaveBeenCalledWith("resume_recording_shortcut");
       });
+      expect(onOpenChange).toHaveBeenCalledWith(false);
     });
 
     it("does not call suspend if not entering recording mode", async () => {
