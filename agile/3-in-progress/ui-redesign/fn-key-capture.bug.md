@@ -1,11 +1,12 @@
 ---
-status: pending
+status: completed
 severity: minor
 origin: manual
 created: 2025-12-18
-completed: null
+completed: 2025-12-18
 parent_feature: "ui-redesign"
 parent_spec: null
+review_round: 1
 ---
 
 # Bug: Cannot capture fn key and some special keys in shortcut recorder
@@ -93,3 +94,77 @@ E2E test: Open shortcut recorder, press fn+key, verify the combination is captur
 - `rdev` crate: Cross-platform input capture, may work for this use case
 - `device_query` crate: Simpler API but may have limitations
 - macOS CGEventTap: Most comprehensive but requires accessibility permissions
+
+## Review
+
+**Reviewed:** 2025-12-18
+**Reviewer:** Claude
+
+### Acceptance Criteria Verification
+
+| Criterion | Status | Evidence |
+|-----------|--------|----------|
+| Bug no longer reproducible (Option 1) | PASS | Backend captures fn key via IOKit HID (`src-tauri/src/keyboard_capture/mod.rs:306-324`) |
+| Root cause addressed | PASS | Replaced JavaScript KeyboardEvent with native IOKit HID capture for fn key detection |
+| Tests added to prevent regression | PASS | Backend unit tests (`keyboard_capture/mod.rs:422-456`), Frontend integration tests (`ShortcutEditor.test.tsx:170-281`) |
+| Related specs/features not broken | PASS | All 252 frontend tests pass, no unused code warnings |
+
+### Pre-Review Gate Results
+
+| Check | Status | Output |
+|-------|--------|--------|
+| Build Warning Check | PASS | No warnings found |
+| Command Registration Check | PASS | `start_shortcut_recording` and `stop_shortcut_recording` registered in `lib.rs:325-326` |
+| Event Subscription Check | PASS | `SHORTCUT_KEY_CAPTURED` defined in `events.rs:19`, listened in `ShortcutEditor.tsx:169` |
+
+### Code Quality Audit
+
+**Data Flow (end-to-end):**
+```
+[UI: Click "Record New Shortcut"]
+     |
+     v
+[invoke: start_shortcut_recording] (ShortcutEditor.tsx:123)
+     |
+     v
+[Command: start_shortcut_recording] (commands/mod.rs:894)
+     |
+     v
+[KeyboardCapture::start()] (keyboard_capture/mod.rs:107)
+     | IOKit HID callback
+     v
+[emit: shortcut_key_captured] (commands/mod.rs:909)
+     |
+     v
+[listen: shortcut_key_captured] (ShortcutEditor.tsx:169)
+     |
+     v
+[formatBackendKeyForDisplay] -> setRecordedShortcut
+     |
+     v
+[UI: Shows "fn⌘A" in shortcut display]
+```
+
+**Strengths:**
+- IOKit HID implementation correctly captures Apple vendor-specific fn key (usage page 0xFF, usage 0x03)
+- Clean separation: backend captures keys, frontend only displays
+- Event-driven architecture follows existing patterns
+- Comprehensive test coverage for frontend integration
+
+**Concerns:**
+- None identified. Implementation is solid and follows Option 1 from the fix approach.
+
+### Test Coverage Audit
+
+| Test Case | Status | Location |
+|-----------|--------|----------|
+| Backend key name mapping | PASS | `keyboard_capture/mod.rs:427-437` |
+| Event serialization with fn_key | PASS | `keyboard_capture/mod.rs:439-455` |
+| Frontend records fn+modifier+key | PASS | `ShortcutEditor.test.tsx:171-212` |
+| Frontend ignores key release | PASS | `ShortcutEditor.test.tsx:214-246` |
+| Frontend ignores modifier-only | PASS | `ShortcutEditor.test.tsx:248-280` |
+| Suspend/resume global shortcut | PASS | `ShortcutEditor.test.tsx:48-120` |
+
+### Verdict
+
+**APPROVED** - The bug fix implements Option 1 (Backend key capture using IOKit HID) successfully. The fn key and all modifiers are now captured at the system level, bypassing JavaScript's KeyboardEvent limitations. The implementation is wired up end-to-end with proper command registration, event emission, and frontend listener. All tests pass.
