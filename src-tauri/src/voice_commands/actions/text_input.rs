@@ -1,5 +1,6 @@
 // Text input action - types text using macOS keyboard simulation
 
+use crate::keyboard_capture::permissions::check_accessibility_permission;
 use crate::voice_commands::executor::{Action, ActionError, ActionErrorCode, ActionResult};
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -13,24 +14,6 @@ use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 
 /// Default delay between key presses in milliseconds
 pub const DEFAULT_TYPING_DELAY_MS: u64 = 10;
-
-/// Check if Accessibility permission is granted on macOS
-#[cfg(target_os = "macos")]
-fn check_accessibility_permission() -> bool {
-    // Link to the ApplicationServices framework for AXIsProcessTrusted
-    #[link(name = "ApplicationServices", kind = "framework")]
-    extern "C" {
-        fn AXIsProcessTrusted() -> bool;
-    }
-
-    unsafe { AXIsProcessTrusted() }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn check_accessibility_permission() -> bool {
-    // On non-macOS, we don't have this permission system
-    true
-}
 
 /// Type a single character using CGEvent keyboard simulation
 #[cfg(target_os = "macos")]
