@@ -82,12 +82,14 @@ describe("App Integration", () => {
     settings: {
       audio: { selectedDevice: null },
       listening: { enabled: false, autoStartOnLaunch: false },
+      shortcuts: { distinguishLeftRight: false },
     },
     isLoading: false,
     error: null,
     updateListeningEnabled: vi.fn(),
     updateAutoStartListening: vi.fn(),
     updateAudioDevice: vi.fn(),
+    updateDistinguishLeftRight: vi.fn(),
   };
 
   beforeEach(() => {
