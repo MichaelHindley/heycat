@@ -24,6 +24,35 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+// FFI bindings for IOHIDCheckAccess and IOHIDRequestAccess (macOS 10.15+)
+// These are not included in io-kit-sys, so we define them here
+#[allow(non_upper_case_globals)]
+mod hid_access {
+    use std::ffi::c_uint;
+
+    /// Request type for input monitoring (keyboard/mouse events)
+    pub const kIOHIDRequestTypeListenEvent: c_uint = 1;
+
+    /// Access type returned by IOHIDCheckAccess
+    pub const kIOHIDAccessTypeGranted: c_uint = 0;
+    #[allow(dead_code)]
+    pub const kIOHIDAccessTypeDenied: c_uint = 1;
+    #[allow(dead_code)]
+    pub const kIOHIDAccessTypeUnknown: c_uint = 2;
+
+    #[link(name = "IOKit", kind = "framework")]
+    extern "C" {
+        /// Check if the app has the specified HID access permission
+        /// Returns kIOHIDAccessTypeGranted, kIOHIDAccessTypeDenied, or kIOHIDAccessTypeUnknown
+        pub fn IOHIDCheckAccess(requestType: c_uint) -> c_uint;
+
+        /// Request the specified HID access permission
+        /// This will trigger the system permission dialog if permission hasn't been granted
+        /// Returns true if permission was granted
+        pub fn IOHIDRequestAccess(requestType: c_uint) -> bool;
+    }
+}
+
 // Apple vendor-specific HID page for fn key
 const APPLE_VENDOR_TOP_CASE_PAGE: u32 = 0xFF;
 #[allow(dead_code)]
@@ -190,6 +219,26 @@ fn run_capture_loop(
     state: Arc<Mutex<CaptureState>>,
 ) -> Result<(), String> {
     unsafe {
+        // Check and request Input Monitoring permission before proceeding
+        // This will trigger the system permission dialog if not already granted
+        let access_type = hid_access::IOHIDCheckAccess(hid_access::kIOHIDRequestTypeListenEvent);
+
+        if access_type != hid_access::kIOHIDAccessTypeGranted {
+            crate::info!("Input Monitoring permission not granted, requesting...");
+
+            // Request permission - this triggers the system dialog
+            let granted = hid_access::IOHIDRequestAccess(hid_access::kIOHIDRequestTypeListenEvent);
+
+            if !granted {
+                return Err(
+                    "Input Monitoring permission required. Please grant permission in System Settings > Privacy & Security > Input Monitoring, then restart the app."
+                        .to_string(),
+                );
+            }
+
+            crate::info!("Input Monitoring permission granted");
+        }
+
         // Create the HID manager
         let manager = IOHIDManagerCreate(kCFAllocatorDefault, kIOHIDManagerOptionNone);
         if manager.is_null() {
