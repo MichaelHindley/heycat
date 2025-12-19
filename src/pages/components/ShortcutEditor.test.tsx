@@ -11,7 +11,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 // Mock Tauri listen
 const mockUnlisten = vi.fn();
-const mockListen = vi.fn(() => Promise.resolve(mockUnlisten));
+const mockListen = vi.fn();
 vi.mock("@tauri-apps/api/event", () => ({
   listen: (...args: unknown[]) => mockListen(...args),
 }));
@@ -28,7 +28,7 @@ describe("ShortcutEditor", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockInvoke.mockResolvedValue(undefined);
-    mockListen.mockReturnValue(Promise.resolve(mockUnlisten));
+    mockListen.mockResolvedValue(mockUnlisten);
   });
 
   describe("Theming", () => {

@@ -141,6 +141,45 @@ impl KeyboardCapture {
             return Err("Keyboard capture is already running".to_string());
         }
 
+        // Check Input Monitoring permission BEFORE spawning the thread
+        // This allows us to return the error to the caller
+        unsafe {
+            let access_type =
+                hid_access::IOHIDCheckAccess(hid_access::kIOHIDRequestTypeListenEvent);
+
+            crate::debug!(
+                "IOHIDCheckAccess returned: {} (0=granted, 1=denied, 2=unknown)",
+                access_type
+            );
+
+            if access_type != hid_access::kIOHIDAccessTypeGranted {
+                crate::info!("Input Monitoring permission not granted, requesting...");
+
+                // Request permission - this triggers the system dialog
+                // Note: This returns true if dialog was shown, NOT if permission was granted
+                let _dialog_shown =
+                    hid_access::IOHIDRequestAccess(hid_access::kIOHIDRequestTypeListenEvent);
+
+                // Re-check permission after the request
+                let access_after =
+                    hid_access::IOHIDCheckAccess(hid_access::kIOHIDRequestTypeListenEvent);
+
+                crate::debug!(
+                    "IOHIDCheckAccess after request: {} (0=granted, 1=denied, 2=unknown)",
+                    access_after
+                );
+
+                if access_after != hid_access::kIOHIDAccessTypeGranted {
+                    return Err(
+                        "Input Monitoring permission required. Please grant permission in System Settings > Privacy & Security > Input Monitoring, then restart the app."
+                            .to_string(),
+                    );
+                }
+
+                crate::info!("Input Monitoring permission granted");
+            }
+        }
+
         // Store the callback
         {
             let mut state = self.state.lock().map_err(|e| e.to_string())?;
@@ -219,25 +258,8 @@ fn run_capture_loop(
     state: Arc<Mutex<CaptureState>>,
 ) -> Result<(), String> {
     unsafe {
-        // Check and request Input Monitoring permission before proceeding
-        // This will trigger the system permission dialog if not already granted
-        let access_type = hid_access::IOHIDCheckAccess(hid_access::kIOHIDRequestTypeListenEvent);
-
-        if access_type != hid_access::kIOHIDAccessTypeGranted {
-            crate::info!("Input Monitoring permission not granted, requesting...");
-
-            // Request permission - this triggers the system dialog
-            let granted = hid_access::IOHIDRequestAccess(hid_access::kIOHIDRequestTypeListenEvent);
-
-            if !granted {
-                return Err(
-                    "Input Monitoring permission required. Please grant permission in System Settings > Privacy & Security > Input Monitoring, then restart the app."
-                        .to_string(),
-                );
-            }
-
-            crate::info!("Input Monitoring permission granted");
-        }
+        // Note: Permission check is done in start() before spawning this thread
+        // If we get here, permission should already be granted
 
         // Create the HID manager
         let manager = IOHIDManagerCreate(kCFAllocatorDefault, kIOHIDManagerOptionNone);
@@ -360,6 +382,15 @@ unsafe extern "C" fn input_value_callback(
     let usage = IOHIDElementGetUsage(element);
     let int_value = IOHIDValueGetIntegerValue(value);
     let pressed = int_value != 0;
+
+    // Debug: log all HID events to understand what we're receiving
+    crate::debug!(
+        "HID event: page=0x{:04X}, usage=0x{:08X}, value={}, pressed={}",
+        usage_page,
+        usage,
+        int_value,
+        pressed
+    );
 
     // Process the key event
     if let Ok(mut guard) = state.lock() {

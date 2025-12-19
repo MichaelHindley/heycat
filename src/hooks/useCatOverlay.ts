@@ -2,8 +2,16 @@ import { useEffect, useRef, useState } from "react";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { primaryMonitor, LogicalPosition } from "@tauri-apps/api/window";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { useRecording } from "./useRecording";
 import { useSettings } from "./useSettings";
+
+/** Response from get_listening_status command */
+interface ListeningStatusResponse {
+  enabled: boolean;
+  active: boolean;
+  micAvailable: boolean;
+}
 
 const OVERLAY_LABEL = "cat-overlay";
 const OVERLAY_SIZE = 120;
@@ -68,6 +76,22 @@ export function useCatOverlay() {
   const [isListening, setIsListening] = useState(false);
   const [isMicUnavailable, setIsMicUnavailable] = useState(false);
   const initializedRef = useRef(false);
+
+  // Fetch initial listening state from backend on mount
+  useEffect(() => {
+    /* v8 ignore start -- @preserve */
+    async function fetchInitialState() {
+      try {
+        const status = await invoke<ListeningStatusResponse>("get_listening_status");
+        setIsListening(status.enabled);
+        setIsMicUnavailable(!status.micAvailable);
+      } catch {
+        // Silently handle error - state will be updated via events
+      }
+    }
+    fetchInitialState();
+    /* v8 ignore stop */
+  }, []);
 
   // Determine the overlay mode based on state
   const overlayMode: OverlayMode = isRecording

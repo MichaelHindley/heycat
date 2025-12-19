@@ -131,4 +131,110 @@ describe("AppShell", () => {
     expect(screen.getByTestId("audio-meter")).toBeDefined();
     expect(screen.getByRole("button", { name: "Stop" })).toBeDefined();
   });
+
+  it("navigates when command palette navigation command is selected", async () => {
+    const user = userEvent.setup();
+    const handleNavigate = vi.fn();
+
+    render(
+      <AppShell activeNavItem="dashboard" onNavigate={handleNavigate}>
+        <div>Content</div>
+      </AppShell>
+    );
+
+    // Open command palette with Cmd+K
+    await user.keyboard("{Meta>}k{/Meta}");
+
+    // Wait for palette to open and click a navigation command
+    const recordingsCommand = await screen.findByText("Go to Recordings");
+    await user.click(recordingsCommand);
+
+    expect(handleNavigate).toHaveBeenCalledWith("recordings");
+  });
+
+  it("triggers recording actions from command palette", async () => {
+    const user = userEvent.setup();
+    const handleStartRecording = vi.fn();
+    const handleStopRecording = vi.fn();
+
+    render(
+      <AppShell
+        isRecording={false}
+        onStartRecording={handleStartRecording}
+        onStopRecording={handleStopRecording}
+      >
+        <div>Content</div>
+      </AppShell>
+    );
+
+    // Open command palette and click Start Recording
+    await user.keyboard("{Meta>}k{/Meta}");
+    const startCommand = await screen.findByText("Start Recording");
+    await user.click(startCommand);
+
+    expect(handleStartRecording).toHaveBeenCalledTimes(1);
+    expect(handleStopRecording).not.toHaveBeenCalled();
+  });
+
+  it("triggers listening toggle from command palette", async () => {
+    const user = userEvent.setup();
+    const handleEnableListening = vi.fn();
+    const handleDisableListening = vi.fn();
+
+    const { rerender } = render(
+      <AppShell
+        isListening={false}
+        onEnableListening={handleEnableListening}
+        onDisableListening={handleDisableListening}
+      >
+        <div>Content</div>
+      </AppShell>
+    );
+
+    // When not listening, Toggle Listening should enable
+    await user.keyboard("{Meta>}k{/Meta}");
+    const toggleCommand = await screen.findByText("Toggle Listening");
+    await user.click(toggleCommand);
+
+    expect(handleEnableListening).toHaveBeenCalledTimes(1);
+    expect(handleDisableListening).not.toHaveBeenCalled();
+
+    // Reset and test when already listening
+    handleEnableListening.mockClear();
+
+    rerender(
+      <AppShell
+        isListening={true}
+        onEnableListening={handleEnableListening}
+        onDisableListening={handleDisableListening}
+      >
+        <div>Content</div>
+      </AppShell>
+    );
+
+    await user.keyboard("{Meta>}k{/Meta}");
+    const toggleCommand2 = await screen.findByText("Toggle Listening");
+    await user.click(toggleCommand2);
+
+    expect(handleDisableListening).toHaveBeenCalledTimes(1);
+    expect(handleEnableListening).not.toHaveBeenCalled();
+  });
+
+  it("navigates to settings for audio device command", async () => {
+    const user = userEvent.setup();
+    const handleNavigate = vi.fn();
+
+    render(
+      <AppShell onNavigate={handleNavigate}>
+        <div>Content</div>
+      </AppShell>
+    );
+
+    // Open command palette and click Change Audio Device
+    await user.keyboard("{Meta>}k{/Meta}");
+    const audioCommand = await screen.findByText("Change Audio Device");
+    await user.click(audioCommand);
+
+    expect(handleNavigate).toHaveBeenCalledWith("settings");
+  });
 });

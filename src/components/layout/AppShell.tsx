@@ -29,6 +29,18 @@ export interface AppShellProps {
   onSettingsClick?: () => void;
   /** Callback when help is clicked */
   onHelpClick?: () => void;
+  /** Whether listening mode is currently active */
+  isListening?: boolean;
+  /** Whether recording is currently active */
+  isRecording?: boolean;
+  /** Callback to start recording */
+  onStartRecording?: () => void;
+  /** Callback to stop recording */
+  onStopRecording?: () => void;
+  /** Callback to enable listening */
+  onEnableListening?: () => void;
+  /** Callback to disable listening */
+  onDisableListening?: () => void;
 }
 
 const defaultNavItems: NavItem[] = [
@@ -51,6 +63,12 @@ export function AppShell({
   onCommandPaletteOpen,
   onSettingsClick,
   onHelpClick,
+  isListening = false,
+  isRecording = false,
+  onStartRecording,
+  onStopRecording,
+  onEnableListening,
+  onDisableListening,
 }: AppShellProps) {
   const { isOpen, open, close } = useCommandPalette({
     onOpen: onCommandPaletteOpen,
@@ -59,6 +77,7 @@ export function AppShell({
   const handleCommandExecute = useCallback(
     (commandId: string) => {
       switch (commandId) {
+        // Navigation commands
         case "go-dashboard":
           onNavigate?.("dashboard");
           break;
@@ -71,11 +90,47 @@ export function AppShell({
         case "go-settings":
           onNavigate?.("settings");
           break;
-        // Other commands (recording, listening, etc.) require hooks
-        // not available in AppShell - will be wired in future specs
+        // Recording commands
+        case "start-recording":
+          if (!isRecording) {
+            onStartRecording?.();
+          }
+          break;
+        case "stop-recording":
+          if (isRecording) {
+            onStopRecording?.();
+          }
+          break;
+        // Listening commands
+        case "toggle-listening":
+          if (isListening) {
+            onDisableListening?.();
+          } else {
+            onEnableListening?.();
+          }
+          break;
+        // Settings commands - navigate to settings page
+        case "change-audio-device":
+        case "download-model":
+          onNavigate?.("settings");
+          break;
+        // Help commands - navigate to settings or show help
+        case "view-shortcuts":
+        case "about-heycat":
+          onHelpClick?.();
+          break;
       }
     },
-    [onNavigate]
+    [
+      onNavigate,
+      isRecording,
+      isListening,
+      onStartRecording,
+      onStopRecording,
+      onEnableListening,
+      onDisableListening,
+      onHelpClick,
+    ]
   );
 
   return (

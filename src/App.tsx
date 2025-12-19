@@ -6,13 +6,29 @@ import { Dashboard, Commands, Recordings, Settings } from "./pages";
 import { useCatOverlay } from "./hooks/useCatOverlay";
 import { useAutoStartListening } from "./hooks/useAutoStartListening";
 import { useAppStatus } from "./hooks/useAppStatus";
+import { useRecording } from "./hooks/useRecording";
+import { useListening } from "./hooks/useListening";
+import { useSettings } from "./hooks/useSettings";
 
 function App() {
   const { status: appStatus, isRecording } = useAppStatus();
   const [navItem, setNavItem] = useState("dashboard");
   const [recordingDuration, setRecordingDuration] = useState(0);
-  useCatOverlay();
+  const { isListening } = useCatOverlay();
   useAutoStartListening();
+
+  // Get settings for device name
+  const { settings } = useSettings();
+
+  // Get recording actions
+  const { startRecording, stopRecording } = useRecording({
+    deviceName: settings.audio.selectedDevice,
+  });
+
+  // Get listening actions
+  const { enableListening, disableListening } = useListening({
+    deviceName: settings.audio.selectedDevice,
+  });
 
   // Track recording duration
   useEffect(() => {
@@ -35,6 +51,12 @@ function App() {
         status={appStatus}
         recordingDuration={isRecording ? recordingDuration : undefined}
         footerStateDescription="Ready for your command."
+        isListening={isListening}
+        isRecording={isRecording}
+        onStartRecording={startRecording}
+        onStopRecording={stopRecording}
+        onEnableListening={enableListening}
+        onDisableListening={disableListening}
       >
         {navItem === "dashboard" && <Dashboard onNavigate={setNavItem} />}
         {navItem === "commands" && <Commands onNavigate={setNavItem} />}

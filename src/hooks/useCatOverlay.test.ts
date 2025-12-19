@@ -7,9 +7,14 @@ const mockListen = vi.fn();
 const mockUnlisten = vi.fn();
 const mockGetByLabel = vi.fn();
 const mockPrimaryMonitor = vi.fn();
+const mockInvoke = vi.fn();
 
 // Track callbacks for each event type
 const eventCallbacks: Record<string, ((event: { payload: unknown }) => void)[]> = {};
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (cmd: string) => mockInvoke(cmd),
+}));
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: (eventName: string, callback: (event: { payload: unknown }) => void) => {
@@ -65,6 +70,12 @@ describe("useCatOverlay", () => {
       size: { width: 1920, height: 1080 },
       scaleFactor: 1,
     });
+    // Default: listening is disabled
+    mockInvoke.mockResolvedValue({
+      enabled: false,
+      active: false,
+      micAvailable: true,
+    });
     mockUseRecording.mockReturnValue({
       isRecording: false,
       error: null,
@@ -87,6 +98,40 @@ describe("useCatOverlay", () => {
     expect(result.current.isRecording).toBe(false);
     expect(result.current.overlayMode).toBe("hidden");
     expect(result.current.isMicUnavailable).toBe(false);
+  });
+
+  it("fetches initial listening state from backend on mount", async () => {
+    // Backend reports listening is already enabled
+    mockInvoke.mockResolvedValue({
+      enabled: true,
+      active: true,
+      micAvailable: true,
+    });
+
+    const { result } = renderHook(() => useCatOverlay());
+
+    await waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledWith("get_listening_status");
+    });
+
+    await waitFor(() => {
+      expect(result.current.isListening).toBe(true);
+      expect(result.current.overlayMode).toBe("listening");
+    });
+  });
+
+  it("sets isMicUnavailable from initial backend state", async () => {
+    mockInvoke.mockResolvedValue({
+      enabled: false,
+      active: false,
+      micAvailable: false,
+    });
+
+    const { result } = renderHook(() => useCatOverlay());
+
+    await waitFor(() => {
+      expect(result.current.isMicUnavailable).toBe(true);
+    });
   });
 
   it("sets up listening event listeners on mount", async () => {
