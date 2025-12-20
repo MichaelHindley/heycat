@@ -64,14 +64,14 @@ pub fn run() {
             // Manage the state for Tauri commands
             app.manage(recording_state.clone());
 
-            // Create and manage listening state, restoring persisted enabled setting
+            // Create and manage listening state, restoring persisted auto-start setting
             let listening_enabled = app
                 .store("settings.json")
                 .ok()
-                .and_then(|store| store.get("listening.enabled"))
+                .and_then(|store| store.get("listening.autoStartOnLaunch"))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            debug!("Restored listening.enabled from store: {}", listening_enabled);
+            debug!("Restored listening.autoStartOnLaunch from store: {}", listening_enabled);
             let listening_state = Arc::new(Mutex::new(
                 listening::ListeningManager::with_enabled(listening_enabled),
             ));
