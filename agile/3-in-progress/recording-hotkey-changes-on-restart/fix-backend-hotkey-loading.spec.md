@@ -1,8 +1,9 @@
 ---
-status: in-progress
+status: in-review
 created: 2025-12-20
 completed: null
 dependencies: ["fix-display-conversion"]
+review_round: 1
 ---
 
 # Spec: Fix backend hotkey registration for Function modifier on startup
@@ -65,3 +66,76 @@ After app restart, saved shortcuts containing the "Function" modifier are not be
 
 - Test location: Manual test - set Fn hotkey, restart app, press Fn, verify recording triggers
 - Verification: [ ] Integration test passes
+
+## Review
+
+**Reviewed:** 2025-12-20
+**Reviewer:** Claude
+
+### Pre-Review Gates
+
+#### 1. Build Warning Check
+```
+warning: method `register_recording_shortcut` is never used
+    = note: `#[warn(dead_code)]` on by default
+warning: `heycat` (lib) generated 1 warning
+```
+**FAIL** - Dead code warning for `register_recording_shortcut` method on `HotkeyServiceDyn`.
+
+#### 2. Command Registration Check
+All commands properly registered - PASS
+
+### Acceptance Criteria Verification
+
+| Criterion | Status | Evidence |
+|-----------|--------|----------|
+| After app restart, pressing Fn triggers the recording hotkey if Fn was saved | DEFERRED | Manual test - no automated verification |
+| Backend logs show key press events for Fn key after restart | DEFERRED | Manual test - no automated verification |
+| Hotkey registration completes without errors for "Function+..." shortcuts | PASS | `lib.rs:251-261` loads saved shortcut and registers via `backend.register()` |
+| Both new hotkey setting and restored hotkey work identically | FAIL | Unregistration mismatch - see concerns below |
+
+### Test Coverage Audit
+
+| Test Case | Status | Location |
+|-----------|--------|----------|
+| Set Fn+R as hotkey, restart, press Fn+R, recording starts | MISSING | Manual test only |
+| Set Function+CmdOrControl+R, restart, verify key press logs | MISSING | Manual test only |
+| Verify no regression: CmdOrControl+Shift+R still works | PASS | Existing tests cover default shortcut |
+
+### Code Quality
+
+**Strengths:**
+- Correctly reads saved shortcut from settings store with fallback to default
+- Uses existing `backend.register()` which already supports "Function" modifier (cgeventtap_backend.rs:83)
+- Logs the shortcut being registered for debugging
+
+**Concerns:**
+- **Critical: Unregistration mismatch** - In `lib.rs:299`, the `on_window_event` cleanup calls `service.unregister_recording_shortcut()` which hardcodes `RECORDING_SHORTCUT` constant ("CmdOrControl+Shift+R"). When a custom shortcut like "Function+R" is registered, cleanup will unregister the wrong shortcut. This causes a resource leak.
+- **Dead code warning** - `register_recording_shortcut` on `HotkeyServiceDyn` is now unused since `lib.rs` calls `backend.register()` directly. Either remove the unused method or use it consistently.
+- The implementation changes registration but not unregistration, breaking symmetry.
+
+### Data Flow Analysis
+
+```
+[App Startup]
+     |
+     v
+[lib.rs:251-256] Load saved_shortcut from settings.json
+     |
+     v
+[lib.rs:261] service.backend.register(&saved_shortcut, callback)
+     | Registers e.g. "Function+R"
+     v
+[Window Destroyed]
+     |
+     v
+[lib.rs:299] service.unregister_recording_shortcut()
+     | Calls backend.unregister(RECORDING_SHORTCUT) - WRONG!
+     | Tries to unregister "CmdOrControl+Shift+R" instead of "Function+R"
+     v
+[Shortcut Leak] - Custom shortcut remains registered
+```
+
+### Verdict
+
+**NEEDS_WORK** - Critical unregistration mismatch will cause shortcut leak when custom shortcuts are used. The cleanup path in `on_window_event` (lib.rs:299) must be updated to unregister the actual registered shortcut, not the hardcoded constant. Additionally, the dead code warning must be resolved.

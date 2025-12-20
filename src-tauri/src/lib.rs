@@ -294,12 +294,19 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
                 debug!("Window destroyed, cleaning up...");
-                // Unregister hotkey on window close
+                // Unregister hotkey on window close - use saved shortcut from settings
                 if let Some(service) = window.app_handle().try_state::<HotkeyServiceHandle>() {
-                    if let Err(e) = service.unregister_recording_shortcut() {
-                        warn!("Failed to unregister hotkey: {:?}", e);
+                    use tauri_plugin_store::StoreExt;
+                    let shortcut = window.app_handle()
+                        .store("settings.json")
+                        .ok()
+                        .and_then(|store| store.get("hotkey.recordingShortcut"))
+                        .and_then(|v| v.as_str().map(|s| s.to_string()))
+                        .unwrap_or_else(|| hotkey::RECORDING_SHORTCUT.to_string());
+                    if let Err(e) = service.backend.unregister(&shortcut) {
+                        warn!("Failed to unregister hotkey '{}': {}", shortcut, e);
                     } else {
-                        debug!("Hotkey unregistered successfully");
+                        debug!("Hotkey '{}' unregistered successfully", shortcut);
                     }
                 }
             }
