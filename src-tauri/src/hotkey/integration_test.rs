@@ -457,7 +457,7 @@ fn test_with_recording_detectors_builder() {
         .with_recording_detectors(detectors.clone());
 
     // Just verify the builder works and doesn't panic
-    assert!(integration.silence_detection_enabled);
+    assert!(integration.silence.enabled);
 }
 
 #[test]
@@ -471,7 +471,7 @@ fn test_silence_detection_can_be_disabled() {
         .with_recording_detectors(detectors)
         .with_silence_detection_enabled(false);
 
-    assert!(!integration.silence_detection_enabled);
+    assert!(!integration.silence.enabled);
 }
 
 #[test]
@@ -491,8 +491,8 @@ fn test_custom_silence_config() {
         .with_silence_config(config);
 
     // Custom config should be stored
-    assert!(integration.silence_config.is_some());
-    assert_eq!(integration.silence_config.as_ref().unwrap().silence_duration_ms, 3000);
+    assert!(integration.silence.config.is_some());
+    assert_eq!(integration.silence.config.as_ref().unwrap().silence_duration_ms, 3000);
 }
 
 #[test]

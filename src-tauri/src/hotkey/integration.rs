@@ -81,6 +81,98 @@ pub struct TranscriptionResult {
     pub duration_ms: u64,
 }
 
+// === Configuration Sub-Structs ===
+// These group related fields from HotkeyIntegration for improved maintainability.
+// Each config struct represents a logical capability that can be optionally enabled.
+
+/// Configuration for transcription capabilities
+///
+/// Groups all fields needed for automatic transcription after recording stops.
+/// When present, recordings will be automatically transcribed and events emitted.
+///
+/// Note: Both `shared_model` and `emitter` must be Some for transcription to work.
+/// The Option wrappers allow incremental builder pattern configuration.
+pub struct TranscriptionConfig<T: TranscriptionEventEmitter + ListeningEventEmitter> {
+    /// Shared transcription model for performing transcriptions
+    pub shared_model: Option<Arc<SharedTranscriptionModel>>,
+    /// Event emitter for transcription events (started, completed, error)
+    pub emitter: Option<Arc<T>>,
+    /// Semaphore to limit concurrent transcriptions
+    pub semaphore: Arc<Semaphore>,
+    /// Maximum time allowed for transcription before timeout
+    pub timeout: Duration,
+    /// Optional callback for delegating transcription to external service
+    pub callback: Option<Arc<dyn Fn(String) + Send + Sync>>,
+}
+
+/// Configuration for audio capture capabilities
+///
+/// Groups fields related to audio capture and recording management.
+pub struct AudioConfig<R: RecordingEventEmitter> {
+    /// Handle to the audio capture thread
+    pub thread: Arc<AudioThreadHandle>,
+    /// Recording state manager for tracking recording status and buffer
+    pub recording_state: Arc<Mutex<RecordingManager>>,
+    /// Event emitter for recording events
+    pub recording_emitter: R,
+    /// Optional detectors for silence-based auto-stop
+    pub detectors: Option<Arc<Mutex<RecordingDetectors>>>,
+}
+
+/// Configuration for silence detection during recording
+///
+/// Controls whether and how silence detection triggers auto-stop.
+#[derive(Clone)]
+pub struct SilenceDetectionConfig {
+    /// Whether silence detection is enabled (default: true)
+    pub enabled: bool,
+    /// Custom silence configuration (optional, uses defaults if None)
+    pub config: Option<SilenceConfig>,
+}
+
+impl Default for SilenceDetectionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            config: None,
+        }
+    }
+}
+
+/// Configuration for voice command matching and execution
+///
+/// Groups all fields needed for matching transcribed text to commands
+/// and executing the matched actions.
+///
+/// Note: All fields except `emitter` have default implementations.
+/// The `emitter` must be set for command events to be emitted.
+pub struct VoiceCommandConfig<C: CommandEventEmitter> {
+    /// Registry of available voice commands
+    pub registry: Arc<Mutex<CommandRegistry>>,
+    /// Matcher for finding commands from transcribed text
+    pub matcher: Arc<CommandMatcher>,
+    /// Dispatcher for executing matched command actions
+    pub dispatcher: Arc<ActionDispatcher>,
+    /// Event emitter for command events (matched, executed, failed, ambiguous)
+    /// Optional to support incremental builder pattern
+    pub emitter: Option<Arc<C>>,
+}
+
+/// Configuration for Escape key cancel functionality
+///
+/// Groups fields for double-tap Escape key detection to cancel recording.
+///
+/// Note: Both `backend` and `callback` must be Some for escape handling to work.
+/// The Option wrappers on callback allow incremental builder pattern configuration.
+pub struct EscapeKeyConfig {
+    /// Backend for registering/unregistering global shortcuts
+    pub backend: Arc<dyn ShortcutBackend + Send + Sync>,
+    /// Callback invoked when double-tap Escape is detected (optional for incremental config)
+    pub callback: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Time window for double-tap detection in milliseconds (default: 300ms)
+    pub double_tap_window_ms: u64,
+}
+
 /// Execute transcription with semaphore-limited concurrency, timeout, and error handling.
 ///
 /// This is the core transcription logic shared between:
@@ -206,56 +298,57 @@ fn copy_and_paste(app_handle: &Option<AppHandle>, text: &str) {
 }
 
 /// Handles hotkey toggle with debouncing and event emission
+///
+/// Configuration is organized into logical sub-structs:
+/// - `transcription`: Transcription capabilities (model, emitter, timeout)
+/// - `audio`: Audio capture and recording management
+/// - `voice_commands`: Voice command matching and execution
+/// - `escape`: Escape key cancel functionality
+/// - `silence`: Silence detection configuration
+///
+/// Top-level fields handle debouncing, listening state, and app integration.
 pub struct HotkeyIntegration<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmitter, C: CommandEventEmitter> {
+    // === Debounce/Timing ===
     last_toggle_time: Option<Instant>,
     debounce_duration: Duration,
+
+    // === Recording (required) ===
     recording_emitter: R,
+
+    // === Grouped Configurations ===
+    /// Transcription configuration (model, emitter, semaphore, timeout)
+    transcription: Option<TranscriptionConfig<T>>,
+    /// Voice command configuration (registry, matcher, dispatcher, emitter)
+    voice_commands: Option<VoiceCommandConfig<C>>,
+    /// Escape key configuration (backend, callback, double-tap window)
+    escape: Option<EscapeKeyConfig>,
+    /// Silence detection configuration (public for test assertions)
+    pub(crate) silence: SilenceDetectionConfig,
+
+    // === Audio (partially grouped - thread is optional, state may be separate) ===
     /// Optional audio thread handle - when present, starts/stops capture on toggle
     audio_thread: Option<Arc<AudioThreadHandle>>,
-    /// Optional SharedTranscriptionModel for auto-transcription after recording stops
-    shared_transcription_model: Option<Arc<SharedTranscriptionModel>>,
-    /// Transcription event emitter for emitting events from spawned thread
-    transcription_emitter: Option<Arc<T>>,
     /// Reference to recording state for getting audio buffer in transcription thread
     recording_state: Option<Arc<Mutex<RecordingManager>>>,
-    /// Optional listening state for determining return state after recording
-    listening_state: Option<Arc<Mutex<ListeningManager>>>,
-    /// Optional command registry for voice command matching
-    command_registry: Option<Arc<Mutex<CommandRegistry>>>,
-    /// Optional command matcher for voice command matching
-    command_matcher: Option<Arc<CommandMatcher>>,
-    /// Optional action dispatcher for executing matched commands
-    action_dispatcher: Option<Arc<ActionDispatcher>>,
-    /// Optional command event emitter for voice command events
-    command_emitter: Option<Arc<C>>,
-    /// Semaphore to limit concurrent transcriptions
-    transcription_semaphore: Arc<Semaphore>,
-    /// Optional app handle for clipboard access
-    app_handle: Option<AppHandle>,
-    /// Optional listening pipeline for restarting wake word detection after recording
-    listening_pipeline: Option<Arc<Mutex<ListeningPipeline>>>,
-    /// Transcription timeout duration (defaults to 60 seconds)
-    transcription_timeout: Duration,
     /// Recording detectors for silence-based auto-stop (shared with wake word flow)
     recording_detectors: Option<Arc<Mutex<RecordingDetectors>>>,
-    /// Whether to enable silence detection for hotkey recordings (defaults to true)
-    pub(crate) silence_detection_enabled: bool,
-    /// Custom silence configuration for hotkey recordings (optional)
-    pub(crate) silence_config: Option<SilenceConfig>,
-    /// Optional shortcut backend for Escape key registration (boxed to avoid generic parameter)
-    shortcut_backend: Option<Arc<dyn ShortcutBackend + Send + Sync>>,
-    /// Callback invoked when double-tap Escape is detected during recording
-    escape_callback: Option<Arc<dyn Fn() + Send + Sync>>,
+
+    // === Listening/Wake Word ===
+    /// Optional listening state for determining return state after recording
+    listening_state: Option<Arc<Mutex<ListeningManager>>>,
+    /// Optional listening pipeline for restarting wake word detection after recording
+    listening_pipeline: Option<Arc<Mutex<ListeningPipeline>>>,
+
+    // === App Integration ===
+    /// Optional app handle for clipboard access
+    app_handle: Option<AppHandle>,
+
+    // === Escape Key Runtime State ===
     /// Whether Escape key is currently registered (to track cleanup)
     /// Uses Arc<AtomicBool> for thread-safe updates from spawned registration thread
     escape_registered: Arc<AtomicBool>,
-    /// Time window for double-tap detection (default 300ms)
-    double_tap_window_ms: u64,
     /// Double-tap detector for Escape key (created on recording start)
     double_tap_detector: Option<Arc<Mutex<DoubleTapDetector<Box<dyn Fn() + Send + Sync>>>>>,
-    /// Optional transcription callback - when set, delegates transcription to external service
-    /// This enables HotkeyIntegration to use TranscriptionService without tight coupling
-    transcription_callback: Option<Arc<dyn Fn(String) + Send + Sync>>,
 }
 
 impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmitter + 'static, C: CommandEventEmitter + 'static> HotkeyIntegration<R, T, C> {
@@ -265,28 +358,23 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             last_toggle_time: None,
             debounce_duration: Duration::from_millis(DEBOUNCE_DURATION_MS),
             recording_emitter,
+            // Grouped configurations
+            transcription: None,
+            voice_commands: None,
+            escape: None,
+            silence: SilenceDetectionConfig::default(),
+            // Audio (kept separate for flexible builder pattern)
             audio_thread: None,
-            shared_transcription_model: None,
-            transcription_emitter: None,
             recording_state: None,
-            listening_state: None,
-            command_registry: None,
-            command_matcher: None,
-            action_dispatcher: None,
-            command_emitter: None,
-            transcription_semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_TRANSCRIPTIONS)),
-            app_handle: None,
-            listening_pipeline: None,
-            transcription_timeout: Duration::from_secs(DEFAULT_TRANSCRIPTION_TIMEOUT_SECS),
             recording_detectors: None,
-            silence_detection_enabled: true,
-            silence_config: None,
-            shortcut_backend: None,
-            escape_callback: None,
+            // Listening/wake word
+            listening_state: None,
+            listening_pipeline: None,
+            // App integration
+            app_handle: None,
+            // Escape key runtime state
             escape_registered: Arc::new(AtomicBool::new(false)),
-            double_tap_window_ms: DEFAULT_DOUBLE_TAP_WINDOW_MS,
             double_tap_detector: None,
-            transcription_callback: None,
         }
     }
 
@@ -315,13 +403,38 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
 
     /// Add SharedTranscriptionModel for auto-transcription (builder pattern)
     pub fn with_shared_transcription_model(mut self, model: Arc<SharedTranscriptionModel>) -> Self {
-        self.shared_transcription_model = Some(model);
+        // Update the transcription config's shared_model field
+        if let Some(ref mut config) = self.transcription {
+            config.shared_model = Some(model);
+        } else {
+            // Initialize transcription config with this model
+            // Other fields will use defaults until set
+            self.transcription = Some(TranscriptionConfig {
+                shared_model: Some(model),
+                emitter: None,
+                semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_TRANSCRIPTIONS)),
+                timeout: Duration::from_secs(DEFAULT_TRANSCRIPTION_TIMEOUT_SECS),
+                callback: None,
+            });
+        }
         self
     }
 
     /// Add transcription event emitter for emitting events from spawned thread (builder pattern)
     pub fn with_transcription_emitter(mut self, emitter: Arc<T>) -> Self {
-        self.transcription_emitter = Some(emitter);
+        if let Some(ref mut config) = self.transcription {
+            config.emitter = Some(emitter);
+        } else {
+            // Initialize transcription config with this emitter
+            // Model must be set separately for transcription to work
+            self.transcription = Some(TranscriptionConfig {
+                shared_model: None,
+                emitter: Some(emitter),
+                semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_TRANSCRIPTIONS)),
+                timeout: Duration::from_secs(DEFAULT_TRANSCRIPTION_TIMEOUT_SECS),
+                callback: None,
+            });
+        }
         self
     }
 
@@ -337,27 +450,57 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         self
     }
 
+    /// Add complete voice command configuration (builder pattern)
+    ///
+    /// This is the preferred way to configure voice commands. All components are
+    /// provided together to ensure consistency.
+    pub fn with_voice_commands(mut self, config: VoiceCommandConfig<C>) -> Self {
+        self.voice_commands = Some(config);
+        self
+    }
+
     /// Add voice command registry for command matching (builder pattern)
     pub fn with_command_registry(mut self, registry: Arc<Mutex<CommandRegistry>>) -> Self {
-        self.command_registry = Some(registry);
+        if let Some(ref mut config) = self.voice_commands {
+            config.registry = registry;
+        } else {
+            // Create a placeholder config - other fields must be set separately
+            // This is for backward compatibility with incremental builder pattern
+            self.voice_commands = Some(VoiceCommandConfig {
+                registry,
+                matcher: Arc::new(CommandMatcher::new()),
+                dispatcher: Arc::new(ActionDispatcher::new()),
+                emitter: None,
+            });
+        }
         self
     }
 
     /// Add command matcher for voice command matching (builder pattern)
     pub fn with_command_matcher(mut self, matcher: Arc<CommandMatcher>) -> Self {
-        self.command_matcher = Some(matcher);
+        if let Some(ref mut config) = self.voice_commands {
+            config.matcher = matcher;
+        }
+        // If no voice_commands config exists, this is a no-op
+        // (matcher without registry isn't useful)
         self
     }
 
     /// Add action dispatcher for executing matched commands (builder pattern)
     pub fn with_action_dispatcher(mut self, dispatcher: Arc<ActionDispatcher>) -> Self {
-        self.action_dispatcher = Some(dispatcher);
+        if let Some(ref mut config) = self.voice_commands {
+            config.dispatcher = dispatcher;
+        }
+        // If no voice_commands config exists, this is a no-op
         self
     }
 
     /// Add command event emitter for voice command events (builder pattern)
     pub fn with_command_emitter(mut self, emitter: Arc<C>) -> Self {
-        self.command_emitter = Some(emitter);
+        if let Some(ref mut config) = self.voice_commands {
+            config.emitter = Some(emitter);
+        }
+        // If no voice_commands config exists, this is a no-op
         self
     }
 
@@ -373,7 +516,18 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
     /// cancelled and a timeout error will be emitted to the frontend.
     #[allow(dead_code)]
     pub fn with_transcription_timeout(mut self, timeout: Duration) -> Self {
-        self.transcription_timeout = timeout;
+        if let Some(ref mut config) = self.transcription {
+            config.timeout = timeout;
+        } else {
+            // Create a minimal transcription config with the timeout
+            self.transcription = Some(TranscriptionConfig {
+                shared_model: None,
+                emitter: None,
+                semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_TRANSCRIPTIONS)),
+                timeout,
+                callback: None,
+            });
+        }
         self
     }
 
@@ -393,7 +547,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
     /// when the user manually triggers the hotkey again.
     #[allow(dead_code)]
     pub fn with_silence_detection_enabled(mut self, enabled: bool) -> Self {
-        self.silence_detection_enabled = enabled;
+        self.silence.enabled = enabled;
         self
     }
 
@@ -403,7 +557,16 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
     /// silence duration thresholds, no-speech timeouts, etc.
     #[allow(dead_code)]
     pub fn with_silence_config(mut self, config: SilenceConfig) -> Self {
-        self.silence_config = Some(config);
+        self.silence.config = Some(config);
+        self
+    }
+
+    /// Add complete escape key configuration (builder pattern)
+    ///
+    /// This is the preferred way to configure escape key handling. All components
+    /// are provided together to ensure consistency.
+    pub fn with_escape(mut self, config: EscapeKeyConfig) -> Self {
+        self.escape = Some(config);
         self
     }
 
@@ -413,7 +576,16 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
     /// automatically registered when recording starts and unregistered when
     /// recording stops. This enables cancel functionality via Escape key.
     pub fn with_shortcut_backend(mut self, backend: Arc<dyn ShortcutBackend + Send + Sync>) -> Self {
-        self.shortcut_backend = Some(backend);
+        if let Some(ref mut config) = self.escape {
+            config.backend = backend;
+        } else {
+            // Create a placeholder escape config - callback must be set separately
+            self.escape = Some(EscapeKeyConfig {
+                backend,
+                callback: None,
+                double_tap_window_ms: DEFAULT_DOUBLE_TAP_WINDOW_MS,
+            });
+        }
         self
     }
 
@@ -429,7 +601,16 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
     /// This builder method is kept for test ergonomics.
     #[allow(dead_code)]
     pub fn with_escape_callback(mut self, callback: Arc<dyn Fn() + Send + Sync>) -> Self {
-        self.escape_callback = Some(callback);
+        if let Some(ref mut config) = self.escape {
+            config.callback = Some(callback);
+        } else {
+            // Create a placeholder escape config - backend must be set separately
+            self.escape = Some(EscapeKeyConfig {
+                backend: Arc::new(crate::hotkey::NullShortcutBackend),
+                callback: Some(callback),
+                double_tap_window_ms: DEFAULT_DOUBLE_TAP_WINDOW_MS,
+            });
+        }
         self
     }
 
@@ -439,7 +620,16 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
     /// the cancel callback. Single presses are ignored.
     #[allow(dead_code)]
     pub fn with_double_tap_window(mut self, window_ms: u64) -> Self {
-        self.double_tap_window_ms = window_ms;
+        if let Some(ref mut config) = self.escape {
+            config.double_tap_window_ms = window_ms;
+        } else {
+            // Create a placeholder escape config
+            self.escape = Some(EscapeKeyConfig {
+                backend: Arc::new(crate::hotkey::NullShortcutBackend),
+                callback: None,
+                double_tap_window_ms: window_ms,
+            });
+        }
         self
     }
 
@@ -452,7 +642,18 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         mut self,
         callback: Arc<dyn Fn(String) + Send + Sync>,
     ) -> Self {
-        self.transcription_callback = Some(callback);
+        if let Some(ref mut config) = self.transcription {
+            config.callback = Some(callback);
+        } else {
+            // Create a minimal transcription config with the callback
+            self.transcription = Some(TranscriptionConfig {
+                shared_model: None,
+                emitter: None,
+                semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_TRANSCRIPTIONS)),
+                timeout: Duration::from_secs(DEFAULT_TRANSCRIPTION_TIMEOUT_SECS),
+                callback: Some(callback),
+            });
+        }
         self
     }
 
@@ -462,7 +663,16 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
     /// which is necessary when the callback needs to capture a reference to the integration
     /// itself (for calling cancel_recording).
     pub fn set_escape_callback(&mut self, callback: Arc<dyn Fn() + Send + Sync>) {
-        self.escape_callback = Some(callback);
+        if let Some(ref mut config) = self.escape {
+            config.callback = Some(callback);
+        } else {
+            // Create a placeholder escape config
+            self.escape = Some(EscapeKeyConfig {
+                backend: Arc::new(crate::hotkey::NullShortcutBackend),
+                callback: Some(callback),
+                double_tap_window_ms: DEFAULT_DOUBLE_TAP_WINDOW_MS,
+            });
+        }
     }
 
     /// Create with custom debounce duration (for testing)
@@ -472,28 +682,23 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             last_toggle_time: None,
             debounce_duration: Duration::from_millis(debounce_ms),
             recording_emitter,
+            // Grouped configurations
+            transcription: None,
+            voice_commands: None,
+            escape: None,
+            silence: SilenceDetectionConfig::default(),
+            // Audio (kept separate for flexible builder pattern)
             audio_thread: None,
-            shared_transcription_model: None,
-            transcription_emitter: None,
             recording_state: None,
-            listening_state: None,
-            command_registry: None,
-            command_matcher: None,
-            action_dispatcher: None,
-            command_emitter: None,
-            transcription_semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_TRANSCRIPTIONS)),
-            app_handle: None,
-            listening_pipeline: None,
-            transcription_timeout: Duration::from_secs(DEFAULT_TRANSCRIPTION_TIMEOUT_SECS),
             recording_detectors: None,
-            silence_detection_enabled: true,
-            silence_config: None,
-            shortcut_backend: None,
-            escape_callback: None,
+            // Listening/wake word
+            listening_state: None,
+            listening_pipeline: None,
+            // App integration
+            app_handle: None,
+            // Escape key runtime state
             escape_registered: Arc::new(AtomicBool::new(false)),
-            double_tap_window_ms: DEFAULT_DOUBLE_TAP_WINDOW_MS,
             double_tap_detector: None,
-            transcription_callback: None,
         }
     }
 
@@ -650,15 +855,25 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
     pub fn spawn_transcription(&self, file_path: String) {
         // If a transcription callback is configured, delegate to it
         // This enables HotkeyIntegration to use TranscriptionService without duplication
-        if let Some(ref callback) = self.transcription_callback {
-            info!("Delegating transcription to external service for: {}", file_path);
-            callback(file_path);
-            return;
+        if let Some(ref config) = self.transcription {
+            if let Some(ref callback) = config.callback {
+                info!("Delegating transcription to external service for: {}", file_path);
+                callback(file_path);
+                return;
+            }
         }
 
         // Fallback: inline transcription (for backward compatibility and tests)
-        // Check all required components are present
-        let shared_model = match &self.shared_transcription_model {
+        // Check all required components are present from transcription config
+        let transcription_config = match &self.transcription {
+            Some(c) => c,
+            None => {
+                debug!("Transcription skipped: no transcription config");
+                return;
+            }
+        };
+
+        let shared_model = match &transcription_config.shared_model {
             Some(m) => m.clone(),
             None => {
                 debug!("Transcription skipped: no shared transcription model configured");
@@ -666,7 +881,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             }
         };
 
-        let transcription_emitter = match &self.transcription_emitter {
+        let transcription_emitter = match &transcription_config.emitter {
             Some(te) => te.clone(),
             None => {
                 debug!("Transcription skipped: no transcription emitter configured");
@@ -680,11 +895,18 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             return;
         }
 
-        // Optional voice command components
-        let command_registry = self.command_registry.clone();
-        let command_matcher = self.command_matcher.clone();
-        let action_dispatcher = self.action_dispatcher.clone();
-        let command_emitter = self.command_emitter.clone();
+        // Optional voice command components from voice_commands config
+        let (command_registry, command_matcher, action_dispatcher, command_emitter) =
+            if let Some(ref vc) = self.voice_commands {
+                (
+                    Some(vc.registry.clone()),
+                    Some(vc.matcher.clone()),
+                    Some(vc.dispatcher.clone()),
+                    vc.emitter.clone(),
+                )
+            } else {
+                (None, None, None, None)
+            };
 
         // Clone app_handle for clipboard access
         let app_handle = self.app_handle.clone();
@@ -692,11 +914,9 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         // Clone recording_state for buffer cleanup after transcription
         let recording_state = self.recording_state.clone();
 
-        // Clone semaphore for the async task
-        let semaphore = self.transcription_semaphore.clone();
-
-        // Clone timeout for the async task
-        let timeout_duration = self.transcription_timeout;
+        // Clone semaphore and timeout from transcription config
+        let semaphore = transcription_config.semaphore.clone();
+        let timeout_duration = transcription_config.timeout;
 
         info!("Spawning transcription task...");
 
@@ -928,10 +1148,16 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             }
         };
 
-        let emitter = match &self.transcription_emitter {
-            Some(e) => e.clone(),
+        let emitter = match &self.transcription {
+            Some(ref config) => match &config.emitter {
+                Some(e) => e.clone(),
+                None => {
+                    debug!("No transcription emitter configured, cannot restart pipeline");
+                    return;
+                }
+            },
             None => {
-                debug!("No transcription emitter configured, cannot restart pipeline");
+                debug!("No transcription config, cannot restart pipeline");
                 return;
             }
         };
@@ -993,8 +1219,8 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
     /// This method is called after recording starts successfully. The detection runs
     /// in a separate thread and will handle saving/transcription when silence triggers.
     fn start_silence_detection(&self, recording_state: &Mutex<RecordingManager>) {
-        // Check if silence detection is enabled
-        if !self.silence_detection_enabled {
+        // Check if silence detection is enabled (from silence config)
+        if !self.silence.enabled {
             debug!("Silence detection disabled for hotkey recordings");
             return;
         }
@@ -1017,7 +1243,14 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         };
 
         // Verify transcription emitter is configured (needed for the callback)
-        if self.transcription_emitter.is_none() {
+        let transcription_config = match &self.transcription {
+            Some(c) => c,
+            None => {
+                debug!("No transcription config, cannot start silence detection");
+                return;
+            }
+        };
+        if transcription_config.emitter.is_none() {
             debug!("No transcription emitter configured, cannot start silence detection");
             return;
         }
@@ -1051,12 +1284,13 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
 
         // Create transcription callback that calls spawn_transcription
         // This is the same pattern used in wake word flow
-        let shared_model = self.shared_transcription_model.clone();
-        let transcription_emitter_for_callback = self.transcription_emitter.clone();
+        // Extract components from transcription config
+        let shared_model = transcription_config.shared_model.clone();
+        let transcription_emitter_for_callback = transcription_config.emitter.clone();
         let app_handle_for_callback = self.app_handle.clone();
         let recording_state_for_callback = self.recording_state.clone();
-        let transcription_semaphore_for_callback = self.transcription_semaphore.clone();
-        let transcription_timeout_for_callback = self.transcription_timeout;
+        let transcription_semaphore_for_callback = transcription_config.semaphore.clone();
+        let transcription_timeout_for_callback = transcription_config.timeout;
 
         // Build transcription callback
         let transcription_callback: Option<Box<dyn Fn(String) + Send + 'static>> =
@@ -1213,15 +1447,18 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             return;
         }
 
-        let backend = match &self.shortcut_backend {
-            Some(b) => b.clone(),
+        // Get escape config - skip if not configured
+        let escape_config = match &self.escape {
+            Some(c) => c,
             None => {
-                debug!("No shortcut backend configured, skipping Escape registration");
+                debug!("No escape config, skipping Escape registration");
                 return;
             }
         };
 
-        let callback = match &self.escape_callback {
+        let backend = escape_config.backend.clone();
+
+        let callback = match &escape_config.callback {
             Some(c) => c.clone(),
             None => {
                 debug!("No escape callback configured, skipping Escape registration");
@@ -1234,7 +1471,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         let boxed_callback: Box<dyn Fn() + Send + Sync> = Box::new(move || callback());
         let detector = Arc::new(Mutex::new(DoubleTapDetector::with_window(
             boxed_callback,
-            self.double_tap_window_ms,
+            escape_config.double_tap_window_ms,
         )));
         self.double_tap_detector = Some(detector.clone());
 
@@ -1322,8 +1559,8 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             return;
         }
 
-        let backend = match &self.shortcut_backend {
-            Some(b) => b.clone(),
+        let backend = match &self.escape {
+            Some(c) => c.backend.clone(),
             None => return,
         };
 

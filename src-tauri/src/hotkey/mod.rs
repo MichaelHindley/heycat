@@ -65,6 +65,22 @@ pub trait ShortcutBackend {
     fn unregister(&self, shortcut: &str) -> Result<(), String>;
 }
 
+/// Null implementation of ShortcutBackend for placeholder configs
+///
+/// This is used when building escape key configuration incrementally
+/// via the builder pattern. Registration always fails gracefully.
+pub struct NullShortcutBackend;
+
+impl ShortcutBackend for NullShortcutBackend {
+    fn register(&self, _shortcut: &str, _callback: Box<dyn Fn() + Send + Sync>) -> Result<(), String> {
+        Err("NullShortcutBackend: registration not supported".to_string())
+    }
+
+    fn unregister(&self, _shortcut: &str) -> Result<(), String> {
+        Err("NullShortcutBackend: unregistration not supported".to_string())
+    }
+}
+
 /// Service for managing hotkey registration
 ///
 /// Note: Production code uses HotkeyServiceDyn. This generic version is kept for testing
