@@ -1,0 +1,563 @@
+// CGEventTap-based hotkey backend for macOS
+//
+// This backend uses CGEventTap to capture keyboard events, enabling support for:
+// - fn/Globe key as part of hotkeys
+// - Media keys (Play/Pause, Volume, etc.)
+// - Modifier-only hotkeys (just fn, or fn+Command)
+// - Left/right modifier distinction
+//
+// This is a macOS-only implementation. Other platforms use TauriShortcutBackend.
+
+use super::ShortcutBackend;
+use crate::keyboard_capture::cgeventtap::{CGEventTapCapture, CapturedKeyEvent};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
+/// Media key names that can be used in shortcuts
+const MEDIA_KEY_NAMES: &[&str] = &[
+    "PlayPause",
+    "VolumeUp",
+    "VolumeDown",
+    "Mute",
+    "NextTrack",
+    "PreviousTrack",
+    "FastForward",
+    "Rewind",
+    "BrightnessUp",
+    "BrightnessDown",
+    "KeyboardBrightnessUp",
+    "KeyboardBrightnessDown",
+];
+
+/// Parsed shortcut specification for matching against key events
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShortcutSpec {
+    /// Whether fn key must be pressed
+    pub fn_key: bool,
+    /// Whether command key must be pressed
+    pub command: bool,
+    /// Whether control key must be pressed
+    pub control: bool,
+    /// Whether alt/option key must be pressed
+    pub alt: bool,
+    /// Whether shift key must be pressed
+    pub shift: bool,
+    /// The key name (None for modifier-only hotkeys)
+    pub key_name: Option<String>,
+    /// Whether this is a media key
+    pub is_media_key: bool,
+}
+
+impl Default for ShortcutSpec {
+    fn default() -> Self {
+        Self {
+            fn_key: false,
+            command: false,
+            control: false,
+            alt: false,
+            shift: false,
+            key_name: None,
+            is_media_key: false,
+        }
+    }
+}
+
+/// Parse a shortcut string into a ShortcutSpec
+///
+/// Supports formats:
+/// - Standard: "CmdOrControl+Shift+R", "Command+Shift+R", "Escape"
+/// - Extended: "fn+Command+R", "Function+Command+R"
+/// - Modifier-only: "fn", "Command+Shift"
+/// - Media: "PlayPause", "VolumeUp", "Command+PlayPause"
+pub fn parse_shortcut(shortcut: &str) -> Result<ShortcutSpec, String> {
+    let mut spec = ShortcutSpec::default();
+
+    // Split by + to get modifiers and key
+    let parts: Vec<&str> = shortcut.split('+').collect();
+
+    for part in parts {
+        let normalized = part.trim();
+
+        match normalized.to_lowercase().as_str() {
+            "fn" | "function" => spec.fn_key = true,
+            "cmd" | "command" | "cmdorcontrol" | "commandorcontrol" => spec.command = true,
+            "ctrl" | "control" => spec.control = true,
+            "alt" | "option" => spec.alt = true,
+            "shift" => spec.shift = true,
+            _ => {
+                // Check if it's a media key
+                if MEDIA_KEY_NAMES.iter().any(|&mk| mk.eq_ignore_ascii_case(normalized)) {
+                    spec.is_media_key = true;
+                    // Normalize media key name to match what CGEventTap returns
+                    spec.key_name = Some(normalize_media_key_name(normalized));
+                } else {
+                    // Regular key - normalize to uppercase for letters
+                    spec.key_name = Some(normalize_key_name(normalized));
+                }
+            }
+        }
+    }
+
+    Ok(spec)
+}
+
+/// Normalize a media key name to match CGEventTap output
+fn normalize_media_key_name(name: &str) -> String {
+    // Match against known media keys case-insensitively
+    for &mk in MEDIA_KEY_NAMES {
+        if mk.eq_ignore_ascii_case(name) {
+            return mk.to_string();
+        }
+    }
+    name.to_string()
+}
+
+/// Normalize a regular key name
+fn normalize_key_name(name: &str) -> String {
+    // Single letter keys should be uppercase
+    if name.len() == 1 && name.chars().next().unwrap().is_alphabetic() {
+        return name.to_uppercase();
+    }
+
+    // Common key name normalizations
+    match name.to_lowercase().as_str() {
+        "escape" | "esc" => "Escape".to_string(),
+        "enter" | "return" => "Enter".to_string(),
+        "space" => "Space".to_string(),
+        "tab" => "Tab".to_string(),
+        "backspace" => "Backspace".to_string(),
+        "delete" => "Delete".to_string(),
+        "up" | "arrowup" => "Up".to_string(),
+        "down" | "arrowdown" => "Down".to_string(),
+        "left" | "arrowleft" => "Left".to_string(),
+        "right" | "arrowright" => "Right".to_string(),
+        "home" => "Home".to_string(),
+        "end" => "End".to_string(),
+        "pageup" => "PageUp".to_string(),
+        "pagedown" => "PageDown".to_string(),
+        _ => {
+            // Check for function keys (F1-F19)
+            if name.to_lowercase().starts_with('f') {
+                if let Ok(n) = name[1..].parse::<u8>() {
+                    if (1..=19).contains(&n) {
+                        return format!("F{}", n);
+                    }
+                }
+            }
+            // Return as-is for other keys
+            name.to_string()
+        }
+    }
+}
+
+/// Check if a captured key event matches a shortcut spec
+pub fn matches_shortcut(event: &CapturedKeyEvent, spec: &ShortcutSpec) -> bool {
+    // Only match on key press, not release
+    if !event.pressed {
+        return false;
+    }
+
+    // Check modifiers
+    if spec.fn_key != event.fn_key {
+        return false;
+    }
+    if spec.command != event.command {
+        return false;
+    }
+    if spec.control != event.control {
+        return false;
+    }
+    if spec.alt != event.alt {
+        return false;
+    }
+    if spec.shift != event.shift {
+        return false;
+    }
+
+    // Check key name
+    match (&spec.key_name, spec.is_media_key) {
+        (None, _) => {
+            // Modifier-only shortcut - match when the modifier key itself is pressed
+            // This only triggers when we're looking for modifier-only and the event is for a modifier
+            true
+        }
+        (Some(key_name), true) => {
+            // Media key - must be a media key event with matching name
+            event.is_media_key && event.key_name.eq_ignore_ascii_case(key_name)
+        }
+        (Some(key_name), false) => {
+            // Regular key - must not be a media key and name must match
+            !event.is_media_key && event.key_name.eq_ignore_ascii_case(key_name)
+        }
+    }
+}
+
+/// CGEventTap-based hotkey backend for macOS
+///
+/// This backend uses CGEventTap to capture keyboard events globally,
+/// enabling support for fn key, media keys, and other keys that the
+/// standard Tauri global shortcut plugin cannot handle.
+pub struct CGEventTapHotkeyBackend {
+    /// Capture instance (started lazily when first shortcut registered)
+    capture: Arc<Mutex<Option<CGEventTapCapture>>>,
+    /// Registered shortcuts mapped to their specs
+    registered_shortcuts: Arc<Mutex<HashMap<String, ShortcutSpec>>>,
+    /// Callbacks for each registered shortcut
+    callbacks: Arc<Mutex<HashMap<String, Arc<dyn Fn() + Send + Sync>>>>,
+    /// Whether the event tap is currently running
+    running: Arc<AtomicBool>,
+}
+
+impl CGEventTapHotkeyBackend {
+    /// Create a new CGEventTap hotkey backend
+    pub fn new() -> Self {
+        Self {
+            capture: Arc::new(Mutex::new(None)),
+            registered_shortcuts: Arc::new(Mutex::new(HashMap::new())),
+            callbacks: Arc::new(Mutex::new(HashMap::new())),
+            running: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Start the CGEventTap capture if not already running
+    fn start_capture(&self) -> Result<(), String> {
+        if self.running.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+
+        let shortcuts = self.registered_shortcuts.clone();
+        let callbacks = self.callbacks.clone();
+
+        let mut capture_guard = self.capture.lock().map_err(|e| e.to_string())?;
+
+        let mut capture = CGEventTapCapture::new();
+
+        capture.start(move |event| {
+            Self::handle_key_event(&event, &shortcuts, &callbacks);
+        })?;
+
+        *capture_guard = Some(capture);
+        self.running.store(true, Ordering::SeqCst);
+
+        crate::info!("CGEventTapHotkeyBackend: Started capture");
+        Ok(())
+    }
+
+    /// Stop the CGEventTap capture
+    fn stop_capture(&self) -> Result<(), String> {
+        if !self.running.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+
+        let mut capture_guard = self.capture.lock().map_err(|e| e.to_string())?;
+
+        if let Some(ref mut capture) = *capture_guard {
+            capture.stop()?;
+        }
+        *capture_guard = None;
+        self.running.store(false, Ordering::SeqCst);
+
+        crate::info!("CGEventTapHotkeyBackend: Stopped capture");
+        Ok(())
+    }
+
+    /// Handle a key event from CGEventTap
+    fn handle_key_event(
+        event: &CapturedKeyEvent,
+        shortcuts: &Arc<Mutex<HashMap<String, ShortcutSpec>>>,
+        callbacks: &Arc<Mutex<HashMap<String, Arc<dyn Fn() + Send + Sync>>>>,
+    ) {
+        // Get a snapshot of shortcuts and callbacks to avoid holding locks during callback execution
+        let matching_callbacks: Vec<Arc<dyn Fn() + Send + Sync>> = {
+            let shortcuts_guard = match shortcuts.lock() {
+                Ok(g) => g,
+                Err(_) => return,
+            };
+            let callbacks_guard = match callbacks.lock() {
+                Ok(g) => g,
+                Err(_) => return,
+            };
+
+            shortcuts_guard
+                .iter()
+                .filter_map(|(shortcut_str, spec)| {
+                    if matches_shortcut(event, spec) {
+                        callbacks_guard.get(shortcut_str).cloned()
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+
+        // Execute callbacks outside of lock
+        for callback in matching_callbacks {
+            callback();
+        }
+    }
+}
+
+impl Default for CGEventTapHotkeyBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ShortcutBackend for CGEventTapHotkeyBackend {
+    fn register(
+        &self,
+        shortcut: &str,
+        callback: Box<dyn Fn() + Send + Sync>,
+    ) -> Result<(), String> {
+        // Parse the shortcut
+        let spec = parse_shortcut(shortcut)?;
+
+        // Store the shortcut and callback
+        {
+            let mut shortcuts_guard = self.registered_shortcuts.lock().map_err(|e| e.to_string())?;
+            let mut callbacks_guard = self.callbacks.lock().map_err(|e| e.to_string())?;
+
+            if shortcuts_guard.contains_key(shortcut) {
+                return Err(format!("Shortcut '{}' is already registered", shortcut));
+            }
+
+            shortcuts_guard.insert(shortcut.to_string(), spec);
+            callbacks_guard.insert(shortcut.to_string(), Arc::from(callback));
+        }
+
+        // Start capture if this is the first registration
+        self.start_capture()?;
+
+        crate::info!("CGEventTapHotkeyBackend: Registered shortcut '{}'", shortcut);
+        Ok(())
+    }
+
+    fn unregister(&self, shortcut: &str) -> Result<(), String> {
+        let should_stop = {
+            let mut shortcuts_guard = self.registered_shortcuts.lock().map_err(|e| e.to_string())?;
+            let mut callbacks_guard = self.callbacks.lock().map_err(|e| e.to_string())?;
+
+            shortcuts_guard.remove(shortcut);
+            callbacks_guard.remove(shortcut);
+
+            shortcuts_guard.is_empty()
+        };
+
+        // Stop capture if no shortcuts remain
+        if should_stop {
+            self.stop_capture()?;
+        }
+
+        crate::info!(
+            "CGEventTapHotkeyBackend: Unregistered shortcut '{}'",
+            shortcut
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_shortcut_standard() {
+        let spec = parse_shortcut("CmdOrControl+Shift+R").unwrap();
+        assert!(spec.command);
+        assert!(spec.shift);
+        assert!(!spec.fn_key);
+        assert!(!spec.control);
+        assert!(!spec.alt);
+        assert_eq!(spec.key_name, Some("R".to_string()));
+        assert!(!spec.is_media_key);
+    }
+
+    #[test]
+    fn test_parse_shortcut_with_fn() {
+        let spec = parse_shortcut("fn+Command+R").unwrap();
+        assert!(spec.fn_key);
+        assert!(spec.command);
+        assert_eq!(spec.key_name, Some("R".to_string()));
+    }
+
+    #[test]
+    fn test_parse_shortcut_fn_only() {
+        let spec = parse_shortcut("fn").unwrap();
+        assert!(spec.fn_key);
+        assert!(!spec.command);
+        assert!(!spec.shift);
+        assert_eq!(spec.key_name, None);
+    }
+
+    #[test]
+    fn test_parse_shortcut_media_key() {
+        let spec = parse_shortcut("PlayPause").unwrap();
+        assert!(spec.is_media_key);
+        assert_eq!(spec.key_name, Some("PlayPause".to_string()));
+        assert!(!spec.fn_key);
+    }
+
+    #[test]
+    fn test_parse_shortcut_media_key_with_modifier() {
+        let spec = parse_shortcut("Command+PlayPause").unwrap();
+        assert!(spec.is_media_key);
+        assert!(spec.command);
+        assert_eq!(spec.key_name, Some("PlayPause".to_string()));
+    }
+
+    #[test]
+    fn test_parse_shortcut_escape() {
+        let spec = parse_shortcut("Escape").unwrap();
+        assert_eq!(spec.key_name, Some("Escape".to_string()));
+        assert!(!spec.is_media_key);
+    }
+
+    #[test]
+    fn test_parse_shortcut_function_key() {
+        let spec = parse_shortcut("Command+F5").unwrap();
+        assert!(spec.command);
+        assert_eq!(spec.key_name, Some("F5".to_string()));
+    }
+
+    #[test]
+    fn test_matches_shortcut_basic() {
+        let spec = parse_shortcut("Command+Shift+R").unwrap();
+        let event = CapturedKeyEvent {
+            key_code: 15, // R
+            key_name: "R".to_string(),
+            fn_key: false,
+            command: true,
+            command_left: true,
+            command_right: false,
+            control: false,
+            control_left: false,
+            control_right: false,
+            alt: false,
+            alt_left: false,
+            alt_right: false,
+            shift: true,
+            shift_left: true,
+            shift_right: false,
+            pressed: true,
+            is_media_key: false,
+        };
+        assert!(matches_shortcut(&event, &spec));
+    }
+
+    #[test]
+    fn test_matches_shortcut_wrong_key() {
+        let spec = parse_shortcut("Command+Shift+R").unwrap();
+        let event = CapturedKeyEvent {
+            key_code: 0, // A
+            key_name: "A".to_string(),
+            fn_key: false,
+            command: true,
+            command_left: true,
+            command_right: false,
+            control: false,
+            control_left: false,
+            control_right: false,
+            alt: false,
+            alt_left: false,
+            alt_right: false,
+            shift: true,
+            shift_left: true,
+            shift_right: false,
+            pressed: true,
+            is_media_key: false,
+        };
+        assert!(!matches_shortcut(&event, &spec));
+    }
+
+    #[test]
+    fn test_matches_shortcut_release_ignored() {
+        let spec = parse_shortcut("Command+Shift+R").unwrap();
+        let event = CapturedKeyEvent {
+            key_code: 15,
+            key_name: "R".to_string(),
+            fn_key: false,
+            command: true,
+            command_left: true,
+            command_right: false,
+            control: false,
+            control_left: false,
+            control_right: false,
+            alt: false,
+            alt_left: false,
+            alt_right: false,
+            shift: true,
+            shift_left: true,
+            shift_right: false,
+            pressed: false, // Release
+            is_media_key: false,
+        };
+        assert!(!matches_shortcut(&event, &spec));
+    }
+
+    #[test]
+    fn test_matches_shortcut_with_fn() {
+        let spec = parse_shortcut("fn+Command+R").unwrap();
+        let event = CapturedKeyEvent {
+            key_code: 15,
+            key_name: "R".to_string(),
+            fn_key: true,
+            command: true,
+            command_left: true,
+            command_right: false,
+            control: false,
+            control_left: false,
+            control_right: false,
+            alt: false,
+            alt_left: false,
+            alt_right: false,
+            shift: false,
+            shift_left: false,
+            shift_right: false,
+            pressed: true,
+            is_media_key: false,
+        };
+        assert!(matches_shortcut(&event, &spec));
+    }
+
+    #[test]
+    fn test_matches_shortcut_media_key() {
+        let spec = parse_shortcut("PlayPause").unwrap();
+        let event = CapturedKeyEvent {
+            key_code: 16, // NX_KEYTYPE_PLAY
+            key_name: "PlayPause".to_string(),
+            fn_key: false,
+            command: false,
+            command_left: false,
+            command_right: false,
+            control: false,
+            control_left: false,
+            control_right: false,
+            alt: false,
+            alt_left: false,
+            alt_right: false,
+            shift: false,
+            shift_left: false,
+            shift_right: false,
+            pressed: true,
+            is_media_key: true,
+        };
+        assert!(matches_shortcut(&event, &spec));
+    }
+
+    #[test]
+    fn test_normalize_key_name() {
+        assert_eq!(normalize_key_name("r"), "R");
+        assert_eq!(normalize_key_name("R"), "R");
+        assert_eq!(normalize_key_name("escape"), "Escape");
+        assert_eq!(normalize_key_name("Esc"), "Escape");
+        assert_eq!(normalize_key_name("F5"), "F5");
+        assert_eq!(normalize_key_name("f12"), "F12");
+    }
+
+    #[test]
+    fn test_backend_new() {
+        let backend = CGEventTapHotkeyBackend::new();
+        assert!(!backend.running.load(Ordering::SeqCst));
+    }
+}

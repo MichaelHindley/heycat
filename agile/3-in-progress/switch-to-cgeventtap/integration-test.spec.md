@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: pending
 created: 2025-12-19
 completed: null
 dependencies:

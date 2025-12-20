@@ -3,6 +3,9 @@
 mod tauri_backend;
 pub use tauri_backend::TauriShortcutBackend;
 
+#[cfg(target_os = "macos")]
+mod cgeventtap_backend;
+
 pub mod double_tap;
 
 pub mod integration;
@@ -13,6 +16,8 @@ mod mod_test;
 
 #[cfg(test)]
 mod integration_test;
+
+use std::sync::Arc;
 
 /// The keyboard shortcut for recording (platform-agnostic)
 pub const RECORDING_SHORTCUT: &str = "CmdOrControl+Shift+R";
@@ -113,5 +118,55 @@ impl<B: ShortcutBackend> HotkeyService<B> {
         self.backend
             .unregister(ESCAPE_SHORTCUT)
             .map_err(|e| map_backend_error(&e))
+    }
+}
+
+/// Service for managing hotkey registration with dynamic backend
+///
+/// This version uses Arc<dyn ShortcutBackend> for runtime polymorphism,
+/// allowing the backend to be selected at runtime based on platform.
+pub struct HotkeyServiceDyn {
+    /// The backend used for shortcut registration
+    pub backend: Arc<dyn ShortcutBackend + Send + Sync>,
+}
+
+impl HotkeyServiceDyn {
+    pub fn new(backend: Arc<dyn ShortcutBackend + Send + Sync>) -> Self {
+        Self { backend }
+    }
+
+    pub fn register_recording_shortcut(
+        &self,
+        callback: Box<dyn Fn() + Send + Sync>,
+    ) -> Result<(), HotkeyError> {
+        self.backend
+            .register(RECORDING_SHORTCUT, callback)
+            .map_err(|e| map_backend_error(&e))
+    }
+
+    pub fn unregister_recording_shortcut(&self) -> Result<(), HotkeyError> {
+        self.backend
+            .unregister(RECORDING_SHORTCUT)
+            .map_err(|e| map_backend_error(&e))
+    }
+}
+
+/// Create the appropriate shortcut backend for the current platform
+///
+/// - **macOS**: Uses CGEventTapHotkeyBackend (supports fn key, media keys, requires Accessibility permission)
+/// - **Windows/Linux**: Uses TauriShortcutBackend (standard Tauri global shortcut plugin)
+///
+/// Both backends implement the `ShortcutBackend` trait, so they can be used interchangeably.
+#[cfg_attr(coverage_nightly, coverage(off))]
+pub fn create_shortcut_backend(app: tauri::AppHandle) -> Arc<dyn ShortcutBackend + Send + Sync> {
+    #[cfg(target_os = "macos")]
+    {
+        // Suppress unused variable warning on macOS since we don't need the app handle
+        let _ = app;
+        Arc::new(cgeventtap_backend::CGEventTapHotkeyBackend::new())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Arc::new(TauriShortcutBackend::new(app))
     }
 }

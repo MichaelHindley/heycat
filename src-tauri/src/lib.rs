@@ -24,8 +24,8 @@ use tauri_plugin_store::StoreExt;
 // Re-export log macros for use throughout the crate
 pub use tauri_plugin_log::log::{debug, error, info, trace, warn};
 
-/// Concrete type for HotkeyService with TauriShortcutBackend
-type HotkeyServiceHandle = hotkey::HotkeyService<hotkey::TauriShortcutBackend>;
+/// Concrete type for HotkeyService with dynamic backend (OS-selected)
+type HotkeyServiceHandle = hotkey::HotkeyServiceDyn;
 
 /// Application entry point - starts the Tauri event loop.
 /// Note: This function cannot be unit tested as it starts a GUI.
@@ -179,8 +179,8 @@ pub fn run() {
             let command_emitter = Arc::new(commands::TauriEventEmitter::new(app.handle().clone()));
 
             // Create shortcut backend for Escape key registration (used by HotkeyIntegration)
-            let escape_backend: Arc<dyn hotkey::ShortcutBackend + Send + Sync> =
-                Arc::new(hotkey::TauriShortcutBackend::new(app.handle().clone()));
+            // Uses platform-specific backend: CGEventTap on macOS, Tauri on Windows/Linux
+            let escape_backend = hotkey::create_shortcut_backend(app.handle().clone());
 
             // Create transcription callback that delegates to TranscriptionService
             let transcription_service_for_callback = transcription_service.clone();
@@ -245,10 +245,11 @@ pub fn run() {
             let state_clone = recording_state.clone();
             let app_handle_clone = app.handle().clone();
 
-            // Register hotkey
+            // Register hotkey using platform-specific backend
+            // Uses CGEventTap on macOS (supports fn key, media keys), Tauri on Windows/Linux
             info!("Registering global hotkey (Cmd+Shift+R)...");
-            let backend = hotkey::TauriShortcutBackend::new(app.handle().clone());
-            let service = hotkey::HotkeyService::new(backend);
+            let backend = hotkey::create_shortcut_backend(app.handle().clone());
+            let service = hotkey::HotkeyServiceDyn::new(backend);
 
             if let Err(e) = service.register_recording_shortcut(Box::new(move || {
                 debug!("Hotkey pressed!");

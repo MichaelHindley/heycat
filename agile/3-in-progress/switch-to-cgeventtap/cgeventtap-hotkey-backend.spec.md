@@ -5,7 +5,6 @@ completed: null
 dependencies:
   - replace-iokit-hid
   - frontend-shortcut-display
-  - integration-test
 ---
 
 # Spec: CGEventTap-based hotkey backend for fn key support
@@ -22,7 +21,9 @@ Replace Tauri's global-shortcut plugin with a CGEventTap-based hotkey backend on
 - [ ] Modifier-only hotkeys work (e.g., just double-tap fn)
 - [ ] Left/right modifier distinction available for hotkeys
 - [ ] CGEventTap runs continuously when any hotkey is registered
-- [ ] Graceful fallback to Tauri backend if Accessibility permission denied
+- [ ] **Multi-OS support via factory function**: `create_shortcut_backend()` selects backend at compile time
+  - macOS: CGEventTapHotkeyBackend (required for fn key, media keys)
+  - Windows/Linux: TauriShortcutBackend (standard Tauri plugin)
 - [ ] Existing hotkey functionality (Cmd+Shift+R) continues to work
 
 ## Test Cases
@@ -32,8 +33,9 @@ Replace Tauri's global-shortcut plugin with a CGEventTap-based hotkey backend on
 - [ ] Register Play/Pause media key → callback fires when pressed
 - [ ] Multiple hotkeys registered → each fires independently
 - [ ] Unregister hotkey → callback no longer fires
-- [ ] Permission denied → falls back to Tauri backend with warning
+- [ ] Permission denied on macOS → returns error (user must grant permission)
 - [ ] Rapid key presses → properly debounced
+- [ ] `create_shortcut_backend()` returns correct backend type per OS
 
 ## Dependencies
 
@@ -48,20 +50,32 @@ Replace Tauri's global-shortcut plugin with a CGEventTap-based hotkey backend on
 
 ## Implementation Notes
 
+### Multi-OS Architecture
+
+```
+create_shortcut_backend(app_handle) → Arc<dyn ShortcutBackend>
+    ├─ macOS    → CGEventTapHotkeyBackend
+    └─ Windows  → TauriShortcutBackend
+```
+
+Both the recording hotkey AND Escape key registration use this unified entrypoint.
+
 ### Files to Create/Modify
 
-1. **`src-tauri/src/hotkey/cgeventtap_backend.rs`** (NEW)
-   - `CGEventTapHotkeyBackend` struct
+1. **`src-tauri/src/hotkey/cgeventtap_backend.rs`** (NEW - macOS only)
+   - `CGEventTapHotkeyBackend` struct implementing `ShortcutBackend`
    - `ShortcutSpec` for matching key events to registered shortcuts
    - `parse_shortcut()` function to parse "fn+Command+R" format
    - `matches_shortcut()` function to compare events to specs
 
 2. **`src-tauri/src/hotkey/mod.rs`**
-   - Export new backend with `#[cfg(target_os = "macos")]`
+   - Add `#[cfg(target_os = "macos")] mod cgeventtap_backend`
+   - Add `create_shortcut_backend()` factory function
+   - Add `HotkeyServiceDyn` for dynamic backend dispatch
 
 3. **`src-tauri/src/lib.rs`**
-   - Use CGEventTapHotkeyBackend on macOS
-   - Keep TauriShortcutBackend for other platforms
+   - Use `create_shortcut_backend()` for both recording hotkey and Escape key
+   - Use `HotkeyServiceDyn` instead of generic `HotkeyService<B>`
 
 ### Key Implementation Details
 
