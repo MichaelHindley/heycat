@@ -9,14 +9,14 @@
 //
 // CGEventTap requires Accessibility permission (System Settings > Privacy & Security > Accessibility)
 
-use super::permissions::{check_accessibility_permission, AccessibilityPermissionError};
+use super::permissions::{check_accessibility_permission_with_prompt, AccessibilityPermissionError};
 #[allow(deprecated)]
 use cocoa::appkit::NSEvent;
 #[allow(deprecated)]
 use cocoa::base::nil;
 use core_foundation::base::TCFType;
 use core_foundation::mach_port::{CFMachPort, CFMachPortRef};
-use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop, CFRunLoopStop};
+use core_foundation::runloop::{kCFRunLoopCommonModes, kCFRunLoopDefaultMode, CFRunLoop, CFRunLoopStop};
 use core_graphics::event::{
     CGEvent, CGEventFlags, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
     CGEventTapProxy, CGEventType,
@@ -199,8 +199,10 @@ impl CGEventTapCapture {
             return Err("CGEventTap capture is already running".to_string());
         }
 
-        // Check Accessibility permission before starting
-        if !check_accessibility_permission() {
+        // Check Accessibility permission before starting (with prompt if not granted)
+        let has_permission = check_accessibility_permission_with_prompt();
+        crate::info!("Accessibility permission check (with prompt): {}", has_permission);
+        if !has_permission {
             return Err(AccessibilityPermissionError::new().to_string());
         }
 
@@ -311,6 +313,15 @@ fn run_cgeventtap_loop(
         | (1 << CGEventType::FlagsChanged as u64)
         | (1 << NX_SYSDEFINED as u64); // NSSystemDefined for media keys
 
+    // Debug logging disabled
+    // crate::info!(
+    //     "CGEventTap creating with event_mask=0x{:x}, KeyDown={}, KeyUp={}, FlagsChanged={}",
+    //     event_mask,
+    //     CGEventType::KeyDown as u64,
+    //     CGEventType::KeyUp as u64,
+    //     CGEventType::FlagsChanged as u64
+    // );
+
     // Clone state for the callback
     let callback_state = state.clone();
 
@@ -358,8 +369,8 @@ fn run_cgeventtap_loop(
         guard.run_loop = Some(run_loop.clone());
     }
 
-    // Add the source to the run loop
-    run_loop.add_source(&run_loop_source, unsafe { kCFRunLoopCommonModes });
+    // Add the source to the run loop (use DefaultMode which we'll run in)
+    run_loop.add_source(&run_loop_source, unsafe { kCFRunLoopDefaultMode });
 
     // Enable the event tap
     unsafe {
@@ -369,16 +380,18 @@ fn run_cgeventtap_loop(
     crate::info!("CGEventTap keyboard capture started (with media key support)");
 
     // Run the loop until stopped
+    // Use kCFRunLoopDefaultMode (not kCFRunLoopCommonModes which is for adding sources)
     while running.load(Ordering::SeqCst) {
+        // Run for 1 second at a time, checking if we should stop
         CFRunLoop::run_in_mode(
-            unsafe { kCFRunLoopCommonModes },
-            Duration::from_millis(100),
+            unsafe { kCFRunLoopDefaultMode },
+            Duration::from_secs(1),
             false,
         );
     }
 
     // Cleanup: remove from run loop
-    run_loop.remove_source(&run_loop_source, unsafe { kCFRunLoopCommonModes });
+    run_loop.remove_source(&run_loop_source, unsafe { kCFRunLoopDefaultMode });
 
     // Clean up the callback box
     unsafe {
@@ -395,6 +408,25 @@ fn handle_cg_event(
     event: &CGEvent,
     state: &Arc<Mutex<CaptureState>>,
 ) {
+    // Wrap everything in catch_unwind to prevent crashes from taking down the app
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        handle_cg_event_inner(event_type, event, state);
+    }));
+
+    if let Err(e) = result {
+        crate::error!("CGEventTap callback panicked: {:?}", e);
+    }
+}
+
+/// Inner implementation of handle_cg_event
+fn handle_cg_event_inner(
+    event_type: CGEventType,
+    event: &CGEvent,
+    state: &Arc<Mutex<CaptureState>>,
+) {
+    // Debug logging disabled for performance
+    // crate::info!("CGEventTap callback invoked: event_type={:?}", event_type);
+
     let flags = event.get_flags();
     let flags_raw = flags.bits();
 
@@ -532,10 +564,20 @@ fn handle_cg_event(
     };
 
     // Invoke callback with the captured event
+    // Debug logging disabled for performance
+    // crate::info!(
+    //     "CGEventTap emitting event: key_name={}, pressed={}",
+    //     captured_event.key_name,
+    //     captured_event.pressed
+    // );
     if let Ok(guard) = state.lock() {
         if let Some(ref callback) = guard.callback {
             callback(captured_event);
+        } else {
+            crate::warn!("CGEventTap callback is None!");
         }
+    } else {
+        crate::warn!("CGEventTap failed to lock state!");
     }
 }
 
@@ -584,7 +626,8 @@ fn determine_modifier_key_state(key_code: u32, flags: u64) -> (String, bool) {
             (flags & CGEventFlags::CGEventFlagAlphaShift.bits()) != 0,
         ),
         // fn key - detected via the secondary fn flag
-        63 => (
+        // Key code 63 is traditional fn, 179 is Globe key on newer Macs
+        63 | 179 => (
             "fn".to_string(),
             (flags & CG_EVENT_FLAG_MASK_SECONDARY_FN) != 0,
         ),
@@ -685,7 +728,7 @@ pub fn keycode_to_name(key_code: u32) -> String {
         60 => "Shift".to_string(),    // Right Shift
         61 => "Alt".to_string(),      // Right Alt/Option
         62 => "Control".to_string(),  // Right Control
-        63 => "fn".to_string(),       // fn/Globe key
+        63 | 179 => "fn".to_string(),       // fn/Globe key (179 on newer Macs)
 
         // Function keys
         122 => "F1".to_string(),

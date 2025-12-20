@@ -82,24 +82,33 @@ function formatModifier(
 // Convert backend key event to display string (e.g., "fn⌘⇧R")
 function formatBackendKeyForDisplay(event: CapturedKeyEvent, distinguishLeftRight: boolean = false): string {
   const parts: string[] = [];
+  const isModifierKey = ["Command", "Control", "Alt", "Shift", "fn"].includes(event.key_name);
+  const isModifierRelease = isModifierKey && !event.pressed;
+
+  // For modifier release events, the released key's flag is already false
+  // So we need to infer it from key_name
+  const fnPressed = event.fn_key || (isModifierRelease && event.key_name === "fn");
+  const cmdPressed = event.command || (isModifierRelease && event.key_name === "Command");
+  const ctrlPressed = event.control || (isModifierRelease && event.key_name === "Control");
+  const altPressed = event.alt || (isModifierRelease && event.key_name === "Alt");
+  const shiftPressed = event.shift || (isModifierRelease && event.key_name === "Shift");
 
   // Add modifiers in standard order (fn first since it's special)
-  if (event.fn_key) parts.push("fn");
+  if (fnPressed) parts.push("fn");
 
-  const cmdDisplay = formatModifier(event.command, event.command_left, event.command_right, "⌘", distinguishLeftRight);
+  const cmdDisplay = formatModifier(cmdPressed, event.command_left, event.command_right, "⌘", distinguishLeftRight);
   if (cmdDisplay) parts.push(cmdDisplay);
 
-  const ctrlDisplay = formatModifier(event.control, event.control_left, event.control_right, "⌃", distinguishLeftRight);
+  const ctrlDisplay = formatModifier(ctrlPressed, event.control_left, event.control_right, "⌃", distinguishLeftRight);
   if (ctrlDisplay) parts.push(ctrlDisplay);
 
-  const altDisplay = formatModifier(event.alt, event.alt_left, event.alt_right, "⌥", distinguishLeftRight);
+  const altDisplay = formatModifier(altPressed, event.alt_left, event.alt_right, "⌥", distinguishLeftRight);
   if (altDisplay) parts.push(altDisplay);
 
-  const shiftDisplay = formatModifier(event.shift, event.shift_left, event.shift_right, "⇧", distinguishLeftRight);
+  const shiftDisplay = formatModifier(shiftPressed, event.shift_left, event.shift_right, "⇧", distinguishLeftRight);
   if (shiftDisplay) parts.push(shiftDisplay);
 
   // Add the main key (excluding modifier keys themselves)
-  const isModifierKey = ["Command", "Control", "Alt", "Shift", "fn"].includes(event.key_name);
   if (!isModifierKey) {
     // Check if it's a media key first
     if (event.is_media_key && mediaKeyMap[event.key_name]) {
@@ -115,17 +124,26 @@ function formatBackendKeyForDisplay(event: CapturedKeyEvent, distinguishLeftRigh
 // Convert backend key event to backend format (e.g., "Function+Command+Shift+R")
 function formatBackendKeyForBackend(event: CapturedKeyEvent): string {
   const parts: string[] = [];
+  const isModifierKey = ["Command", "Control", "Alt", "Shift", "fn"].includes(event.key_name);
+  const isModifierRelease = isModifierKey && !event.pressed;
+
+  // For modifier release events, the released key's flag is already false
+  // So we need to infer it from key_name
+  const fnPressed = event.fn_key || (isModifierRelease && event.key_name === "fn");
+  const cmdPressed = event.command || (isModifierRelease && event.key_name === "Command");
+  const ctrlPressed = event.control || (isModifierRelease && event.key_name === "Control");
+  const altPressed = event.alt || (isModifierRelease && event.key_name === "Alt");
+  const shiftPressed = event.shift || (isModifierRelease && event.key_name === "Shift");
 
   // Add modifiers in standard order
   // Note: Tauri's global-shortcut uses "Function" for fn key
-  if (event.fn_key) parts.push("Function");
-  if (event.command) parts.push("Command");
-  if (event.control) parts.push("Control");
-  if (event.alt) parts.push("Alt");
-  if (event.shift) parts.push("Shift");
+  if (fnPressed) parts.push("Function");
+  if (cmdPressed) parts.push("Command");
+  if (ctrlPressed) parts.push("Control");
+  if (altPressed) parts.push("Alt");
+  if (shiftPressed) parts.push("Shift");
 
   // Add the main key (excluding modifier keys themselves)
-  const isModifierKey = ["Command", "Control", "Alt", "Shift", "fn"].includes(event.key_name);
   if (!isModifierKey) {
     parts.push(event.key_name);
   }
@@ -133,15 +151,25 @@ function formatBackendKeyForBackend(event: CapturedKeyEvent): string {
   return parts.join("+");
 }
 
-// Check if event represents a valid hotkey (modifier-only or has a main key)
+// Check if event represents a valid hotkey
 function isValidHotkey(event: CapturedKeyEvent): boolean {
-  const hasModifier = event.fn_key || event.command || event.control || event.alt || event.shift;
   const isModifierKey = ["Command", "Control", "Alt", "Shift", "fn"].includes(event.key_name);
+
+  // Don't accept modifier-only key PRESSES - this prevents capturing Cmd before Cmd+A
+  // Modifier-only shortcuts are captured on RELEASE (pressed=false)
+  if (isModifierKey && event.pressed) return false;
+
+  // For modifier-only shortcuts: accept on key release
+  // The released key itself won't show in the flags anymore, so we accept any modifier release
+  if (isModifierKey && !event.pressed) {
+    return true; // Modifier key was released - this is a valid modifier-only shortcut
+  }
+
   const hasMainKey = !isModifierKey;
   const isMediaKey = event.is_media_key;
 
-  // Valid if: has a main key, OR is a media key, OR is modifier-only with at least one modifier
-  return hasMainKey || isMediaKey || hasModifier;
+  // Valid if: has a main key (with or without modifiers), OR is a media key
+  return hasMainKey || isMediaKey;
 }
 
 export function ShortcutEditor({
@@ -258,10 +286,8 @@ export function ShortcutEditor({
         const keyEvent = event.payload;
         console.log("[ShortcutEditor] Key captured from backend:", keyEvent);
 
-        // Only process key press events (not releases)
-        if (!keyEvent.pressed) return;
-
-        // Accept any valid hotkey: non-modifier key, media key, or modifier-only
+        // Process both press and release events - isValidHotkey handles the logic
+        // (release events are needed for modifier-only shortcuts)
         if (isValidHotkey(keyEvent)) {
           const distinguishLeftRight = settings.shortcuts?.distinguishLeftRight ?? false;
           const display = formatBackendKeyForDisplay(keyEvent, distinguishLeftRight);

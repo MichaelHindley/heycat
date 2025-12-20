@@ -1,5 +1,5 @@
 // Accessibility permission handling for macOS
-// CGEventTap requires Accessibility permission (not Input Monitoring)
+// CGEventTap requires Accessibility permission for full key capture including fn keys
 // This module provides functions to check and guide users to enable the permission
 
 use std::process::Command;
@@ -10,16 +10,71 @@ extern "C" {
     /// Check if the current process has Accessibility permission
     /// Returns true if the app is trusted (has Accessibility permission)
     fn AXIsProcessTrusted() -> bool;
+
+    /// Check if the current process has Accessibility permission, with option to prompt
+    /// If kAXTrustedCheckOptionPrompt is set to true, shows a dialog prompting the user
+    /// to add the app to the Accessibility list
+    fn AXIsProcessTrustedWithOptions(options: *const std::ffi::c_void) -> bool;
+}
+
+// Core Foundation types for creating the options dictionary
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    fn CFDictionaryCreate(
+        allocator: *const std::ffi::c_void,
+        keys: *const *const std::ffi::c_void,
+        values: *const *const std::ffi::c_void,
+        num_values: isize,
+        key_callbacks: *const std::ffi::c_void,
+        value_callbacks: *const std::ffi::c_void,
+    ) -> *const std::ffi::c_void;
+
+    fn CFRelease(cf: *const std::ffi::c_void);
+
+    static kCFTypeDictionaryKeyCallBacks: std::ffi::c_void;
+    static kCFTypeDictionaryValueCallBacks: std::ffi::c_void;
+    static kCFBooleanTrue: *const std::ffi::c_void;
+    static kAXTrustedCheckOptionPrompt: *const std::ffi::c_void;
 }
 
 /// Check if the application has Accessibility permission
 ///
 /// Returns true if Accessibility is enabled for this app in System Settings.
-/// Unlike Input Monitoring, there's no programmatic way to request this permission -
-/// the user must manually enable it.
 pub fn check_accessibility_permission() -> bool {
     // SAFETY: AXIsProcessTrusted is a safe C function that just checks permission state
     unsafe { AXIsProcessTrusted() }
+}
+
+/// Check if the application has Accessibility permission, prompting if not
+///
+/// If the app doesn't have permission, shows a system dialog prompting the user
+/// to open System Settings and enable it. The app will be automatically added
+/// to the Accessibility list (but disabled - user must enable it).
+///
+/// Returns true if permission is already granted, false otherwise.
+pub fn check_accessibility_permission_with_prompt() -> bool {
+    unsafe {
+        // Create options dictionary with kAXTrustedCheckOptionPrompt = true
+        let keys = [kAXTrustedCheckOptionPrompt];
+        let values = [kCFBooleanTrue];
+
+        let options = CFDictionaryCreate(
+            std::ptr::null(),
+            keys.as_ptr(),
+            values.as_ptr(),
+            1,
+            &kCFTypeDictionaryKeyCallBacks,
+            &kCFTypeDictionaryValueCallBacks,
+        );
+
+        let result = AXIsProcessTrustedWithOptions(options);
+
+        if !options.is_null() {
+            CFRelease(options);
+        }
+
+        result
+    }
 }
 
 /// Open System Settings to the Accessibility pane
