@@ -247,38 +247,42 @@ pub fn run() {
 
             // Register hotkey using platform-specific backend
             // Uses CGEventTap on macOS (supports fn key, media keys), Tauri on Windows/Linux
-            // Load saved shortcut from settings, falling back to default
+            // Load saved shortcut from settings - user must set one during onboarding
             let saved_shortcut = app
                 .store("settings.json")
                 .ok()
                 .and_then(|store| store.get("hotkey.recordingShortcut"))
-                .and_then(|v| v.as_str().map(|s| s.to_string()))
-                .unwrap_or_else(|| hotkey::RECORDING_SHORTCUT.to_string());
-            info!("Registering global hotkey: {}...", saved_shortcut);
+                .and_then(|v| v.as_str().map(|s| s.to_string()));
+
             let backend = hotkey::create_shortcut_backend(app.handle().clone());
             let service = hotkey::HotkeyServiceDyn::new(backend);
 
-            if let Err(e) = service.backend.register(&saved_shortcut, Box::new(move || {
-                debug!("Hotkey pressed!");
-                match integration_clone.lock() {
-                    Ok(mut guard) => {
-                        guard.handle_toggle(&state_clone);
+            if let Some(shortcut) = saved_shortcut {
+                info!("Registering global hotkey: {}...", shortcut);
+                if let Err(e) = service.backend.register(&shortcut, Box::new(move || {
+                    debug!("Hotkey pressed!");
+                    match integration_clone.lock() {
+                        Ok(mut guard) => {
+                            guard.handle_toggle(&state_clone);
+                        }
+                        Err(e) => {
+                            error!("Failed to acquire integration lock: {}", e);
+                            // Emit error event so frontend knows something went wrong
+                            let _ = app_handle_clone.emit(
+                                events::event_names::RECORDING_ERROR,
+                                events::RecordingErrorPayload {
+                                    message: "Internal error: please restart the application"
+                                        .to_string(),
+                                },
+                            );
+                        }
                     }
-                    Err(e) => {
-                        error!("Failed to acquire integration lock: {}", e);
-                        // Emit error event so frontend knows something went wrong
-                        let _ = app_handle_clone.emit(
-                            events::event_names::RECORDING_ERROR,
-                            events::RecordingErrorPayload {
-                                message: "Internal error: please restart the application"
-                                    .to_string(),
-                            },
-                        );
-                    }
+                })) {
+                    warn!("Failed to register recording hotkey: {:?}", e);
+                    warn!("Application will continue without global hotkey support");
                 }
-            })) {
-                warn!("Failed to register recording hotkey: {:?}", e);
-                warn!("Application will continue without global hotkey support");
+            } else {
+                info!("No recording shortcut configured - user will set one during onboarding");
             }
 
             // Store service in state for cleanup on exit
@@ -297,16 +301,17 @@ pub fn run() {
                 // Unregister hotkey on window close - use saved shortcut from settings
                 if let Some(service) = window.app_handle().try_state::<HotkeyServiceHandle>() {
                     use tauri_plugin_store::StoreExt;
-                    let shortcut = window.app_handle()
+                    if let Some(shortcut) = window.app_handle()
                         .store("settings.json")
                         .ok()
                         .and_then(|store| store.get("hotkey.recordingShortcut"))
                         .and_then(|v| v.as_str().map(|s| s.to_string()))
-                        .unwrap_or_else(|| hotkey::RECORDING_SHORTCUT.to_string());
-                    if let Err(e) = service.backend.unregister(&shortcut) {
-                        warn!("Failed to unregister hotkey '{}': {}", shortcut, e);
-                    } else {
-                        debug!("Hotkey '{}' unregistered successfully", shortcut);
+                    {
+                        if let Err(e) = service.backend.unregister(&shortcut) {
+                            warn!("Failed to unregister hotkey '{}': {}", shortcut, e);
+                        } else {
+                            debug!("Hotkey '{}' unregistered successfully", shortcut);
+                        }
                     }
                 }
             }

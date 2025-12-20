@@ -21,9 +21,6 @@ mod integration_test;
 
 use std::sync::Arc;
 
-/// The keyboard shortcut for recording (platform-agnostic)
-pub const RECORDING_SHORTCUT: &str = "CmdOrControl+Shift+R";
-
 /// The keyboard shortcut for cancel (Escape key)
 pub const ESCAPE_SHORTCUT: &str = "Escape";
 
@@ -84,21 +81,6 @@ impl<B: ShortcutBackend> HotkeyService<B> {
         Self { backend }
     }
 
-    pub fn register_recording_shortcut(
-        &self,
-        callback: Box<dyn Fn() + Send + Sync>,
-    ) -> Result<(), HotkeyError> {
-        self.backend
-            .register(RECORDING_SHORTCUT, callback)
-            .map_err(|e| map_backend_error(&e))
-    }
-
-    pub fn unregister_recording_shortcut(&self) -> Result<(), HotkeyError> {
-        self.backend
-            .unregister(RECORDING_SHORTCUT)
-            .map_err(|e| map_backend_error(&e))
-    }
-
     /// Register the Escape key shortcut for cancellation
     ///
     /// The Escape key listener should only be active during recording
@@ -140,27 +122,6 @@ pub struct HotkeyServiceDyn {
 impl HotkeyServiceDyn {
     pub fn new(backend: Arc<dyn ShortcutBackend + Send + Sync>) -> Self {
         Self { backend }
-    }
-
-    /// Register the default recording shortcut (kept for API completeness, unused in production
-    /// since lib.rs now loads saved shortcuts from settings and uses backend.register directly)
-    #[allow(dead_code)]
-    pub fn register_recording_shortcut(
-        &self,
-        callback: Box<dyn Fn() + Send + Sync>,
-    ) -> Result<(), HotkeyError> {
-        self.backend
-            .register(RECORDING_SHORTCUT, callback)
-            .map_err(|e| map_backend_error(&e))
-    }
-
-    /// Unregister the default recording shortcut (kept for API completeness, unused in production
-    /// since lib.rs now loads saved shortcuts from settings and uses backend.unregister directly)
-    #[allow(dead_code)]
-    pub fn unregister_recording_shortcut(&self) -> Result<(), HotkeyError> {
-        self.backend
-            .unregister(RECORDING_SHORTCUT)
-            .map_err(|e| map_backend_error(&e))
     }
 }
 

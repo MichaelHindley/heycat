@@ -732,22 +732,35 @@ pub type HotkeyServiceState = crate::hotkey::HotkeyServiceDyn;
 
 /// Suspend the global recording shortcut
 ///
-/// Temporarily unregisters the Cmd+Shift+R shortcut to allow the webview to capture
+/// Temporarily unregisters the recording shortcut to allow the webview to capture
 /// keyboard events (e.g., when recording a new shortcut in settings).
 #[tauri::command]
 pub fn suspend_recording_shortcut(
+    app_handle: AppHandle,
     service: State<'_, HotkeyServiceState>,
 ) -> Result<(), String> {
-    crate::info!("Suspending recording shortcut...");
-    service
-        .unregister_recording_shortcut()
-        .map_err(|e| e.to_string())
+    use tauri_plugin_store::StoreExt;
+
+    // Get current shortcut from settings
+    let shortcut = app_handle
+        .store("settings.json")
+        .ok()
+        .and_then(|store| store.get("hotkey.recordingShortcut"))
+        .and_then(|v| v.as_str().map(|s| s.to_string()));
+
+    if let Some(shortcut) = shortcut {
+        crate::info!("Suspending recording shortcut: {}", shortcut);
+        service.backend.unregister(&shortcut).map_err(|e| e.to_string())
+    } else {
+        crate::info!("No recording shortcut to suspend");
+        Ok(())
+    }
 }
 
 /// Resume the global recording shortcut
 ///
 /// Re-registers the recording shortcut after it was suspended.
-/// Uses the shortcut from settings if available, otherwise uses the default.
+/// Requires a shortcut to be set in settings (user sets one during onboarding).
 #[tauri::command]
 pub fn resume_recording_shortcut(
     app_handle: AppHandle,
@@ -757,13 +770,13 @@ pub fn resume_recording_shortcut(
 ) -> Result<(), String> {
     use tauri_plugin_store::StoreExt;
 
-    // Get shortcut from settings, or use default
+    // Get shortcut from settings - must be set by user during onboarding
     let shortcut = app_handle
         .store("settings.json")
         .ok()
         .and_then(|store| store.get("hotkey.recordingShortcut"))
         .and_then(|v| v.as_str().map(|s| s.to_string()))
-        .unwrap_or_else(|| crate::hotkey::RECORDING_SHORTCUT.to_string());
+        .ok_or_else(|| "No recording shortcut configured".to_string())?;
 
     crate::info!("Resuming recording shortcut: {}", shortcut);
 
@@ -810,18 +823,19 @@ pub fn update_recording_shortcut(
 
     crate::info!("Updating recording shortcut to: {}", new_shortcut);
 
-    // Get current shortcut from settings to unregister it
+    // Get current shortcut from settings to unregister it (if any)
     let current_shortcut = app_handle
         .store("settings.json")
         .ok()
         .and_then(|store| store.get("hotkey.recordingShortcut"))
-        .and_then(|v| v.as_str().map(|s| s.to_string()))
-        .unwrap_or_else(|| crate::hotkey::RECORDING_SHORTCUT.to_string());
+        .and_then(|v| v.as_str().map(|s| s.to_string()));
 
-    // Unregister current shortcut
-    if let Err(e) = service.backend.unregister(&current_shortcut) {
-        crate::warn!("Failed to unregister old shortcut '{}': {}", current_shortcut, e);
-        // Continue anyway - the old shortcut might not be registered
+    // Unregister current shortcut if one exists
+    if let Some(ref current) = current_shortcut {
+        if let Err(e) = service.backend.unregister(current) {
+            crate::warn!("Failed to unregister old shortcut '{}': {}", current, e);
+            // Continue anyway - the old shortcut might not be registered
+        }
     }
 
     // Clone the Arcs for the callback closure
@@ -864,6 +878,9 @@ pub fn update_recording_shortcut(
 }
 
 /// Get the current recording shortcut from settings
+///
+/// Returns the configured shortcut, or empty string if none is set.
+/// User sets a shortcut during onboarding.
 #[tauri::command]
 pub fn get_recording_shortcut(app_handle: AppHandle) -> String {
     use tauri_plugin_store::StoreExt;
@@ -873,7 +890,7 @@ pub fn get_recording_shortcut(app_handle: AppHandle) -> String {
         .ok()
         .and_then(|store| store.get("hotkey.recordingShortcut"))
         .and_then(|v| v.as_str().map(|s| s.to_string()))
-        .unwrap_or_else(|| crate::hotkey::RECORDING_SHORTCUT.to_string())
+        .unwrap_or_default()
 }
 
 // =============================================================================
