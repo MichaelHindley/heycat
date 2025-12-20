@@ -73,6 +73,138 @@ fn simulate_paste() -> Result<(), String> {
     Err("Paste simulation only supported on macOS".to_string())
 }
 
+/// Result of executing a transcription task
+pub struct TranscriptionResult {
+    /// The transcribed text
+    pub text: String,
+    /// Duration of transcription in milliseconds
+    pub duration_ms: u64,
+}
+
+/// Execute transcription with semaphore-limited concurrency, timeout, and error handling.
+///
+/// This is the core transcription logic shared between:
+/// - `spawn_transcription` (hotkey recordings with voice command matching)
+/// - `start_silence_detection` transcription callback (silence-triggered auto-stop)
+///
+/// Returns `Ok(TranscriptionResult)` on success, `Err(())` on failure (errors already emitted).
+#[cfg_attr(coverage_nightly, coverage(off))]
+async fn execute_transcription_task<T: TranscriptionEventEmitter>(
+    file_path: String,
+    shared_model: Arc<SharedTranscriptionModel>,
+    semaphore: Arc<Semaphore>,
+    transcription_emitter: Arc<T>,
+    timeout_duration: Duration,
+    recording_state: Option<Arc<Mutex<RecordingManager>>>,
+) -> Result<TranscriptionResult, ()> {
+    // Helper to clear recording buffer - call this in all exit paths to prevent memory leaks
+    let clear_recording_buffer = || {
+        if let Some(ref state) = recording_state {
+            if let Ok(mut manager) = state.lock() {
+                manager.clear_last_recording();
+                debug!("Cleared recording buffer");
+            }
+        }
+    };
+
+    // Acquire semaphore permit to limit concurrent transcriptions
+    let _permit = match semaphore.try_acquire() {
+        Ok(permit) => permit,
+        Err(_) => {
+            warn!("Too many concurrent transcriptions, skipping this one");
+            transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
+                error: "Too many transcriptions in progress. Please wait and try again."
+                    .to_string(),
+            });
+            clear_recording_buffer();
+            return Err(());
+        }
+    };
+
+    // Emit transcription_started event
+    let start_time = Instant::now();
+    transcription_emitter.emit_transcription_started(TranscriptionStartedPayload {
+        timestamp: current_timestamp(),
+    });
+
+    debug!("Transcribing file: {}", file_path);
+
+    // Perform transcription on blocking thread pool (CPU-intensive) with timeout
+    let transcriber = shared_model.clone();
+    let transcription_future =
+        tokio::task::spawn_blocking(move || transcriber.transcribe(&file_path));
+
+    let transcription_result = tokio::time::timeout(timeout_duration, transcription_future).await;
+
+    let text = match transcription_result {
+        Ok(Ok(Ok(text))) => text,
+        Ok(Ok(Err(e))) => {
+            error!("Transcription failed: {}", e);
+            transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
+                error: e.to_string(),
+            });
+            if let Err(reset_err) = shared_model.reset_to_idle() {
+                warn!("Failed to reset transcription state: {}", reset_err);
+            }
+            clear_recording_buffer();
+            return Err(());
+        }
+        Ok(Err(e)) => {
+            error!("Transcription task panicked: {}", e);
+            transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
+                error: "Internal transcription error.".to_string(),
+            });
+            if let Err(reset_err) = shared_model.reset_to_idle() {
+                warn!("Failed to reset transcription state: {}", reset_err);
+            }
+            clear_recording_buffer();
+            return Err(());
+        }
+        Err(_) => {
+            error!("Transcription timed out after {:?}", timeout_duration);
+            transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
+                error: format!(
+                    "Transcription timed out after {} seconds. The audio may be too long or the model may be stuck.",
+                    timeout_duration.as_secs()
+                ),
+            });
+            if let Err(reset_err) = shared_model.reset_to_idle() {
+                warn!("Failed to reset transcription state: {}", reset_err);
+            }
+            clear_recording_buffer();
+            return Err(());
+        }
+    };
+
+    let duration_ms = start_time.elapsed().as_millis() as u64;
+    info!(
+        "Transcription completed in {}ms: {} chars",
+        duration_ms,
+        text.len()
+    );
+
+    Ok(TranscriptionResult { text, duration_ms })
+}
+
+/// Copy text to clipboard and auto-paste
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn copy_and_paste(app_handle: &Option<AppHandle>, text: &str) {
+    if let Some(ref handle) = app_handle {
+        if let Err(e) = handle.clipboard().write_text(text) {
+            warn!("Failed to copy to clipboard: {}", e);
+        } else {
+            debug!("Transcribed text copied to clipboard");
+            if let Err(e) = simulate_paste() {
+                warn!("Failed to auto-paste: {}", e);
+            } else {
+                debug!("Auto-pasted transcribed text");
+            }
+        }
+    } else {
+        warn!("Clipboard unavailable: no app handle configured");
+    }
+}
+
 /// Handles hotkey toggle with debouncing and event emission
 pub struct HotkeyIntegration<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmitter, C: CommandEventEmitter> {
     last_toggle_time: Option<Instant>,
@@ -542,6 +674,12 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             }
         };
 
+        // Check if model is loaded
+        if !shared_model.is_loaded() {
+            info!("Transcription skipped: transcription model not loaded");
+            return;
+        }
+
         // Optional voice command components
         let command_registry = self.command_registry.clone();
         let command_matcher = self.command_matcher.clone();
@@ -554,12 +692,6 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         // Clone recording_state for buffer cleanup after transcription
         let recording_state = self.recording_state.clone();
 
-        // Check if model is loaded
-        if !shared_model.is_loaded() {
-            info!("Transcription skipped: transcription model not loaded");
-            return;
-        }
-
         // Clone semaphore for the async task
         let semaphore = self.transcription_semaphore.clone();
 
@@ -570,90 +702,23 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
 
         // Spawn async task using Tauri's async runtime
         tauri::async_runtime::spawn(async move {
-            // Helper to clear recording buffer - call this in all exit paths to prevent memory leaks
-            let clear_recording_buffer = || {
-                if let Some(ref state) = recording_state {
-                    if let Ok(mut manager) = state.lock() {
-                        manager.clear_last_recording();
-                        debug!("Cleared recording buffer");
-                    }
-                }
+            // Execute transcription using shared helper
+            let result = execute_transcription_task(
+                file_path,
+                shared_model.clone(),
+                semaphore,
+                transcription_emitter.clone(),
+                timeout_duration,
+                recording_state.clone(),
+            )
+            .await;
+
+            // Handle transcription result
+            let TranscriptionResult { text, duration_ms } = match result {
+                Ok(r) => r,
+                Err(()) => return, // Error already emitted and buffer cleared by helper
             };
 
-            // Acquire semaphore permit to limit concurrent transcriptions
-            let _permit = match semaphore.try_acquire() {
-                Ok(permit) => permit,
-                Err(_) => {
-                    warn!("Too many concurrent transcriptions, skipping this one");
-                    // Emit error event so the user knows their recording was not processed
-                    transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
-                        error: "Too many transcriptions in progress. Please wait and try again.".to_string(),
-                    });
-                    clear_recording_buffer();
-                    return;
-                }
-            };
-
-            // Emit transcription_started event
-            let start_time = Instant::now();
-            transcription_emitter.emit_transcription_started(TranscriptionStartedPayload {
-                timestamp: current_timestamp(),
-            });
-
-            debug!("Transcribing file: {}", file_path);
-
-            // Perform transcription on blocking thread pool (CPU-intensive) with timeout
-            let transcriber = shared_model.clone();
-            let transcription_future = tokio::task::spawn_blocking(move || {
-                transcriber.transcribe(&file_path)
-            });
-
-            let transcription_result = tokio::time::timeout(timeout_duration, transcription_future).await;
-
-            let text = match transcription_result {
-                Ok(Ok(Ok(text))) => text,
-                Ok(Ok(Err(e))) => {
-                    error!("Transcription failed: {}", e);
-                    transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
-                        error: e.to_string(),
-                    });
-                    if let Err(reset_err) = shared_model.reset_to_idle() {
-                        warn!("Failed to reset transcription state: {}", reset_err);
-                    }
-                    clear_recording_buffer();
-                    return;
-                }
-                Ok(Err(e)) => {
-                    error!("Transcription task panicked: {}", e);
-                    transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
-                        error: "Internal transcription error.".to_string(),
-                    });
-                    if let Err(reset_err) = shared_model.reset_to_idle() {
-                        warn!("Failed to reset transcription state: {}", reset_err);
-                    }
-                    clear_recording_buffer();
-                    return;
-                }
-                Err(_) => {
-                    // Timeout error
-                    error!("Transcription timed out after {:?}", timeout_duration);
-                    transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
-                        error: format!("Transcription timed out after {} seconds. The audio may be too long or the model may be stuck.", timeout_duration.as_secs()),
-                    });
-                    if let Err(reset_err) = shared_model.reset_to_idle() {
-                        warn!("Failed to reset transcription state: {}", reset_err);
-                    }
-                    clear_recording_buffer();
-                    return;
-                }
-            };
-
-            let duration_ms = start_time.elapsed().as_millis() as u64;
-            info!(
-                "Transcription completed in {}ms: {} chars",
-                duration_ms,
-                text.len()
-            );
             info!("=== spawn_transcription received text ===");
             info!("text content: {:?}", text);
             info!("=== end spawn_transcription text ===");
@@ -669,6 +734,16 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                 Ambiguous { candidates: Vec<CommandCandidate> },
                 NoMatch,
             }
+
+            // Helper to clear recording buffer
+            let clear_recording_buffer = || {
+                if let Some(ref state) = recording_state {
+                    if let Ok(mut manager) = state.lock() {
+                        manager.clear_last_recording();
+                        debug!("Cleared recording buffer");
+                    }
+                }
+            };
 
             let command_handled = if let (Some(registry), Some(matcher), Some(dispatcher), Some(emitter)) =
                 (&command_registry, &command_matcher, &action_dispatcher, &command_emitter)
@@ -783,22 +858,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
 
             // Fallback to clipboard if no command was handled
             if !command_handled {
-                // Copy to clipboard using the clipboard plugin
-                if let Some(ref handle) = app_handle {
-                    if let Err(e) = handle.clipboard().write_text(&text) {
-                        warn!("Failed to copy to clipboard: {}", e);
-                    } else {
-                        debug!("Transcribed text copied to clipboard");
-                        // Auto-paste the clipboard content
-                        if let Err(e) = simulate_paste() {
-                            warn!("Failed to auto-paste: {}", e);
-                        } else {
-                            debug!("Auto-pasted transcribed text");
-                        }
-                    }
-                } else {
-                    warn!("Clipboard unavailable: no app handle configured");
-                }
+                copy_and_paste(&app_handle, &text);
             }
 
             // Always emit transcription_completed (whether command handled or not)
@@ -1002,7 +1062,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         let transcription_callback: Option<Box<dyn Fn(String) + Send + 'static>> =
             if shared_model.is_some() && transcription_emitter_for_callback.is_some() {
                 Some(Box::new(move |file_path: String| {
-                    // Spawn transcription using the same async pattern as spawn_transcription
+                    // Extract required components from Option wrappers
                     let shared_model = match &shared_model {
                         Some(m) => m.clone(),
                         None => return,
@@ -1025,93 +1085,28 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                     info!("[silence_detection] Spawning transcription task for: {}", file_path);
 
                     tauri::async_runtime::spawn(async move {
-                        // Helper to clear recording buffer
-                        let clear_recording_buffer = || {
-                            if let Some(ref state) = recording_state {
-                                if let Ok(mut manager) = state.lock() {
-                                    manager.clear_last_recording();
-                                    debug!("Cleared recording buffer");
-                                }
-                            }
+                        // Execute transcription using shared helper
+                        let result = execute_transcription_task(
+                            file_path,
+                            shared_model.clone(),
+                            semaphore,
+                            transcription_emitter.clone(),
+                            timeout_duration,
+                            recording_state.clone(),
+                        )
+                        .await;
+
+                        // Handle transcription result
+                        let TranscriptionResult { text, duration_ms } = match result {
+                            Ok(r) => r,
+                            Err(()) => return, // Error already emitted and buffer cleared by helper
                         };
-
-                        // Acquire semaphore
-                        let _permit = match semaphore.try_acquire() {
-                            Ok(permit) => permit,
-                            Err(_) => {
-                                warn!("Too many concurrent transcriptions, skipping");
-                                transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
-                                    error: "Too many transcriptions in progress.".to_string(),
-                                });
-                                clear_recording_buffer();
-                                return;
-                            }
-                        };
-
-                        // Emit started
-                        let start_time = Instant::now();
-                        transcription_emitter.emit_transcription_started(TranscriptionStartedPayload {
-                            timestamp: current_timestamp(),
-                        });
-
-                        debug!("Transcribing file: {}", file_path);
-
-                        // Perform transcription with timeout
-                        let transcriber = shared_model.clone();
-                        let transcription_future = tokio::task::spawn_blocking(move || {
-                            transcriber.transcribe(&file_path)
-                        });
-
-                        let transcription_result = tokio::time::timeout(timeout_duration, transcription_future).await;
-
-                        let text = match transcription_result {
-                            Ok(Ok(Ok(text))) => text,
-                            Ok(Ok(Err(e))) => {
-                                error!("Transcription failed: {}", e);
-                                transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
-                                    error: e.to_string(),
-                                });
-                                let _ = shared_model.reset_to_idle();
-                                clear_recording_buffer();
-                                return;
-                            }
-                            Ok(Err(e)) => {
-                                error!("Transcription task panicked: {}", e);
-                                transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
-                                    error: "Internal transcription error.".to_string(),
-                                });
-                                let _ = shared_model.reset_to_idle();
-                                clear_recording_buffer();
-                                return;
-                            }
-                            Err(_) => {
-                                error!("Transcription timed out");
-                                transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
-                                    error: format!("Transcription timed out after {} seconds.", timeout_duration.as_secs()),
-                                });
-                                let _ = shared_model.reset_to_idle();
-                                clear_recording_buffer();
-                                return;
-                            }
-                        };
-
-                        let duration_ms = start_time.elapsed().as_millis() as u64;
-                        info!("Transcription completed in {}ms: {} chars", duration_ms, text.len());
 
                         // Silence detection auto-stop always goes to clipboard
                         // Voice command matching is only supported for manual hotkey recordings
                         // (via spawn_transcription). This is by design - auto-stop recordings
                         // are intended for quick dictation, not command execution.
-                        if let Some(ref handle) = app_handle {
-                            if let Err(e) = handle.clipboard().write_text(&text) {
-                                warn!("Failed to copy to clipboard: {}", e);
-                            } else {
-                                debug!("Transcribed text copied to clipboard");
-                                if let Err(e) = simulate_paste() {
-                                    warn!("Failed to auto-paste: {}", e);
-                                }
-                            }
-                        }
+                        copy_and_paste(&app_handle, &text);
 
                         // Emit completed
                         transcription_emitter.emit_transcription_completed(TranscriptionCompletedPayload {
@@ -1119,8 +1114,14 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                             duration_ms,
                         });
 
+                        // Reset model and clear buffer
                         let _ = shared_model.reset_to_idle();
-                        clear_recording_buffer();
+                        if let Some(ref state) = recording_state {
+                            if let Ok(mut manager) = state.lock() {
+                                manager.clear_last_recording();
+                                debug!("Cleared recording buffer");
+                            }
+                        }
                     });
                 }))
             } else {
