@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { useCatOverlay } from "./useCatOverlay";
+import { useAppStore } from "../stores/appStore";
 
 // Mock Tauri APIs
 const mockListen = vi.fn();
@@ -58,6 +59,12 @@ vi.mock("./useRecording", () => ({
 describe("useCatOverlay", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Reset Zustand store to initial state
+    useAppStore.setState({
+      overlayMode: null,
+      settingsCache: null,
+      isSettingsLoaded: false,
+    });
     // Clear event callbacks
     Object.keys(eventCallbacks).forEach((key) => {
       delete eventCallbacks[key];
@@ -322,5 +329,50 @@ describe("useCatOverlay", () => {
 
     // State should be unchanged - recording_started will follow
     expect(result.current.isListening).toBe(initialState.isListening);
+  });
+
+  it("syncs overlay mode to Zustand store when listening starts", async () => {
+    renderHook(() => useCatOverlay());
+
+    await waitFor(() => {
+      expect(eventCallbacks["listening_started"]).toBeDefined();
+    });
+
+    // Initially store should have null overlayMode
+    expect(useAppStore.getState().overlayMode).toBe(null);
+
+    act(() => {
+      eventCallbacks["listening_started"][0]({
+        payload: { timestamp: "2025-01-01T12:00:00Z" },
+      });
+    });
+
+    // Store should be updated to "listening"
+    expect(useAppStore.getState().overlayMode).toBe("listening");
+  });
+
+  it("syncs overlay mode to Zustand store as null when hidden", async () => {
+    renderHook(() => useCatOverlay());
+
+    await waitFor(() => {
+      expect(eventCallbacks["listening_started"]).toBeDefined();
+      expect(eventCallbacks["listening_stopped"]).toBeDefined();
+    });
+
+    // Start listening
+    act(() => {
+      eventCallbacks["listening_started"][0]({
+        payload: { timestamp: "2025-01-01T12:00:00Z" },
+      });
+    });
+    expect(useAppStore.getState().overlayMode).toBe("listening");
+
+    // Stop listening - should go back to null
+    act(() => {
+      eventCallbacks["listening_stopped"][0]({
+        payload: { timestamp: "2025-01-01T12:01:00Z" },
+      });
+    });
+    expect(useAppStore.getState().overlayMode).toBe(null);
   });
 });

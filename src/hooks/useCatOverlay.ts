@@ -5,6 +5,7 @@ import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { useRecording } from "./useRecording";
 import { useSettings } from "./useSettings";
+import { useAppStore } from "../stores/appStore";
 
 /** Response from get_listening_status command */
 interface ListeningStatusResponse {
@@ -99,6 +100,12 @@ export function useCatOverlay() {
     : isListening
       ? "listening"
       : "hidden";
+
+  // Sync overlay mode to Zustand store for global access
+  const setOverlayMode = useAppStore((s) => s.setOverlayMode);
+  useEffect(() => {
+    setOverlayMode(overlayMode === "hidden" ? null : overlayMode);
+  }, [overlayMode, setOverlayMode]);
 
   // Subscribe to listening events
   useEffect(() => {
