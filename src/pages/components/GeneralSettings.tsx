@@ -12,6 +12,7 @@ export interface GeneralSettingsProps {
 // Convert backend shortcut format to display format
 function backendToDisplay(shortcut: string): string {
   return shortcut
+    .replace(/Function/gi, "fn")
     .replace(/CmdOrControl/gi, "⌘")
     .replace(/Ctrl/gi, "⌃")
     .replace(/Alt/gi, "⌥")
