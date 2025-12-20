@@ -21,6 +21,7 @@ use crate::voice_commands::matcher::{CommandMatcher, MatchResult};
 use crate::voice_commands::registry::CommandRegistry;
 use crate::parakeet::{SharedTranscriptionModel, TranscriptionService};
 use crate::{debug, error, info, trace, warn};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::AppHandle;
@@ -114,7 +115,8 @@ pub struct HotkeyIntegration<R: RecordingEventEmitter, T: TranscriptionEventEmit
     /// Callback invoked when double-tap Escape is detected during recording
     escape_callback: Option<Arc<dyn Fn() + Send + Sync>>,
     /// Whether Escape key is currently registered (to track cleanup)
-    escape_registered: bool,
+    /// Uses Arc<AtomicBool> for thread-safe updates from spawned registration thread
+    escape_registered: Arc<AtomicBool>,
     /// Time window for double-tap detection (default 300ms)
     double_tap_window_ms: u64,
     /// Double-tap detector for Escape key (created on recording start)
@@ -149,7 +151,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             silence_config: None,
             shortcut_backend: None,
             escape_callback: None,
-            escape_registered: false,
+            escape_registered: Arc::new(AtomicBool::new(false)),
             double_tap_window_ms: DEFAULT_DOUBLE_TAP_WINDOW_MS,
             double_tap_detector: None,
             transcription_callback: None,
@@ -356,7 +358,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             silence_config: None,
             shortcut_backend: None,
             escape_callback: None,
-            escape_registered: false,
+            escape_registered: Arc::new(AtomicBool::new(false)),
             double_tap_window_ms: DEFAULT_DOUBLE_TAP_WINDOW_MS,
             double_tap_detector: None,
             transcription_callback: None,
@@ -1205,7 +1207,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
     /// would deadlock because the shortcut manager's lock is already held.
     fn register_escape_listener(&mut self) {
         // Skip if already registered or not configured
-        if self.escape_registered {
+        if self.escape_registered.load(Ordering::SeqCst) {
             debug!("Escape listener already registered, skipping");
             return;
         }
@@ -1249,7 +1251,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                 }
             })) {
                 Ok(()) => {
-                    self.escape_registered = true;
+                    self.escape_registered.store(true, Ordering::SeqCst);
                     info!("Escape key listener registered for recording cancel (double-tap required)");
                 }
                 Err(e) => {
@@ -1261,9 +1263,8 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
 
         #[cfg(not(test))]
         {
-            // Mark as registered optimistically before spawning
-            // If registration fails, cancel via Escape won't work but the app continues
-            self.escape_registered = true;
+            // Clone the Arc<AtomicBool> for the spawned thread to set after successful registration
+            let escape_registered = self.escape_registered.clone();
 
             // Spawn registration on a separate thread to avoid re-entrancy deadlock
             // This is necessary because we're called from within a global shortcut callback,
@@ -1282,11 +1283,13 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                     }
                 })) {
                     Ok(()) => {
+                        // Only set escape_registered to true AFTER successful registration
+                        escape_registered.store(true, Ordering::SeqCst);
                         info!("Escape key listener registered for recording cancel (double-tap required)");
                     }
                     Err(e) => {
                         warn!("Failed to register Escape key listener: {}", e);
-                        // Note: escape_registered remains true, but unregister will handle this gracefully
+                        // escape_registered remains false, so unregister won't attempt cleanup
                     }
                 }
             });
@@ -1314,7 +1317,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         }
         self.double_tap_detector = None;
 
-        if !self.escape_registered {
+        if !self.escape_registered.load(Ordering::SeqCst) {
             return;
         }
 
@@ -1324,7 +1327,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         };
 
         // Mark as unregistered immediately
-        self.escape_registered = false;
+        self.escape_registered.store(false, Ordering::SeqCst);
 
         // In tests, use synchronous unregistration (mock backends don't have deadlock issues)
         // In production, spawn unregistration on a separate thread to avoid re-entrancy deadlock
