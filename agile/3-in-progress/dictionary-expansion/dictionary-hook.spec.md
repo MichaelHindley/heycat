@@ -1,8 +1,9 @@
 ---
-status: in-progress
+status: completed
 created: 2025-12-21
-completed: null
+completed: 2025-12-21
 dependencies: ["tauri-commands"]
+review_round: 1
 ---
 
 # Spec: Dictionary Hook (Frontend)
@@ -101,4 +102,73 @@ export function useDictionary() {
 ## Integration Test
 
 - Test location: `src/hooks/useDictionary.test.ts`
-- Verification: [ ] Hook tests pass with mocked invoke
+- Verification: [x] Hook tests pass with mocked invoke
+
+## Review
+
+**Reviewed:** 2025-12-21
+**Reviewer:** Claude
+
+### Acceptance Criteria Verification
+
+| Criterion | Status | Evidence |
+|-----------|--------|----------|
+| `useDictionary()` hook exports query and mutation functions | PASS | `src/hooks/useDictionary.ts:39` returns `{ entries, addEntry, updateEntry, deleteEntry }` |
+| `entries` - Tanstack Query for listing entries | PASS | `src/hooks/useDictionary.ts:16-19` uses `useQuery` with `list_dictionary_entries` command |
+| `addEntry` - Mutation for adding entries | PASS | `src/hooks/useDictionary.ts:21-25` uses `useMutation` calling `add_dictionary_entry` |
+| `updateEntry` - Mutation for updating entries | PASS | `src/hooks/useDictionary.ts:27-30` uses `useMutation` calling `update_dictionary_entry` |
+| `deleteEntry` - Mutation for deleting entries | PASS | `src/hooks/useDictionary.ts:32-36` uses `useMutation` calling `delete_dictionary_entry` |
+| Query keys defined in `queryKeys.ts` | PASS | `src/lib/queryKeys.ts:30-35` defines `dictionary.all` and `dictionary.list()` |
+| TypeScript types for `DictionaryEntry` | PASS | `src/types/dictionary.ts:5-12` defines interface with `id`, `trigger`, `expansion` |
+
+### Test Coverage Audit
+
+| Test Case | Status | Location |
+|-----------|--------|----------|
+| addEntry mutation calls backend with trigger/expansion | PASS | `src/hooks/useDictionary.test.ts:69-94` |
+| updateEntry/deleteEntry mutations call backend correctly | PASS | `src/hooks/useDictionary.test.ts:126-176` |
+| Error state exposed when mutation fails | PASS | `src/hooks/useDictionary.test.ts:96-123` |
+| Loading state exposed during fetch | PASS | `src/hooks/useDictionary.test.ts:40-47` |
+
+### Code Quality
+
+**Strengths:**
+- Follows existing patterns from `useSettings.ts` and other hooks
+- Properly documents that mutations do NOT invalidate queries (Event Bridge handles it)
+- Clean, focused hook implementation with clear separation of concerns
+- Query keys follow the established convention
+- Type definitions are clean and match backend struct
+- Tests follow TESTING.md guidelines: behavior-focused, not implementation details
+
+**Concerns:**
+- None identified
+
+### Frontend-Only Integration Check
+
+This spec creates a hook but no UI component. Per the spec's Integration Points:
+- Production call site: `src/pages/Dictionary.tsx` - handled by `dictionary-page-ui.spec.md` (pending, depends on this spec)
+- The hook is correctly exported and ready for use
+- No hardcoded values or missing wiring in this scope
+
+| Hook | Created In | Called In | Passes Data To |
+|------|------------|-----------|----------------|
+| useDictionary | src/hooks/useDictionary.ts | TEST-ONLY (correct for this spec) | Will be Dictionary.tsx per dictionary-page-ui.spec.md |
+
+The TEST-ONLY status is acceptable here because:
+1. The spec explicitly states production call site is `src/pages/Dictionary.tsx`
+2. There is a dependent spec `dictionary-page-ui.spec.md` that will wire up the hook
+3. This follows the layered spec approach where hooks are implemented before pages
+
+### Pre-Review Gate Results
+
+```
+Build Warning Check: 1 warning - `method get is never used` in src/dictionary/store.rs:200
+  This is backend code from tauri-commands spec, NOT this frontend spec. Not a blocker.
+
+Command Registration Check: N/A - this spec adds no Tauri commands
+Event Subscription Check: N/A - this spec adds no event listeners
+```
+
+### Verdict
+
+**APPROVED** - The hook implementation is complete, follows established patterns, has proper test coverage, and is correctly scoped. Production wiring will be handled by the dependent `dictionary-page-ui.spec.md`.
