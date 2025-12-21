@@ -2116,6 +2116,7 @@ dependencies = [
  "hound",
  "io-kit-sys",
  "parakeet-rs",
+ "regex",
  "ringbuf",
  "rubato",
  "serde",
