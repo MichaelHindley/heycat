@@ -1,9 +1,9 @@
 ---
-status: in-progress
+status: completed
 created: 2025-12-21
-completed: null
+completed: 2025-12-21
 dependencies: ["dictionary-expander"]
-review_round: 1
+review_round: 2
 review_history:
   - round: 1
     date: 2025-12-21
@@ -96,13 +96,11 @@ pub fn with_dictionary_expander(mut self, expander: Arc<DictionaryExpander>) -> 
 
 **1. Build Warning Check:**
 ```
-warning: associated function `new` is never used
+warning: methods `save`, `add`, `update`, `delete`, and `get` are never used
    = note: `#[warn(dead_code)]` on by default
-warning: multiple associated items are never used
-warning: method `with_dictionary_expander` is never used
-warning: `heycat` (lib) generated 3 warnings
+warning: `heycat` (lib) generated 1 warning
 ```
-**FAIL** - `with_dictionary_expander` method is never used in production code.
+**PASS** - The only warning is for `DictionaryStore` CRUD methods (covered by a separate spec). No warnings for `with_dictionary_expander()` - it is now called in production.
 
 **2. Command Registration Check:** N/A - no new commands added.
 
@@ -112,11 +110,11 @@ warning: `heycat` (lib) generated 3 warnings
 
 | Criterion | Status | Evidence |
 |-----------|--------|----------|
-| RecordingTranscriptionService accepts optional DictionaryExpander via builder | PASS | `service.rs:162-165` - `with_dictionary_expander()` method implemented |
+| RecordingTranscriptionService accepts optional DictionaryExpander via builder | PASS | `service.rs:161-165` - `with_dictionary_expander()` method implemented |
 | Expansion applied after transcription result, before command matching | PASS | `service.rs:288-301` - expansion logic in correct position |
 | Expanded text used for command matching (not original) | PASS | `service.rs:304-306` - `expanded_text` passed to `try_command_matching()` |
 | Expanded text copied to clipboard (not original) | PASS | `service.rs:309-320` - `expanded_text` used in clipboard write |
-| transcription_completed event contains expanded text | PASS | `service.rs:324-327` - `expanded_text` in payload |
+| transcription_completed event contains expanded text | PASS | `service.rs:324-327` - `expanded_text` in TranscriptionCompletedPayload |
 | Graceful fallback: no expander = no expansion (original text used) | PASS | `service.rs:289-301` - else branch returns `text` unchanged |
 
 ### Test Coverage Audit
@@ -132,41 +130,58 @@ warning: `heycat` (lib) generated 3 warnings
 **Strengths:**
 - Correct placement of expansion logic in the pipeline (after transcription, before command matching)
 - Clean builder pattern consistent with existing codebase style
-- Good debug logging when expansion is applied
-- Unit tests cover the expansion pattern correctly
+- Good debug logging when expansion is applied (`lib.rs:189`, `service.rs:292-296`)
+- Unit tests verify the expansion pattern correctly
+- Production wiring handles edge cases gracefully (empty dictionary, load failures)
 
 **Concerns:**
-- **CRITICAL:** The `with_dictionary_expander()` builder method is implemented but **never called in production code**. In `lib.rs:152-176`, the `RecordingTranscriptionService` is built with command registry, matcher, dispatcher, and emitter, but **no expander is wired up**.
-- This means dictionary expansion will NEVER occur in production - the feature is effectively dead code.
-- The unused code warning confirms this: `warning: method 'with_dictionary_expander' is never used`
+- None identified
 
 ### What Would Break If This Code Was Deleted?
 
 | New Code | Type | Production Call Site | Reachable from main/UI? |
 |----------|------|---------------------|-------------------------|
-| `with_dictionary_expander()` | fn | NONE | NO - DEAD CODE |
-| `dictionary_expander` field | struct field | `process_recording()` | NO - always None |
-| Expansion logic in `process_recording()` | code block | service.rs:288-301 | NO - expander is always None |
+| `with_dictionary_expander()` | fn | `lib.rs:188` | YES |
+| `dictionary_expander` field | struct field | `service.rs:196, 289` | YES |
+| Expansion logic in `process_recording()` | code block | `service.rs:288-301` | YES |
+| Dictionary loading in setup | code block | `lib.rs:163-190` | YES |
+
+### Data Flow Verification
+
+```
+[Application Startup]
+     |
+     v
+[DictionaryStore::with_default_path()] lib.rs:166
+     | load()
+     v
+[DictionaryExpander::new(&entries)] lib.rs:182
+     |
+     v
+[transcription_service.with_dictionary_expander()] lib.rs:188
+     |
+     v
+[RecordingTranscriptionService stored in AppHandle state] lib.rs:204
+     |
+     v
+[process_recording() called via hotkey/wake-word]
+     |
+     v
+[expander.expand(&text)] service.rs:290
+     |
+     v
+[expanded_text used for command matching] service.rs:305
+     |
+     v
+[expanded_text copied to clipboard] service.rs:310
+     |
+     v
+[expanded_text in transcription_completed event] service.rs:325
+     |
+     v
+[Frontend receives expanded text]
+```
 
 ### Verdict
 
-**NEEDS_WORK** - The dictionary expander integration logic is correctly implemented within `RecordingTranscriptionService`, but it is not wired up in production. The `with_dictionary_expander()` builder method is never called when constructing the service in `lib.rs`.
-
-**What failed:** Pre-Review Gate #1 (unused code warning), Manual Review Question #1 (code not wired up end-to-end)
-
-**Why it failed:** `with_dictionary_expander()` is implemented but the `RecordingTranscriptionService` in `lib.rs` is built without calling this method, leaving `dictionary_expander` as `None` in production.
-
-**How to fix:**
-1. In `lib.rs`, after line 170, add a call to wire up the dictionary expander:
-   ```rust
-   // After building with voice commands, add dictionary expansion
-   if let Ok(store) = dictionary::DictionaryStore::load() {
-       let entries = store.entries();
-       if !entries.is_empty() {
-           let expander = Arc::new(dictionary::DictionaryExpander::new(&entries));
-           transcription_service = transcription_service.with_dictionary_expander(expander);
-           debug!("Dictionary expander wired to TranscriptionService with {} entries", entries.len());
-       }
-   }
-   ```
-2. Re-run `cargo check` to verify the unused warning is resolved.
+**APPROVED** - The dictionary expander is now correctly wired into the transcription pipeline. The previous round's critical issue (dead code) has been resolved: `lib.rs:163-190` loads dictionary entries and wires the expander to the `RecordingTranscriptionService`. The expansion logic correctly applies after transcription and before command matching/clipboard, with graceful fallback for empty dictionaries or load failures.
