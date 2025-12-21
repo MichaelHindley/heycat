@@ -162,7 +162,7 @@ pub fn run() {
 
             // Load dictionary entries and create expander for transcription service
             debug!("Loading dictionary entries...");
-            let dictionary_expander = {
+            {
                 let mut store = match dictionary::DictionaryStore::with_default_path() {
                     Ok(store) => store,
                     Err(e) => {
@@ -176,17 +176,12 @@ pub fn run() {
                 let entries: Vec<dictionary::DictionaryEntry> = store.list().into_iter().cloned().collect();
                 if entries.is_empty() {
                     debug!("No dictionary entries loaded");
-                    None
                 } else {
                     info!("Loaded {} dictionary entries for expansion", entries.len());
-                    Some(Arc::new(dictionary::DictionaryExpander::new(&entries)))
+                    let expander = dictionary::DictionaryExpander::new(&entries);
+                    transcription_service = transcription_service.with_dictionary_expander(expander);
+                    debug!("Dictionary expander wired to TranscriptionService");
                 }
-            };
-
-            // Wire up dictionary expander if entries were loaded
-            if let Some(expander) = dictionary_expander {
-                transcription_service = transcription_service.with_dictionary_expander(expander);
-                debug!("Dictionary expander wired to TranscriptionService");
             }
 
             // Wire up voice command integration to transcription service if available

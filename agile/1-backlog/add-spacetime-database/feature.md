@@ -1,5 +1,5 @@
 ---
-discovery_phase: scope
+discovery_phase: complete
 ---
 
 # Feature: Add Spacetime Database
@@ -85,6 +85,17 @@ Feature: Add Spacetime Database
     Then the user is notified about storage limits
     And given options to manage storage
 ```
+
+### Out of Scope
+- Multi-user authentication and authorization (single user only for initial implementation)
+- Admin dashboard or server-side management UI
+- Data analytics, reporting, or insights from stored data
+- Full offline-first mode with complex conflict resolution (basic offline support only)
+
+### Assumptions
+- A SpacetimeDB server instance is running and accessible
+- Official SpacetimeDB Rust SDK/crate is available and stable
+- Initially targeting single-user scenarios before expanding to multi-user
 
 ## Acceptance Criteria (High-Level)
 

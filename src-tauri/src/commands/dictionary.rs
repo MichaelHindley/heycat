@@ -4,6 +4,7 @@
 // This file contains Tauri-specific wrappers and is excluded from coverage.
 #![cfg_attr(coverage_nightly, coverage(off))]
 
+use crate::commands::TranscriptionServiceState;
 use crate::dictionary::{DictionaryEntry, DictionaryError, DictionaryStore};
 use crate::events::dictionary_events::{self, DictionaryUpdatedPayload};
 use std::sync::Mutex;
@@ -31,6 +32,15 @@ fn to_user_error(error: DictionaryError) -> String {
     }
 }
 
+/// Refresh the dictionary expander in the transcription service with current entries
+fn refresh_dictionary_expander(
+    store: &DictionaryStore,
+    transcription_service: &TranscriptionServiceState,
+) {
+    let entries: Vec<DictionaryEntry> = store.list().into_iter().cloned().collect();
+    transcription_service.update_dictionary(&entries);
+}
+
 /// List all dictionary entries
 ///
 /// Returns all entries from the dictionary store.
@@ -45,7 +55,7 @@ pub fn list_dictionary_entries(
 /// Add a new dictionary entry
 ///
 /// Creates a new entry with the given trigger and expansion, generates a unique ID,
-/// persists to storage, and emits a dictionary_updated event.
+/// persists to storage, updates the transcription service expander, and emits a dictionary_updated event.
 ///
 /// # Arguments
 /// * `trigger` - The trigger word/phrase (e.g., "brb")
@@ -57,6 +67,7 @@ pub fn list_dictionary_entries(
 pub fn add_dictionary_entry(
     app_handle: AppHandle,
     store: State<'_, DictionaryStoreState>,
+    transcription_service: State<'_, TranscriptionServiceState>,
     trigger: String,
     expansion: String,
 ) -> Result<DictionaryEntry, String> {
@@ -67,6 +78,9 @@ pub fn add_dictionary_entry(
 
     let mut store = store.lock().map_err(|_| "Failed to access dictionary store".to_string())?;
     let entry = store.add(trigger, expansion).map_err(to_user_error)?;
+
+    // Refresh the dictionary expander in the transcription service
+    refresh_dictionary_expander(&store, &transcription_service);
 
     // Emit dictionary_updated event
     emit_or_warn!(
@@ -85,7 +99,7 @@ pub fn add_dictionary_entry(
 /// Update an existing dictionary entry
 ///
 /// Updates the trigger and expansion for the entry with the given ID,
-/// persists to storage, and emits a dictionary_updated event.
+/// persists to storage, updates the transcription service expander, and emits a dictionary_updated event.
 ///
 /// # Arguments
 /// * `id` - The unique ID of the entry to update
@@ -95,6 +109,7 @@ pub fn add_dictionary_entry(
 pub fn update_dictionary_entry(
     app_handle: AppHandle,
     store: State<'_, DictionaryStoreState>,
+    transcription_service: State<'_, TranscriptionServiceState>,
     id: String,
     trigger: String,
     expansion: String,
@@ -106,6 +121,9 @@ pub fn update_dictionary_entry(
 
     let mut store = store.lock().map_err(|_| "Failed to access dictionary store".to_string())?;
     store.update(id.clone(), trigger, expansion).map_err(to_user_error)?;
+
+    // Refresh the dictionary expander in the transcription service
+    refresh_dictionary_expander(&store, &transcription_service);
 
     // Emit dictionary_updated event
     emit_or_warn!(
@@ -124,7 +142,7 @@ pub fn update_dictionary_entry(
 /// Delete a dictionary entry
 ///
 /// Removes the entry with the given ID, persists to storage,
-/// and emits a dictionary_updated event.
+/// updates the transcription service expander, and emits a dictionary_updated event.
 ///
 /// # Arguments
 /// * `id` - The unique ID of the entry to delete
@@ -132,10 +150,14 @@ pub fn update_dictionary_entry(
 pub fn delete_dictionary_entry(
     app_handle: AppHandle,
     store: State<'_, DictionaryStoreState>,
+    transcription_service: State<'_, TranscriptionServiceState>,
     id: String,
 ) -> Result<(), String> {
     let mut store = store.lock().map_err(|_| "Failed to access dictionary store".to_string())?;
     store.delete(&id).map_err(to_user_error)?;
+
+    // Refresh the dictionary expander in the transcription service
+    refresh_dictionary_expander(&store, &transcription_service);
 
     // Emit dictionary_updated event
     emit_or_warn!(

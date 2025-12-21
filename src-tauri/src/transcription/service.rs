@@ -4,7 +4,7 @@
 // This service decouples transcription from HotkeyIntegration, enabling
 // button-initiated recordings and wake word flows to share the same logic.
 
-use crate::dictionary::DictionaryExpander;
+use crate::dictionary::{DictionaryEntry, DictionaryExpander};
 use crate::events::{
     current_timestamp, CommandAmbiguousPayload, CommandCandidate, CommandEventEmitter,
     CommandExecutedPayload, CommandFailedPayload, CommandMatchedPayload,
@@ -16,7 +16,7 @@ use crate::recording::RecordingManager;
 use crate::voice_commands::executor::ActionDispatcher;
 use crate::voice_commands::matcher::{CommandMatcher, MatchResult};
 use crate::voice_commands::registry::CommandRegistry;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use tauri::AppHandle;
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -96,8 +96,8 @@ where
     app_handle: AppHandle,
     /// Transcription timeout duration
     transcription_timeout: Duration,
-    /// Optional dictionary expander for text expansion
-    dictionary_expander: Option<Arc<DictionaryExpander>>,
+    /// Dictionary expander for text expansion (interior mutable for runtime updates)
+    dictionary_expander: Arc<RwLock<Option<DictionaryExpander>>>,
 }
 
 impl<T, C> RecordingTranscriptionService<T, C>
@@ -123,7 +123,7 @@ where
             transcription_semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_TRANSCRIPTIONS)),
             app_handle,
             transcription_timeout: Duration::from_secs(DEFAULT_TRANSCRIPTION_TIMEOUT_SECS),
-            dictionary_expander: None,
+            dictionary_expander: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -159,9 +159,36 @@ where
     }
 
     /// Add dictionary expander for text expansion (builder pattern)
-    pub fn with_dictionary_expander(mut self, expander: Arc<DictionaryExpander>) -> Self {
-        self.dictionary_expander = Some(expander);
+    pub fn with_dictionary_expander(mut self, expander: DictionaryExpander) -> Self {
+        self.dictionary_expander = Arc::new(RwLock::new(Some(expander)));
         self
+    }
+
+    /// Update the dictionary expander with new entries at runtime
+    ///
+    /// This method is called when dictionary entries are added, updated, or deleted
+    /// to ensure the transcription pipeline uses the latest dictionary.
+    pub fn update_dictionary(&self, entries: &[DictionaryEntry]) {
+        let expander = if entries.is_empty() {
+            crate::debug!("Clearing dictionary expander (no entries)");
+            None
+        } else {
+            crate::info!(
+                "Updating dictionary expander with {} entries",
+                entries.len()
+            );
+            Some(DictionaryExpander::new(entries))
+        };
+
+        match self.dictionary_expander.write() {
+            Ok(mut guard) => {
+                *guard = expander;
+                crate::debug!("Dictionary expander updated successfully");
+            }
+            Err(e) => {
+                crate::error!("Failed to update dictionary expander: {}", e);
+            }
+        }
     }
 
     /// Process a recording file: transcribe → match commands → clipboard fallback
@@ -286,18 +313,26 @@ where
             );
 
             // Apply dictionary expansion if configured
-            let expanded_text = if let Some(ref expander) = dictionary_expander {
-                let result = expander.expand(&text);
-                if result != text {
-                    crate::debug!(
-                        "Dictionary expansion applied: '{}' -> '{}'",
-                        text,
+            let expanded_text = match dictionary_expander.read() {
+                Ok(guard) => {
+                    if let Some(ref expander) = *guard {
+                        let result = expander.expand(&text);
+                        if result != text {
+                            crate::debug!(
+                                "Dictionary expansion applied: '{}' -> '{}'",
+                                text,
+                                result
+                            );
+                        }
                         result
-                    );
+                    } else {
+                        text
+                    }
                 }
-                result
-            } else {
-                text
+                Err(e) => {
+                    crate::warn!("Failed to acquire dictionary expander lock: {}", e);
+                    text
+                }
             };
 
             // Try voice command matching if configured (using expanded text)
@@ -623,15 +658,21 @@ mod tests {
     #[test]
     fn test_dictionary_expander_graceful_fallback_no_expander() {
         // When no expander is configured, text should pass through unchanged
-        let dictionary_expander: Option<Arc<DictionaryExpander>> = None;
+        let dictionary_expander: Arc<RwLock<Option<DictionaryExpander>>> =
+            Arc::new(RwLock::new(None));
 
         let text = "i need to brb and check the api docs";
 
-        // Simulate the expansion logic from process_recording
-        let expanded_text = if let Some(ref expander) = dictionary_expander {
-            expander.expand(text)
-        } else {
-            text.to_string()
+        // Simulate the expansion logic from process_recording (using RwLock pattern)
+        let expanded_text = match dictionary_expander.read() {
+            Ok(guard) => {
+                if let Some(ref expander) = *guard {
+                    expander.expand(text)
+                } else {
+                    text.to_string()
+                }
+            }
+            Err(_) => text.to_string(),
         };
 
         // Text should be unchanged when no expander is present
@@ -641,19 +682,65 @@ mod tests {
     #[test]
     fn test_dictionary_expander_graceful_fallback_empty_entries() {
         // When expander has no entries, text should pass through unchanged
-        let expander = Arc::new(DictionaryExpander::new(&[]));
-        let dictionary_expander: Option<Arc<DictionaryExpander>> = Some(expander);
+        let expander = DictionaryExpander::new(&[]);
+        let dictionary_expander: Arc<RwLock<Option<DictionaryExpander>>> =
+            Arc::new(RwLock::new(Some(expander)));
 
         let text = "i need to brb and check the api docs";
 
-        // Simulate the expansion logic from process_recording
-        let expanded_text = if let Some(ref exp) = dictionary_expander {
-            exp.expand(text)
-        } else {
-            text.to_string()
+        // Simulate the expansion logic from process_recording (using RwLock pattern)
+        let expanded_text = match dictionary_expander.read() {
+            Ok(guard) => {
+                if let Some(ref exp) = *guard {
+                    exp.expand(text)
+                } else {
+                    text.to_string()
+                }
+            }
+            Err(_) => text.to_string(),
         };
 
         // Text should be unchanged when expander has no entries
         assert_eq!(expanded_text, text);
+    }
+
+    #[test]
+    fn test_dictionary_expander_runtime_update() {
+        // Test that the RwLock-based expander can be updated at runtime
+        let dictionary_expander: Arc<RwLock<Option<DictionaryExpander>>> =
+            Arc::new(RwLock::new(None));
+
+        let text = "i need to brb";
+
+        // Initially no expander, text unchanged
+        let result1 = match dictionary_expander.read() {
+            Ok(guard) => match *guard {
+                Some(ref exp) => exp.expand(text),
+                None => text.to_string(),
+            },
+            Err(_) => text.to_string(),
+        };
+        assert_eq!(result1, "i need to brb");
+
+        // Update with new entries (simulating what update_dictionary does)
+        let entries = vec![DictionaryEntry {
+            id: "1".to_string(),
+            trigger: "brb".to_string(),
+            expansion: "be right back".to_string(),
+        }];
+        {
+            let mut guard = dictionary_expander.write().unwrap();
+            *guard = Some(DictionaryExpander::new(&entries));
+        }
+
+        // Now expansion should work
+        let result2 = match dictionary_expander.read() {
+            Ok(guard) => match *guard {
+                Some(ref exp) => exp.expand(text),
+                None => text.to_string(),
+            },
+            Err(_) => text.to_string(),
+        };
+        assert_eq!(result2, "i need to be right back");
     }
 }
