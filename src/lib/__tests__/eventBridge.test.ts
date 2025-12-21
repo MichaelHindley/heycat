@@ -78,14 +78,15 @@ describe("eventBridge", () => {
       expect(eventHandlers.has(eventNames.LISTENING_UNAVAILABLE)).toBe(true);
       expect(eventHandlers.has(eventNames.WAKE_WORD_DETECTED)).toBe(true);
       expect(eventHandlers.has(eventNames.MODEL_DOWNLOAD_COMPLETED)).toBe(true);
+      expect(eventHandlers.has(eventNames.DICTIONARY_UPDATED)).toBe(true);
       expect(eventHandlers.has(eventNames.OVERLAY_MODE)).toBe(true);
     });
 
     it("cleanup function unsubscribes all listeners", async () => {
       const cleanup = await setupEventBridge(queryClient, mockStore);
 
-      // Should have registered 12 listeners (8 server state + 4 UI state)
-      expect(mockUnlistenFns.length).toBe(12);
+      // Should have registered 13 listeners (9 server state + 4 UI state)
+      expect(mockUnlistenFns.length).toBe(13);
 
       // Call cleanup
       cleanup();
@@ -235,6 +236,19 @@ describe("eventBridge", () => {
 
       expect(invalidateSpy).toHaveBeenCalledWith({
         queryKey: ["tauri", "check_parakeet_model_status"],
+      });
+    });
+  });
+
+  describe("dictionary events trigger query invalidation", () => {
+    it("dictionary_updated invalidates dictionary queries", async () => {
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+      await setupEventBridge(queryClient, mockStore);
+
+      emitMockEvent(eventNames.DICTIONARY_UPDATED);
+
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: queryKeys.dictionary.all,
       });
     });
   });

@@ -37,6 +37,9 @@ export const eventNames = {
   // Model events
   MODEL_DOWNLOAD_COMPLETED: "model_download_completed",
 
+  // Dictionary events
+  DICTIONARY_UPDATED: "dictionary_updated",
+
   // UI state events
   OVERLAY_MODE: "overlay-mode",
 } as const;
@@ -141,6 +144,15 @@ export async function setupEventBridge(
     await listen(eventNames.MODEL_DOWNLOAD_COMPLETED, () => {
       queryClient.invalidateQueries({
         queryKey: ["tauri", "check_parakeet_model_status"],
+      });
+    })
+  );
+
+  // Dictionary events - invalidate dictionary list query
+  unlistenFns.push(
+    await listen(eventNames.DICTIONARY_UPDATED, () => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.dictionary.all,
       });
     })
   );
