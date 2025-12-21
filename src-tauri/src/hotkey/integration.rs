@@ -28,6 +28,9 @@ use tauri::AppHandle;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tokio::sync::Semaphore;
 
+/// Type alias for the double-tap detector with callback
+type DoubleTapDetectorState = Option<Arc<Mutex<DoubleTapDetector<Box<dyn Fn() + Send + Sync>>>>>;
+
 /// Maximum concurrent transcriptions allowed
 const MAX_CONCURRENT_TRANSCRIPTIONS: usize = 2;
 
@@ -334,7 +337,7 @@ pub struct HotkeyIntegration<R: RecordingEventEmitter, T: TranscriptionEventEmit
     /// Uses Arc<AtomicBool> for thread-safe updates from spawned registration thread
     escape_registered: Arc<AtomicBool>,
     /// Double-tap detector for Escape key (created on recording start)
-    double_tap_detector: Option<Arc<Mutex<DoubleTapDetector<Box<dyn Fn() + Send + Sync>>>>>,
+    double_tap_detector: DoubleTapDetectorState,
 }
 
 impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmitter + 'static, C: CommandEventEmitter + 'static> HotkeyIntegration<R, T, C> {

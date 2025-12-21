@@ -534,7 +534,7 @@ impl WakeWordDetector {
                     speech_frames += 1;
                     // Early return on confident speech detection for performance
                     // This ensures short utterances like "hello" trigger analysis quickly
-                    if speech_frames >= config.min_speech_frames + 1 {
+                    if speech_frames > config.min_speech_frames {
                         crate::trace!(
                             "[wake-word] VAD: Early return after {} speech frames (max_prob={:.2})",
                             speech_frames,
@@ -550,7 +550,7 @@ impl WakeWordDetector {
         // Also process partial final chunk by zero-padding
         // This prevents missing speech at buffer boundaries
         let remaining = samples.len() % CHUNK_SIZE;
-        if remaining > 0 && remaining >= 256 {
+        if remaining >= 256 {
             // Only process if we have at least half a chunk (meaningful data)
             let start = samples.len() - remaining;
             let mut padded = vec![0.0f32; CHUNK_SIZE];

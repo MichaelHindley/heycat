@@ -14,6 +14,9 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+/// Type alias for the callback map used in CGEventTapHotkeyBackend
+type CallbackMap = Arc<Mutex<HashMap<String, Arc<dyn Fn() + Send + Sync>>>>;
+
 /// Media key names that can be used in shortcuts
 const MEDIA_KEY_NAMES: &[&str] = &[
     "PlayPause",
@@ -31,7 +34,7 @@ const MEDIA_KEY_NAMES: &[&str] = &[
 ];
 
 /// Parsed shortcut specification for matching against key events
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ShortcutSpec {
     /// Whether fn key must be pressed
     pub fn_key: bool,
@@ -47,20 +50,6 @@ pub struct ShortcutSpec {
     pub key_name: Option<String>,
     /// Whether this is a media key
     pub is_media_key: bool,
-}
-
-impl Default for ShortcutSpec {
-    fn default() -> Self {
-        Self {
-            fn_key: false,
-            command: false,
-            control: false,
-            alt: false,
-            shift: false,
-            key_name: None,
-            is_media_key: false,
-        }
-    }
 }
 
 /// Parse a shortcut string into a ShortcutSpec
@@ -225,7 +214,7 @@ pub struct CGEventTapHotkeyBackend {
     /// Registered shortcuts mapped to their specs
     registered_shortcuts: Arc<Mutex<HashMap<String, ShortcutSpec>>>,
     /// Callbacks for each registered shortcut
-    callbacks: Arc<Mutex<HashMap<String, Arc<dyn Fn() + Send + Sync>>>>,
+    callbacks: CallbackMap,
     /// Whether the event tap is currently running
     running: Arc<AtomicBool>,
 }
@@ -287,7 +276,7 @@ impl CGEventTapHotkeyBackend {
     fn handle_key_event(
         event: &CapturedKeyEvent,
         shortcuts: &Arc<Mutex<HashMap<String, ShortcutSpec>>>,
-        callbacks: &Arc<Mutex<HashMap<String, Arc<dyn Fn() + Send + Sync>>>>,
+        callbacks: &CallbackMap,
     ) {
         // Get a snapshot of shortcuts and callbacks to avoid holding locks during callback execution
         let matching_callbacks: Vec<Arc<dyn Fn() + Send + Sync>> = {

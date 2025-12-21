@@ -94,7 +94,7 @@ extern "C" {
 }
 
 /// Captured key event with full modifier information including left/right distinction
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct CapturedKeyEvent {
     /// The key code (CGKeyCode)
     pub key_code: u32,
@@ -130,30 +130,6 @@ pub struct CapturedKeyEvent {
     pub pressed: bool,
     /// Whether this is a media key (volume, brightness, etc.)
     pub is_media_key: bool,
-}
-
-impl Default for CapturedKeyEvent {
-    fn default() -> Self {
-        Self {
-            key_code: 0,
-            key_name: String::new(),
-            fn_key: false,
-            command: false,
-            command_left: false,
-            command_right: false,
-            control: false,
-            control_left: false,
-            control_right: false,
-            alt: false,
-            alt_left: false,
-            alt_right: false,
-            shift: false,
-            shift_left: false,
-            shift_right: false,
-            pressed: false,
-            is_media_key: false,
-        }
-    }
 }
 
 /// State shared between the capture thread and callback

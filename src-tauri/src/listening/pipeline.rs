@@ -548,8 +548,7 @@ fn analysis_thread_main<E: ListeningEventEmitter>(
                     } else {
                         // Take all samples and clear the buffer to bound memory usage
                         // The detector's internal CircularBuffer maintains the rolling window
-                        let samples = std::mem::take(&mut *guard);
-                        samples
+                        std::mem::take(&mut *guard)
                     }
                 }
                 Err(_) => {

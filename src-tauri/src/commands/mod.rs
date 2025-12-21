@@ -252,17 +252,13 @@ pub fn stop_recording(
     // Emit event on success for frontend state sync
     if let Ok(ref metadata) = result {
         // Check if recording was stopped due to a device error and emit appropriate event
-        if let Some(ref reason) = metadata.stop_reason {
-            match reason {
-                StopReason::StreamError => {
-                    emit_or_warn!(
-                        app_handle,
-                        event_names::AUDIO_DEVICE_ERROR,
-                        AudioDeviceError::DeviceDisconnected
-                    );
-                }
-                _ => {} // Other stop reasons (BufferFull, SilenceAfterSpeech, etc.) are not device errors
-            }
+        // Other stop reasons (BufferFull, SilenceAfterSpeech, etc.) are not device errors
+        if let Some(StopReason::StreamError) = metadata.stop_reason {
+            emit_or_warn!(
+                app_handle,
+                event_names::AUDIO_DEVICE_ERROR,
+                AudioDeviceError::DeviceDisconnected
+            );
         }
 
         emit_or_warn!(
@@ -380,6 +376,7 @@ pub async fn transcribe_file(
 
 /// Enable listening mode (always-on wake word detection)
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn enable_listening(
     app_handle: AppHandle,
     listening_state: State<'_, ListeningState>,
@@ -463,6 +460,7 @@ pub fn enable_listening(
 /// This async function processes events from the wake word event channel,
 /// running separately from the analysis thread to eliminate deadlock risk.
 /// It replaces the direct callback invocation with a safe async pattern.
+#[allow(clippy::too_many_arguments)]
 async fn handle_wake_word_events(
     mut event_rx: tokio::sync::mpsc::Receiver<WakeWordEvent>,
     listening_pipeline: ListeningPipelineState,
@@ -518,6 +516,7 @@ async fn handle_wake_word_events(
 ///
 /// This function contains the logic previously in the wake word callback,
 /// now safely executing in an async context outside the analysis thread.
+#[allow(clippy::too_many_arguments)]
 fn handle_wake_word_detected(
     listening_pipeline: &ListeningPipelineState,
     recording_state: &ProductionState,

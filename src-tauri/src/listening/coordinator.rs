@@ -63,6 +63,7 @@ impl RecordingDetectors {
     /// * `return_to_listening` - Whether to return to Listening state after stop
     /// * `listening_pipeline` - Optional pipeline to restart if return_to_listening is true
     /// * `transcription_callback` - Optional callback to spawn transcription after recording saves
+    #[allow(clippy::too_many_arguments)]
     pub fn start_monitoring<E: ListeningEventEmitter + RecordingEventEmitter + 'static>(
         &mut self,
         buffer: AudioBuffer,
@@ -152,6 +153,7 @@ impl Drop for RecordingDetectors {
 ///
 /// Reads audio samples and feeds them to the silence detector.
 /// Takes action based on detection results.
+#[allow(clippy::too_many_arguments)]
 fn detection_loop<E: ListeningEventEmitter + RecordingEventEmitter + 'static>(
     buffer: AudioBuffer,
     mut silence_detector: SilenceDetector,
