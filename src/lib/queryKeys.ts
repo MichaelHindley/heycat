@@ -27,6 +27,12 @@ export const queryKeys = {
     checkModelStatus: (type: string) =>
       ["tauri", "check_parakeet_model_status", type] as const,
   },
+  dictionary: {
+    /** Base key for all dictionary queries */
+    all: ["dictionary"] as const,
+    /** Query key for list_dictionary_entries command */
+    list: () => [...queryKeys.dictionary.all, "list"] as const,
+  },
 } as const;
 
 /** Type for the query keys object */
