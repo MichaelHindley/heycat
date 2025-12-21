@@ -145,6 +145,20 @@ pub const SILENCE_MIN_SPEECH_FRAMES: usize = 2;
 /// CPU for ~3x faster response time).
 pub const ANALYSIS_INTERVAL_MS: u64 = 150;
 
+/// Detection check interval for silence/speech detection (milliseconds).
+///
+/// How often the recording coordinator checks accumulated audio for
+/// silence or speech patterns. 100ms provides a good balance between
+/// responsiveness and CPU usage.
+pub const DETECTION_INTERVAL_MS: u64 = 100;
+
+/// Minimum samples to process for silence detection.
+///
+/// At least 100ms worth of audio at 16kHz (1600 samples) is needed
+/// for reliable silence/speech detection. This ensures enough context
+/// for the VAD to make accurate decisions.
+pub const MIN_DETECTION_SAMPLES: usize = 1600;
+
 /// Minimum samples before first wake word analysis.
 ///
 /// Need at least 0.25 seconds of audio before analyzing.
@@ -156,6 +170,13 @@ pub const MIN_SAMPLES_FOR_ANALYSIS: usize = 4000;
 /// Small buffer since events should be processed quickly. Bounded
 /// to handle backpressure gracefully if receiver falls behind.
 pub const EVENT_CHANNEL_BUFFER_SIZE: usize = 16;
+
+/// Chunk size for real-time audio resampling (samples).
+///
+/// When the audio device doesn't support 16kHz natively, we resample
+/// in chunks of this size. 1024 samples provides a good balance between
+/// latency (~64ms at 16kHz) and processing efficiency.
+pub const RESAMPLE_CHUNK_SIZE: usize = 1024;
 
 // =============================================================================
 // UTILITY FUNCTIONS

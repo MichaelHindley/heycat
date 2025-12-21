@@ -4,6 +4,7 @@
 use super::silence::{SilenceConfig, SilenceDetectionResult, SilenceDetector, SilenceStopReason};
 use super::ListeningPipeline;
 use crate::audio::{encode_wav, AudioBuffer, SystemFileWriter, TARGET_SAMPLE_RATE};
+use crate::audio_constants::{DETECTION_INTERVAL_MS, MIN_DETECTION_SAMPLES};
 use crate::events::{ListeningEventEmitter, RecordingEventEmitter, RecordingStoppedPayload};
 use crate::recording::{RecordingManager, RecordingMetadata, RecordingState};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -164,8 +165,8 @@ fn detection_loop<E: ListeningEventEmitter + RecordingEventEmitter + 'static>(
 ) {
     crate::debug!("[coordinator] Detection loop starting");
 
-    // Detection interval: check every 100ms
-    let interval = Duration::from_millis(100);
+    // Detection interval
+    let interval = Duration::from_millis(DETECTION_INTERVAL_MS);
 
     // Track samples for batch processing
     let mut samples_since_last_check: Vec<f32> = Vec::new();
@@ -207,8 +208,8 @@ fn detection_loop<E: ListeningEventEmitter + RecordingEventEmitter + 'static>(
             );
         }
 
-        // Process samples if we have enough (at least 100ms worth at 16kHz = 1600 samples)
-        if samples_since_last_check.len() >= 1600 {
+        // Process samples if we have enough (at least 100ms worth at 16kHz)
+        if samples_since_last_check.len() >= MIN_DETECTION_SAMPLES {
             crate::trace!(
                 "[coordinator] Processing {} samples for detection",
                 samples_since_last_check.len()

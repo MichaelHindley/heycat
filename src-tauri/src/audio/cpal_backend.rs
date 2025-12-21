@@ -10,6 +10,7 @@ use cpal::{SampleRate, Stream};
 use rubato::{FftFixedIn, Resampler};
 
 use super::{AudioBuffer, AudioCaptureBackend, AudioCaptureError, CaptureState, StopReason, MAX_RESAMPLE_BUFFER_SAMPLES, TARGET_SAMPLE_RATE};
+use crate::audio_constants::RESAMPLE_CHUNK_SIZE;
 use crate::{debug, error, info, warn};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
@@ -243,9 +244,7 @@ impl AudioCaptureBackend for CpalBackend {
 
         // Create resampler if needed
         let resampler: Option<Arc<Mutex<FftFixedIn<f32>>>> = if needs_resampling {
-            // Use a chunk size suitable for real-time processing
-            let chunk_size = 1024;
-            let r = create_resampler(device_sample_rate, TARGET_SAMPLE_RATE, chunk_size)?;
+            let r = create_resampler(device_sample_rate, TARGET_SAMPLE_RATE, RESAMPLE_CHUNK_SIZE)?;
             Some(Arc::new(Mutex::new(r)))
         } else {
             None
@@ -269,10 +268,9 @@ impl AudioCaptureBackend for CpalBackend {
 
         // Buffer for accumulating samples before resampling
         let resample_buffer: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
-        let chunk_size = 1024usize;
 
         // Pre-allocated chunk buffer to avoid allocations in hot path
-        let chunk_buffer: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(vec![0.0f32; chunk_size]));
+        let chunk_buffer: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(vec![0.0f32; RESAMPLE_CHUNK_SIZE]));
 
         // Create shared callback state - all callbacks use the same processing logic
         let callback_state = Arc::new(CallbackState {
@@ -282,7 +280,7 @@ impl AudioCaptureBackend for CpalBackend {
             resampler,
             resample_buffer,
             chunk_buffer,
-            chunk_size,
+            chunk_size: RESAMPLE_CHUNK_SIZE,
         });
 
         // Build the input stream based on sample format
