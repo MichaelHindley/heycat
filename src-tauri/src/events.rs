@@ -93,6 +93,21 @@ pub trait ListeningEventEmitter: Send + Sync {
     fn emit_listening_unavailable(&self, payload: listening_events::ListeningUnavailablePayload);
 }
 
+/// Dictionary-related event names
+pub mod dictionary_events {
+    pub const DICTIONARY_UPDATED: &str = "dictionary_updated";
+
+    /// Payload for dictionary_updated event
+    #[derive(Debug, Clone, serde::Serialize, PartialEq)]
+    #[serde(rename_all = "camelCase")]
+    pub struct DictionaryUpdatedPayload {
+        /// Type of mutation: "add", "update", or "delete"
+        pub action: String,
+        /// ID of the affected entry (present for all actions)
+        pub entry_id: String,
+    }
+}
+
 /// Model-related event names
 pub mod model_events {
     pub const MODEL_DOWNLOAD_COMPLETED: &str = "model_download_completed";

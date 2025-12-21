@@ -325,6 +325,22 @@ pub fn run() {
             let keyboard_capture = Arc::new(Mutex::new(keyboard_capture::KeyboardCapture::new()));
             app.manage(keyboard_capture);
 
+            // Create and manage dictionary store state for CRUD commands
+            let dictionary_store = {
+                let mut store = match dictionary::DictionaryStore::with_default_path() {
+                    Ok(store) => store,
+                    Err(e) => {
+                        warn!("Failed to initialize dictionary store for commands: {}, using temp path", e);
+                        dictionary::DictionaryStore::new(std::path::PathBuf::new())
+                    }
+                };
+                if let Err(e) = store.load() {
+                    warn!("Failed to load dictionary entries for commands: {}", e);
+                }
+                Mutex::new(store)
+            };
+            app.manage(dictionary_store);
+
             info!("Setup complete! Ready to record.");
             Ok(())
         })
@@ -377,7 +393,11 @@ pub fn run() {
             commands::get_recording_shortcut,
             commands::start_shortcut_recording,
             commands::stop_shortcut_recording,
-            commands::open_accessibility_preferences
+            commands::open_accessibility_preferences,
+            commands::dictionary::list_dictionary_entries,
+            commands::dictionary::add_dictionary_entry,
+            commands::dictionary::update_dictionary_entry,
+            commands::dictionary::delete_dictionary_entry
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

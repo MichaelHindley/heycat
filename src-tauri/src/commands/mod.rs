@@ -3,6 +3,7 @@
 // The actual logic is in logic.rs which is fully tested.
 #![cfg_attr(coverage_nightly, coverage(off))]
 
+pub mod dictionary;
 pub mod logic;
 
 pub use logic::{RecordingInfo, RecordingStateInfo};
