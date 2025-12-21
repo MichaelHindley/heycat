@@ -160,6 +160,35 @@ pub fn run() {
                 app.handle().clone(),
             );
 
+            // Load dictionary entries and create expander for transcription service
+            debug!("Loading dictionary entries...");
+            let dictionary_expander = {
+                let mut store = match dictionary::DictionaryStore::with_default_path() {
+                    Ok(store) => store,
+                    Err(e) => {
+                        warn!("Failed to initialize dictionary store: {}, using empty dictionary", e);
+                        dictionary::DictionaryStore::new(std::path::PathBuf::new())
+                    }
+                };
+                if let Err(e) = store.load() {
+                    warn!("Failed to load dictionary entries: {}, using empty dictionary", e);
+                }
+                let entries: Vec<dictionary::DictionaryEntry> = store.list().into_iter().cloned().collect();
+                if entries.is_empty() {
+                    debug!("No dictionary entries loaded");
+                    None
+                } else {
+                    info!("Loaded {} dictionary entries for expansion", entries.len());
+                    Some(Arc::new(dictionary::DictionaryExpander::new(&entries)))
+                }
+            };
+
+            // Wire up dictionary expander if entries were loaded
+            if let Some(expander) = dictionary_expander {
+                transcription_service = transcription_service.with_dictionary_expander(expander);
+                debug!("Dictionary expander wired to TranscriptionService");
+            }
+
             // Wire up voice command integration to transcription service if available
             if let (Some(ref registry), Some(ref matcher), Some(ref dispatcher)) = (&command_registry, &command_matcher, &action_dispatcher) {
                 let service_command_emitter = Arc::new(commands::TauriEventEmitter::new(app.handle().clone()));

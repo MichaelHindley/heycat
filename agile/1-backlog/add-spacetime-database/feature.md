@@ -1,5 +1,5 @@
 ---
-discovery_phase: persona
+discovery_phase: paths
 ---
 
 # Feature: Add Spacetime Database
@@ -14,10 +14,17 @@ discovery_phase: persona
 
 ## BDD Scenarios
 
-<!-- Run 'agile.ts discover <name>' for guided scenario creation -->
-<!-- Required sections: User Persona, Problem Statement, Gherkin scenarios, Out of Scope, Assumptions -->
+### User Persona
+Developer building the heycat app who needs a robust data persistence and synchronization layer. Technically proficient with the codebase and looking to integrate SpacetimeDB as the foundational data layer.
 
-[No scenarios defined yet - run discovery to complete this section]
+### Problem Statement
+The app currently lacks adequate data persistence and synchronization capabilities. SpacetimeDB will provide:
+- Local data persistence that survives across sessions
+- Real-time sync capabilities for reactive data updates
+- Multi-device synchronization for users across different machines
+- Live multiplayer collaboration features
+
+This is a foundational feature - other features depend on having this data layer in place. The current storage solution is insufficient, and SpacetimeDB enables new collaborative capabilities that weren't previously possible.
 
 ## Acceptance Criteria (High-Level)
 
