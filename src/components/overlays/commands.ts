@@ -98,7 +98,7 @@ export const commands: Command[] = [
     label: "Download Model",
     icon: Download,
     category: "settings",
-    keywords: ["whisper", "transcription", "ml", "ai"],
+    keywords: ["parakeet", "transcription", "ml", "ai"],
   },
 
   // Help

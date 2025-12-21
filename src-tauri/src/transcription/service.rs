@@ -4,6 +4,7 @@
 // This service decouples transcription from HotkeyIntegration, enabling
 // button-initiated recordings and wake word flows to share the same logic.
 
+use crate::dictionary::DictionaryExpander;
 use crate::events::{
     current_timestamp, CommandAmbiguousPayload, CommandCandidate, CommandEventEmitter,
     CommandExecutedPayload, CommandFailedPayload, CommandMatchedPayload,
@@ -95,6 +96,8 @@ where
     app_handle: AppHandle,
     /// Transcription timeout duration
     transcription_timeout: Duration,
+    /// Optional dictionary expander for text expansion
+    dictionary_expander: Option<Arc<DictionaryExpander>>,
 }
 
 impl<T, C> RecordingTranscriptionService<T, C>
@@ -120,6 +123,7 @@ where
             transcription_semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_TRANSCRIPTIONS)),
             app_handle,
             transcription_timeout: Duration::from_secs(DEFAULT_TRANSCRIPTION_TIMEOUT_SECS),
+            dictionary_expander: None,
         }
     }
 
@@ -154,6 +158,12 @@ where
         self
     }
 
+    /// Add dictionary expander for text expansion (builder pattern)
+    pub fn with_dictionary_expander(mut self, expander: Arc<DictionaryExpander>) -> Self {
+        self.dictionary_expander = Some(expander);
+        self
+    }
+
     /// Process a recording file: transcribe → match commands → clipboard fallback
     ///
     /// This is the main entry point for transcription. It:
@@ -183,6 +193,7 @@ where
         let app_handle = self.app_handle.clone();
         let semaphore = self.transcription_semaphore.clone();
         let timeout_duration = self.transcription_timeout;
+        let dictionary_expander = self.dictionary_expander.clone();
 
         crate::info!("Spawning transcription task for: {}", file_path);
 
@@ -274,14 +285,29 @@ where
                 text.len()
             );
 
-            // Try voice command matching if configured
+            // Apply dictionary expansion if configured
+            let expanded_text = if let Some(ref expander) = dictionary_expander {
+                let result = expander.expand(&text);
+                if result != text {
+                    crate::debug!(
+                        "Dictionary expansion applied: '{}' -> '{}'",
+                        text,
+                        result
+                    );
+                }
+                result
+            } else {
+                text
+            };
+
+            // Try voice command matching if configured (using expanded text)
             let command_handled =
-                Self::try_command_matching(&text, &command_registry, &command_matcher, &action_dispatcher, &command_emitter, &transcription_emitter)
+                Self::try_command_matching(&expanded_text, &command_registry, &command_matcher, &action_dispatcher, &command_emitter, &transcription_emitter)
                     .await;
 
-            // Fallback to clipboard if no command was handled
+            // Fallback to clipboard if no command was handled (using expanded text)
             if !command_handled {
-                if let Err(e) = app_handle.clipboard().write_text(&text) {
+                if let Err(e) = app_handle.clipboard().write_text(&expanded_text) {
                     crate::warn!("Failed to copy to clipboard: {}", e);
                 } else {
                     crate::debug!("Transcribed text copied to clipboard");
@@ -293,10 +319,10 @@ where
                 }
             }
 
-            // Always emit transcription_completed (whether command handled or not)
+            // Always emit transcription_completed with expanded text (whether command handled or not)
             crate::info!("Emitting transcription_completed");
             transcription_emitter.emit_transcription_completed(TranscriptionCompletedPayload {
-                text,
+                text: expanded_text,
                 duration_ms,
             });
 
@@ -469,6 +495,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dictionary::DictionaryEntry;
     use crate::events::{
         CommandAmbiguousPayload, CommandExecutedPayload, CommandFailedPayload,
         CommandMatchedPayload, TranscriptionCompletedPayload, TranscriptionErrorPayload,
@@ -550,5 +577,83 @@ mod tests {
             error: "test error".to_string(),
         });
         assert!(emitter.error_called.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_dictionary_expander_integration_with_transcription_flow() {
+        // This test verifies the dictionary expander correctly transforms text
+        // in the same way it would be used in the transcription pipeline.
+        //
+        // The actual process_recording method requires a Tauri runtime,
+        // but we can verify the DictionaryExpander integration pattern here.
+
+        let entries = vec![
+            DictionaryEntry {
+                id: "1".to_string(),
+                trigger: "brb".to_string(),
+                expansion: "be right back".to_string(),
+            },
+            DictionaryEntry {
+                id: "2".to_string(),
+                trigger: "api".to_string(),
+                expansion: "API".to_string(),
+            },
+        ];
+
+        let expander = Arc::new(DictionaryExpander::new(&entries));
+
+        // Simulate transcription text that would come from Parakeet
+        let transcribed_text = "i need to brb and check the api docs";
+
+        // Apply expansion (same pattern as in process_recording)
+        let expanded_text = expander.expand(transcribed_text);
+
+        // Verify expansion was applied correctly
+        assert_eq!(
+            expanded_text,
+            "i need to be right back and check the API docs"
+        );
+
+        // This expanded text would then be:
+        // 1. Passed to command matcher
+        // 2. Copied to clipboard
+        // 3. Included in transcription_completed event payload
+    }
+
+    #[test]
+    fn test_dictionary_expander_graceful_fallback_no_expander() {
+        // When no expander is configured, text should pass through unchanged
+        let dictionary_expander: Option<Arc<DictionaryExpander>> = None;
+
+        let text = "i need to brb and check the api docs";
+
+        // Simulate the expansion logic from process_recording
+        let expanded_text = if let Some(ref expander) = dictionary_expander {
+            expander.expand(text)
+        } else {
+            text.to_string()
+        };
+
+        // Text should be unchanged when no expander is present
+        assert_eq!(expanded_text, text);
+    }
+
+    #[test]
+    fn test_dictionary_expander_graceful_fallback_empty_entries() {
+        // When expander has no entries, text should pass through unchanged
+        let expander = Arc::new(DictionaryExpander::new(&[]));
+        let dictionary_expander: Option<Arc<DictionaryExpander>> = Some(expander);
+
+        let text = "i need to brb and check the api docs";
+
+        // Simulate the expansion logic from process_recording
+        let expanded_text = if let Some(ref exp) = dictionary_expander {
+            exp.expand(text)
+        } else {
+            text.to_string()
+        };
+
+        // Text should be unchanged when expander has no entries
+        assert_eq!(expanded_text, text);
     }
 }
