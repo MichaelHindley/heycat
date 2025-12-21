@@ -11,7 +11,6 @@ use rubato::{FftFixedIn, Resampler};
 
 use super::{AudioBuffer, AudioCaptureBackend, AudioCaptureError, CaptureState, StopReason, MAX_RESAMPLE_BUFFER_SAMPLES, TARGET_SAMPLE_RATE};
 use crate::audio_constants::RESAMPLE_CHUNK_SIZE;
-use crate::{debug, error, info, warn};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
@@ -109,7 +108,7 @@ impl CallbackState {
 
             // Signal stop if resample buffer overflows - data loss is unacceptable
             if resample_buf.len() + f32_samples.len() > MAX_RESAMPLE_BUFFER_SAMPLES {
-                error!("Resample buffer overflow: resampling can't keep up with audio input");
+                crate::error!("Resample buffer overflow: resampling can't keep up with audio input");
                 if !self.signaled.swap(true, Ordering::SeqCst) {
                     if let Some(ref sender) = self.stop_signal {
                         let _ = sender.send(StopReason::ResampleOverflow);
@@ -182,51 +181,51 @@ impl AudioCaptureBackend for CpalBackend {
         stop_signal: Option<Sender<StopReason>>,
         device_name: Option<String>,
     ) -> Result<u32, AudioCaptureError> {
-        info!("Starting audio capture (target: {}Hz)...", TARGET_SAMPLE_RATE);
+        crate::info!("Starting audio capture (target: {}Hz)...", TARGET_SAMPLE_RATE);
 
         // Get the default audio host
         let host = cpal::default_host();
-        debug!("Host: {:?}", host.id());
+        crate::debug!("Host: {:?}", host.id());
 
         // Find the requested device or fall back to default
         let device = if let Some(ref name) = device_name {
             match find_device_by_name(name) {
                 Some(d) => {
-                    info!("Using requested device: {}", name);
+                    crate::info!("Using requested device: {}", name);
                     d
                 }
                 None => {
-                    warn!(
+                    crate::warn!(
                         "Requested device '{}' not found, falling back to default",
                         name
                     );
                     host.default_input_device().ok_or_else(|| {
-                        error!("No input device available!");
+                        crate::error!("No input device available!");
                         AudioCaptureError::NoDeviceAvailable
                     })?
                 }
             }
         } else {
             host.default_input_device().ok_or_else(|| {
-                error!("No input device available!");
+                crate::error!("No input device available!");
                 AudioCaptureError::NoDeviceAvailable
             })?
         };
-        debug!(
+        crate::debug!(
             "Input device: {:?}",
             device.name().unwrap_or_else(|_| "Unknown".to_string())
         );
 
         // Try to get a config with 16kHz sample rate, fall back to default
         let (config, needs_resampling) = if let Some(config_16k) = find_config_with_sample_rate(&device, TARGET_SAMPLE_RATE) {
-            info!("Device supports {}Hz natively", TARGET_SAMPLE_RATE);
+            crate::info!("Device supports {}Hz natively", TARGET_SAMPLE_RATE);
             (config_16k, false)
         } else {
             let default_config = device.default_input_config().map_err(|e| {
-                error!("Failed to get input config: {}", e);
+                crate::error!("Failed to get input config: {}", e);
                 AudioCaptureError::DeviceError(e.to_string())
             })?;
-            warn!(
+            crate::warn!(
                 "Device doesn't support {}Hz, will resample from {}Hz",
                 TARGET_SAMPLE_RATE,
                 default_config.sample_rate().0
@@ -235,7 +234,7 @@ impl AudioCaptureBackend for CpalBackend {
         };
 
         let device_sample_rate = config.sample_rate().0;
-        debug!(
+        crate::debug!(
             "Config: {} Hz, {:?}, {} channels",
             device_sample_rate,
             config.sample_format(),
@@ -257,7 +256,7 @@ impl AudioCaptureBackend for CpalBackend {
         let err_signal = stop_signal.clone();
         let err_signaled = signaled.clone();
         let err_fn = move |err: cpal::StreamError| {
-            error!("Audio stream error: {}", err);
+            crate::error!("Audio stream error: {}", err);
             // Signal stop so recording doesn't continue with garbage data
             if !err_signaled.swap(true, Ordering::SeqCst) {
                 if let Some(ref sender) = err_signal {
@@ -331,17 +330,17 @@ impl AudioCaptureBackend for CpalBackend {
             }
         }
         .map_err(|e| {
-            error!("Failed to build input stream: {}", e);
+            crate::error!("Failed to build input stream: {}", e);
             AudioCaptureError::StreamError(e.to_string())
         })?;
 
         // Start the stream
         stream.play().map_err(|e| {
-            error!("Failed to start stream: {}", e);
+            crate::error!("Failed to start stream: {}", e);
             AudioCaptureError::StreamError(e.to_string())
         })?;
 
-        info!("Audio stream started successfully at {}Hz (output: {}Hz)", device_sample_rate, TARGET_SAMPLE_RATE);
+        crate::info!("Audio stream started successfully at {}Hz (output: {}Hz)", device_sample_rate, TARGET_SAMPLE_RATE);
         self.stream = Some(stream);
         self.state = CaptureState::Capturing;
         // Always return TARGET_SAMPLE_RATE since we resample if needed
@@ -349,13 +348,13 @@ impl AudioCaptureBackend for CpalBackend {
     }
 
     fn stop(&mut self) -> Result<(), AudioCaptureError> {
-        debug!("Stopping audio capture...");
+        crate::debug!("Stopping audio capture...");
         if let Some(stream) = self.stream.take() {
             // Stream will be dropped here, stopping capture
             drop(stream);
-            debug!("Audio stream stopped");
+            crate::debug!("Audio stream stopped");
         } else {
-            debug!("No active stream to stop");
+            crate::debug!("No active stream to stop");
         }
         self.state = CaptureState::Stopped;
         Ok(())

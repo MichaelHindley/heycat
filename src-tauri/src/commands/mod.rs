@@ -26,7 +26,6 @@ use crate::events::{
 use crate::audio::{AudioDeviceError, AudioInputDevice, AudioThreadHandle, StopReason};
 use crate::parakeet::SharedTranscriptionModel;
 use crate::recording::{AudioData, RecordingManager, RecordingMetadata, RecordingState};
-use crate::warn;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -35,7 +34,7 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 macro_rules! emit_or_warn {
     ($handle:expr, $event:expr, $payload:expr) => {
         if let Err(e) = $handle.emit($event, $payload) {
-            warn!("Failed to emit event '{}': {}", $event, e);
+            crate::warn!("Failed to emit event '{}': {}", $event, e);
         }
     };
 }
@@ -193,7 +192,7 @@ pub fn start_recording(
         match crate::model::check_model_exists_for_type(crate::model::ModelType::ParakeetTDT) {
             Ok(available) => available,
             Err(e) => {
-                warn!("Failed to check model status: {}", e);
+                crate::warn!("Failed to check model status: {}", e);
                 false
             }
         };
@@ -340,7 +339,7 @@ pub async fn transcribe_file(
         Ok(text) => {
             // Copy to clipboard
             if let Err(e) = app_handle.clipboard().write_text(&text) {
-                warn!("Failed to copy transcription to clipboard: {}", e);
+                crate::warn!("Failed to copy transcription to clipboard: {}", e);
             }
 
             // Emit transcription completed event

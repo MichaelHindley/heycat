@@ -1,6 +1,5 @@
 // Voice command registry - stores and persists command definitions
 
-use crate::{debug, info};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -99,10 +98,10 @@ impl CommandRegistry {
 
     /// Load commands from the persistence file
     pub fn load(&mut self) -> Result<(), RegistryError> {
-        debug!("Loading commands from {:?}", self.config_path);
+        crate::debug!("Loading commands from {:?}", self.config_path);
 
         if !self.config_path.exists() {
-            debug!("No commands file found, starting with empty registry");
+            crate::debug!("No commands file found, starting with empty registry");
             return Ok(());
         }
 
@@ -117,13 +116,13 @@ impl CommandRegistry {
             self.commands.insert(cmd.id, cmd);
         }
 
-        info!("Loaded {} commands from registry", self.commands.len());
+        crate::info!("Loaded {} commands from registry", self.commands.len());
         Ok(())
     }
 
     /// Persist commands to the file using atomic write (temp file + rename)
     fn persist(&self) -> Result<(), RegistryError> {
-        debug!("Persisting {} commands to {:?}", self.commands.len(), self.config_path);
+        crate::debug!("Persisting {} commands to {:?}", self.commands.len(), self.config_path);
 
         // Ensure parent directory exists
         if let Some(parent) = self.config_path.parent() {
@@ -156,7 +155,7 @@ impl CommandRegistry {
                 RegistryError::PersistenceError(format!("Failed to rename: {}", e))
             })?;
 
-        debug!("Commands persisted successfully");
+        crate::debug!("Commands persisted successfully");
         Ok(())
     }
 

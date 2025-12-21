@@ -328,6 +328,26 @@ src-tauri/src/
 
 > **Pattern:** The `commands/` module uses `mod.rs` + `logic.rs` to separate Tauri-specific wrappers from testable implementation logic.
 
+### Logging Convention
+
+All Rust modules use the `crate::` prefix pattern for log macros:
+
+```rust
+// In any module file (not lib.rs):
+crate::info!("Recording started at {}Hz", sample_rate);
+crate::debug!("Current state: {:?}", state);
+crate::warn!("Device not found, using default");
+crate::error!("Failed to start recording: {}", e);
+```
+
+**Why this pattern:**
+- No imports needed in each file
+- Explicit about macro source
+- Consistent across all modules
+- Macros are re-exported in `lib.rs` from `tauri_plugin_log`
+
+**Note:** The `lib.rs` file (crate root) uses macros directly without `crate::` prefix since they are defined/re-exported there.
+
 ---
 
 ## 7. Checklist for New Features

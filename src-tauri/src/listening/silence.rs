@@ -6,7 +6,6 @@ use crate::audio_constants::{
     DEFAULT_SAMPLE_RATE, NO_SPEECH_TIMEOUT_MS, PAUSE_TOLERANCE_MS, SILENCE_DURATION_MS,
     SILENCE_MIN_SPEECH_FRAMES, VAD_CHUNK_SIZE_16KHZ, VAD_THRESHOLD_SILENCE,
 };
-use crate::{debug, info, trace};
 use std::time::Instant;
 use voice_activity_detector::VoiceActivityDetector;
 
@@ -93,9 +92,9 @@ impl SilenceDetector {
         let vad = create_vad(&vad_config).ok();
 
         if vad.is_some() {
-            debug!("[silence] VAD initialized (threshold={})", config.vad_speech_threshold);
+            crate::debug!("[silence] VAD initialized (threshold={})", config.vad_speech_threshold);
         } else {
-            debug!("[silence] VAD initialization failed, speech detection will be disabled");
+            crate::debug!("[silence] VAD initialization failed, speech detection will be disabled");
         }
 
         Self {
@@ -109,7 +108,7 @@ impl SilenceDetector {
 
     /// Reset the detector state for a new recording session
     pub fn reset(&mut self) {
-        debug!("[silence] Detector reset for new recording session");
+        crate::debug!("[silence] Detector reset for new recording session");
         self.has_detected_speech = false;
         self.silence_start = None;
         self.recording_start = Instant::now();
@@ -143,7 +142,7 @@ impl SilenceDetector {
         let vad = match &mut self.vad {
             Some(v) => v,
             None => {
-                trace!("[silence] VAD not available, assuming no speech");
+                crate::trace!("[silence] VAD not available, assuming no speech");
                 return false;
             }
         };
@@ -162,7 +161,7 @@ impl SilenceDetector {
             }
         }
 
-        trace!("[silence] VAD max_probability={:.3}, threshold={}", max_probability, self.config.vad_speech_threshold);
+        crate::trace!("[silence] VAD max_probability={:.3}, threshold={}", max_probability, self.config.vad_speech_threshold);
         false
     }
 
@@ -181,7 +180,7 @@ impl SilenceDetector {
             // Audio is silent (no speech detected by VAD)
             if self.silence_start.is_none() {
                 // Start tracking silence period
-                debug!("[silence] Silence period started (VAD)");
+                crate::debug!("[silence] Silence period started (VAD)");
                 self.silence_start = Some(now);
             }
 
@@ -190,13 +189,13 @@ impl SilenceDetector {
             if !self.has_detected_speech {
                 // No speech yet - check for no-speech timeout
                 let total_elapsed = self.recording_start.elapsed();
-                trace!(
+                crate::trace!(
                     "[silence] No speech yet, elapsed={:?}, timeout={}ms",
                     total_elapsed,
                     self.config.no_speech_timeout_ms
                 );
                 if total_elapsed.as_millis() >= self.config.no_speech_timeout_ms as u128 {
-                    info!(
+                    crate::info!(
                         "[silence] NO_SPEECH_TIMEOUT triggered after {:?}",
                         total_elapsed
                     );
@@ -204,13 +203,13 @@ impl SilenceDetector {
                 }
             } else {
                 // Had speech - check for silence after speech (ignoring brief pauses)
-                trace!(
+                crate::trace!(
                     "[silence] Silence after speech, duration={:?}, threshold={}ms",
                     silence_duration,
                     self.config.silence_duration_ms
                 );
                 if silence_duration.as_millis() >= self.config.silence_duration_ms as u128 {
-                    info!(
+                    crate::info!(
                         "[silence] SILENCE_AFTER_SPEECH triggered after {:?} of silence",
                         silence_duration
                     );
@@ -220,10 +219,10 @@ impl SilenceDetector {
         } else {
             // Speech detected by VAD
             if !self.has_detected_speech {
-                debug!("[silence] First speech detected via VAD!");
+                crate::debug!("[silence] First speech detected via VAD!");
             }
             if self.silence_start.is_some() {
-                debug!("[silence] Speech resumed after silence");
+                crate::debug!("[silence] Speech resumed after silence");
             }
             self.has_detected_speech = true;
             self.silence_start = None;

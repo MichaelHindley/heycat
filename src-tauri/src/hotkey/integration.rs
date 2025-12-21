@@ -20,7 +20,6 @@ use crate::voice_commands::executor::ActionDispatcher;
 use crate::voice_commands::matcher::{CommandMatcher, MatchResult};
 use crate::voice_commands::registry::CommandRegistry;
 use crate::parakeet::{SharedTranscriptionModel, TranscriptionService};
-use crate::{debug, error, info, trace, warn};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -183,7 +182,7 @@ async fn execute_transcription_task<T: TranscriptionEventEmitter>(
         if let Some(ref state) = recording_state {
             if let Ok(mut manager) = state.lock() {
                 manager.clear_last_recording();
-                debug!("Cleared recording buffer");
+                crate::debug!("Cleared recording buffer");
             }
         }
     };
@@ -192,7 +191,7 @@ async fn execute_transcription_task<T: TranscriptionEventEmitter>(
     let _permit = match semaphore.try_acquire() {
         Ok(permit) => permit,
         Err(_) => {
-            warn!("Too many concurrent transcriptions, skipping this one");
+            crate::warn!("Too many concurrent transcriptions, skipping this one");
             transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
                 error: "Too many transcriptions in progress. Please wait and try again."
                     .to_string(),
@@ -208,7 +207,7 @@ async fn execute_transcription_task<T: TranscriptionEventEmitter>(
         timestamp: current_timestamp(),
     });
 
-    debug!("Transcribing file: {}", file_path);
+    crate::debug!("Transcribing file: {}", file_path);
 
     // Perform transcription on blocking thread pool (CPU-intensive) with timeout
     let transcriber = shared_model.clone();
@@ -220,29 +219,29 @@ async fn execute_transcription_task<T: TranscriptionEventEmitter>(
     let text = match transcription_result {
         Ok(Ok(Ok(text))) => text,
         Ok(Ok(Err(e))) => {
-            error!("Transcription failed: {}", e);
+            crate::error!("Transcription failed: {}", e);
             transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
                 error: e.to_string(),
             });
             if let Err(reset_err) = shared_model.reset_to_idle() {
-                warn!("Failed to reset transcription state: {}", reset_err);
+                crate::warn!("Failed to reset transcription state: {}", reset_err);
             }
             clear_recording_buffer();
             return Err(());
         }
         Ok(Err(e)) => {
-            error!("Transcription task panicked: {}", e);
+            crate::error!("Transcription task panicked: {}", e);
             transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
                 error: "Internal transcription error.".to_string(),
             });
             if let Err(reset_err) = shared_model.reset_to_idle() {
-                warn!("Failed to reset transcription state: {}", reset_err);
+                crate::warn!("Failed to reset transcription state: {}", reset_err);
             }
             clear_recording_buffer();
             return Err(());
         }
         Err(_) => {
-            error!("Transcription timed out after {:?}", timeout_duration);
+            crate::error!("Transcription timed out after {:?}", timeout_duration);
             transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
                 error: format!(
                     "Transcription timed out after {} seconds. The audio may be too long or the model may be stuck.",
@@ -250,7 +249,7 @@ async fn execute_transcription_task<T: TranscriptionEventEmitter>(
                 ),
             });
             if let Err(reset_err) = shared_model.reset_to_idle() {
-                warn!("Failed to reset transcription state: {}", reset_err);
+                crate::warn!("Failed to reset transcription state: {}", reset_err);
             }
             clear_recording_buffer();
             return Err(());
@@ -258,7 +257,7 @@ async fn execute_transcription_task<T: TranscriptionEventEmitter>(
     };
 
     let duration_ms = start_time.elapsed().as_millis() as u64;
-    info!(
+    crate::info!(
         "Transcription completed in {}ms: {} chars",
         duration_ms,
         text.len()
@@ -272,17 +271,17 @@ async fn execute_transcription_task<T: TranscriptionEventEmitter>(
 fn copy_and_paste(app_handle: &Option<AppHandle>, text: &str) {
     if let Some(ref handle) = app_handle {
         if let Err(e) = handle.clipboard().write_text(text) {
-            warn!("Failed to copy to clipboard: {}", e);
+            crate::warn!("Failed to copy to clipboard: {}", e);
         } else {
-            debug!("Transcribed text copied to clipboard");
+            crate::debug!("Transcribed text copied to clipboard");
             if let Err(e) = simulate_paste() {
-                warn!("Failed to auto-paste: {}", e);
+                crate::warn!("Failed to auto-paste: {}", e);
             } else {
-                debug!("Auto-pasted transcribed text");
+                crate::debug!("Auto-pasted transcribed text");
             }
         }
     } else {
-        warn!("Clipboard unavailable: no app handle configured");
+        crate::warn!("Clipboard unavailable: no app handle configured");
     }
 }
 
@@ -726,7 +725,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         // Check debounce
         if let Some(last) = self.last_toggle_time {
             if now.duration_since(last) < self.debounce_duration {
-                trace!("Toggle debounced");
+                crate::trace!("Toggle debounced");
                 return false;
             }
         }
@@ -737,7 +736,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         let current_state = match state.lock() {
             Ok(guard) => guard.get_state(),
             Err(e) => {
-                error!("Failed to acquire lock: {}", e);
+                crate::error!("Failed to acquire lock: {}", e);
                 self.recording_emitter.emit_recording_error(RecordingErrorPayload {
                     message: "Internal error: state lock poisoned".to_string(),
                 });
@@ -745,11 +744,11 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             }
         };
 
-        debug!("Toggle received, current state: {:?}", current_state);
+        crate::debug!("Toggle received, current state: {:?}", current_state);
 
         match current_state {
             RecordingState::Idle | RecordingState::Listening => {
-                info!("Starting recording from {:?} state...", current_state);
+                crate::info!("Starting recording from {:?} state...", current_state);
 
                 // If coming from Listening state, stop the pipeline first to prevent zombie
                 // (analysis thread running with orphaned audio buffer)
@@ -769,7 +768,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                             .emit_recording_started(RecordingStartedPayload {
                                 timestamp: current_timestamp(),
                             });
-                        info!("Recording started, emitted recording_started event");
+                        crate::info!("Recording started, emitted recording_started event");
 
                         // Register Escape key listener for cancel functionality
                         self.register_escape_listener();
@@ -780,7 +779,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                         true
                     }
                     Err(e) => {
-                        error!("Failed to start recording: {}", e);
+                        crate::error!("Failed to start recording: {}", e);
                         self.recording_emitter.emit_recording_error(RecordingErrorPayload {
                             message: e,
                         });
@@ -789,7 +788,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                 }
             }
             RecordingState::Recording => {
-                info!("Stopping recording (manual stop via hotkey)...");
+                crate::info!("Stopping recording (manual stop via hotkey)...");
 
                 // Unregister Escape key listener first
                 self.unregister_escape_listener();
@@ -809,7 +808,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                 // Use unified command implementation
                 match stop_recording_impl(state, self.audio_thread.as_deref(), return_to_listening) {
                     Ok(metadata) => {
-                        info!(
+                        crate::info!(
                             "Recording stopped: {} samples, {:.2}s duration",
                             metadata.sample_count, metadata.duration_secs
                         );
@@ -817,7 +816,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                         let file_path_for_transcription = metadata.file_path.clone();
                         self.recording_emitter
                             .emit_recording_stopped(RecordingStoppedPayload { metadata });
-                        debug!("Emitted recording_stopped event");
+                        crate::debug!("Emitted recording_stopped event");
 
                         // Auto-transcribe if transcription manager is configured
                         self.spawn_transcription(file_path_for_transcription);
@@ -830,7 +829,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                         true
                     }
                     Err(e) => {
-                        error!("Failed to stop recording: {}", e);
+                        crate::error!("Failed to stop recording: {}", e);
                         self.recording_emitter.emit_recording_error(RecordingErrorPayload {
                             message: e,
                         });
@@ -840,7 +839,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             }
             RecordingState::Processing => {
                 // In Processing state - ignore toggle (busy)
-                debug!("Toggle ignored - already processing");
+                crate::debug!("Toggle ignored - already processing");
                 false
             }
         }
@@ -864,7 +863,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         // This enables HotkeyIntegration to use TranscriptionService without duplication
         if let Some(ref config) = self.transcription {
             if let Some(ref callback) = config.callback {
-                info!("Delegating transcription to external service for: {}", file_path);
+                crate::info!("Delegating transcription to external service for: {}", file_path);
                 callback(file_path);
                 return;
             }
@@ -875,7 +874,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         let transcription_config = match &self.transcription {
             Some(c) => c,
             None => {
-                debug!("Transcription skipped: no transcription config");
+                crate::debug!("Transcription skipped: no transcription config");
                 return;
             }
         };
@@ -883,7 +882,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         let shared_model = match &transcription_config.shared_model {
             Some(m) => m.clone(),
             None => {
-                debug!("Transcription skipped: no shared transcription model configured");
+                crate::debug!("Transcription skipped: no shared transcription model configured");
                 return;
             }
         };
@@ -891,14 +890,14 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         let transcription_emitter = match &transcription_config.emitter {
             Some(te) => te.clone(),
             None => {
-                debug!("Transcription skipped: no transcription emitter configured");
+                crate::debug!("Transcription skipped: no transcription emitter configured");
                 return;
             }
         };
 
         // Check if model is loaded
         if !shared_model.is_loaded() {
-            info!("Transcription skipped: transcription model not loaded");
+            crate::info!("Transcription skipped: transcription model not loaded");
             return;
         }
 
@@ -925,7 +924,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         let semaphore = transcription_config.semaphore.clone();
         let timeout_duration = transcription_config.timeout;
 
-        info!("Spawning transcription task...");
+        crate::info!("Spawning transcription task...");
 
         // Spawn async task using Tauri's async runtime
         tauri::async_runtime::spawn(async move {
@@ -946,9 +945,9 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                 Err(()) => return, // Error already emitted and buffer cleared by helper
             };
 
-            info!("=== spawn_transcription received text ===");
-            info!("text content: {:?}", text);
-            info!("=== end spawn_transcription text ===");
+            crate::info!("=== spawn_transcription received text ===");
+            crate::info!("text content: {:?}", text);
+            crate::info!("=== end spawn_transcription text ===");
 
             // Try voice command matching if configured
             // Note: We extract all data from the lock before any await to ensure Send safety
@@ -967,7 +966,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                 if let Some(ref state) = recording_state {
                     if let Ok(mut manager) = state.lock() {
                         manager.clear_last_recording();
-                        debug!("Cleared recording buffer");
+                        crate::debug!("Cleared recording buffer");
                     }
                 }
             };
@@ -980,7 +979,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                     let registry_guard = match registry.lock() {
                         Ok(g) => g,
                         Err(_) => {
-                            error!("Failed to lock command registry - lock poisoned");
+                            crate::error!("Failed to lock command registry - lock poisoned");
                             // Emit error event so UI doesn't hang waiting
                             transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
                                 error: "Internal error: command registry unavailable. Please restart the application.".to_string(),
@@ -1031,7 +1030,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
 
                 match outcome {
                     MatchOutcome::Matched { cmd, trigger, confidence } => {
-                        info!("Command matched: {} (confidence: {:.2})", trigger, confidence);
+                        crate::info!("Command matched: {} (confidence: {:.2})", trigger, confidence);
 
                         // Emit command_matched event
                         emitter.emit_command_matched(CommandMatchedPayload {
@@ -1044,7 +1043,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                         // Execute command directly using await (no new runtime needed!)
                         match dispatcher.execute(&cmd).await {
                             Ok(action_result) => {
-                                info!("Command executed: {}", action_result.message);
+                                crate::info!("Command executed: {}", action_result.message);
                                 emitter.emit_command_executed(CommandExecutedPayload {
                                     command_id: cmd.id.to_string(),
                                     trigger: trigger.clone(),
@@ -1052,7 +1051,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                                 });
                             }
                             Err(action_error) => {
-                                error!("Command execution failed: {}", action_error);
+                                crate::error!("Command execution failed: {}", action_error);
                                 emitter.emit_command_failed(CommandFailedPayload {
                                     command_id: cmd.id.to_string(),
                                     trigger: trigger.clone(),
@@ -1064,7 +1063,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                         true // Command was handled
                     }
                     MatchOutcome::Ambiguous { candidates } => {
-                        info!("Ambiguous match: {} candidates", candidates.len());
+                        crate::info!("Ambiguous match: {} candidates", candidates.len());
 
                         // Emit command_ambiguous event for disambiguation UI
                         emitter.emit_command_ambiguous(CommandAmbiguousPayload {
@@ -1074,12 +1073,12 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                         true // Command matching was handled (ambiguous)
                     }
                     MatchOutcome::NoMatch => {
-                        debug!("No command match for: {}", text);
+                        crate::debug!("No command match for: {}", text);
                         false // Fall through to clipboard
                     }
                 }
             } else {
-                debug!("Voice commands not configured, skipping command matching");
+                crate::debug!("Voice commands not configured, skipping command matching");
                 false
             };
 
@@ -1090,9 +1089,9 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
 
             // Always emit transcription_completed (whether command handled or not)
             // This ensures the frontend clears the "Transcribing..." state
-            info!("=== Emitting transcription_completed ===");
-            info!("text to emit: {:?}", text);
-            info!("=== end emit ===");
+            crate::info!("=== Emitting transcription_completed ===");
+            crate::info!("text to emit: {:?}", text);
+            crate::info!("=== end emit ===");
             transcription_emitter.emit_transcription_completed(TranscriptionCompletedPayload {
                 text,
                 duration_ms,
@@ -1100,7 +1099,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
 
             // Reset transcription state to idle
             if let Err(e) = shared_model.reset_to_idle() {
-                warn!("Failed to reset transcription state: {}", e);
+                crate::warn!("Failed to reset transcription state: {}", e);
             }
 
             // Clear recording buffer to free memory
@@ -1125,11 +1124,11 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
 
         if let Ok(mut p) = pipeline.lock() {
             if p.is_running() {
-                info!("Stopping listening pipeline before hotkey recording...");
+                crate::info!("Stopping listening pipeline before hotkey recording...");
                 // Note: We don't need the buffer since hotkey recording
                 // creates its own fresh buffer (unlike wake word which hands off)
                 if let Err(e) = p.stop(audio_thread.as_ref()) {
-                    warn!("Failed to stop listening pipeline: {:?}", e);
+                    crate::warn!("Failed to stop listening pipeline: {:?}", e);
                     // Continue anyway - recording should still work
                 }
             }
@@ -1142,7 +1141,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         let pipeline = match &self.listening_pipeline {
             Some(p) => p,
             None => {
-                debug!("No listening pipeline configured, skipping restart");
+                crate::debug!("No listening pipeline configured, skipping restart");
                 return;
             }
         };
@@ -1150,7 +1149,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         let audio_thread = match &self.audio_thread {
             Some(at) => at,
             None => {
-                debug!("No audio thread configured, cannot restart pipeline");
+                crate::debug!("No audio thread configured, cannot restart pipeline");
                 return;
             }
         };
@@ -1159,12 +1158,12 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             Some(ref config) => match &config.emitter {
                 Some(e) => e.clone(),
                 None => {
-                    debug!("No transcription emitter configured, cannot restart pipeline");
+                    crate::debug!("No transcription emitter configured, cannot restart pipeline");
                     return;
                 }
             },
             None => {
-                debug!("No transcription config, cannot restart pipeline");
+                crate::debug!("No transcription config, cannot restart pipeline");
                 return;
             }
         };
@@ -1172,7 +1171,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         let mut p = match pipeline.lock() {
             Ok(guard) => guard,
             Err(_) => {
-                warn!("Failed to lock listening pipeline for restart");
+                crate::warn!("Failed to lock listening pipeline for restart");
                 return;
             }
         };
@@ -1180,12 +1179,12 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         // Stop if still running (shouldn't happen since we now stop before recording,
         // but keep for safety in case of race conditions or other code paths)
         if p.is_running() {
-            info!("Pipeline still running unexpectedly, stopping before restart...");
+            crate::info!("Pipeline still running unexpectedly, stopping before restart...");
             match p.stop(audio_thread.as_ref()) {
-                Ok(()) => debug!("Pipeline stopped successfully"),
+                Ok(()) => crate::debug!("Pipeline stopped successfully"),
                 Err(e) => {
                     // NotRunning error is fine - thread may have exited naturally
-                    warn!("Error stopping pipeline: {:?}", e);
+                    crate::warn!("Error stopping pipeline: {:?}", e);
                 }
             }
         }
@@ -1199,20 +1198,20 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         let mut p = match pipeline.lock() {
             Ok(guard) => guard,
             Err(_) => {
-                warn!("Failed to re-lock listening pipeline for restart");
+                crate::warn!("Failed to re-lock listening pipeline for restart");
                 return;
             }
         };
 
-        info!("Restarting listening pipeline after hotkey recording");
+        crate::info!("Restarting listening pipeline after hotkey recording");
         match p.start(audio_thread.as_ref(), emitter) {
-            Ok(_) => info!("Listening pipeline restarted successfully"),
+            Ok(_) => crate::info!("Listening pipeline restarted successfully"),
             Err(crate::listening::PipelineError::AlreadyRunning) => {
                 // Should not happen after stop, but handle gracefully
-                warn!("Pipeline reported AlreadyRunning after stop - unexpected state");
+                crate::warn!("Pipeline reported AlreadyRunning after stop - unexpected state");
             }
             Err(e) => {
-                warn!("Failed to restart listening pipeline: {:?}", e);
+                crate::warn!("Failed to restart listening pipeline: {:?}", e);
             }
         }
     }
@@ -1228,7 +1227,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
     fn start_silence_detection(&self, recording_state: &Mutex<RecordingManager>) {
         // Check if silence detection is enabled (from silence config)
         if !self.silence.enabled {
-            debug!("Silence detection disabled for hotkey recordings");
+            crate::debug!("Silence detection disabled for hotkey recordings");
             return;
         }
 
@@ -1236,7 +1235,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         let detectors = match &self.recording_detectors {
             Some(d) => d.clone(),
             None => {
-                debug!("Recording detectors not configured, skipping silence detection");
+                crate::debug!("Recording detectors not configured, skipping silence detection");
                 return;
             }
         };
@@ -1244,7 +1243,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         let audio_thread = match &self.audio_thread {
             Some(at) => at.clone(),
             None => {
-                debug!("No audio thread configured, cannot start silence detection");
+                crate::debug!("No audio thread configured, cannot start silence detection");
                 return;
             }
         };
@@ -1253,12 +1252,12 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         let transcription_config = match &self.transcription {
             Some(c) => c,
             None => {
-                debug!("No transcription config, cannot start silence detection");
+                crate::debug!("No transcription config, cannot start silence detection");
                 return;
             }
         };
         if transcription_config.emitter.is_none() {
-            debug!("No transcription emitter configured, cannot start silence detection");
+            crate::debug!("No transcription emitter configured, cannot start silence detection");
             return;
         }
 
@@ -1267,7 +1266,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             let manager = match recording_state.lock() {
                 Ok(m) => m,
                 Err(_) => {
-                    warn!("Failed to lock recording state for silence detection");
+                    crate::warn!("Failed to lock recording state for silence detection");
                     return;
                 }
             };
@@ -1275,7 +1274,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             match manager.get_audio_buffer() {
                 Ok(buf) => buf.clone(),
                 Err(_) => {
-                    warn!("No audio buffer available for silence detection");
+                    crate::warn!("No audio buffer available for silence detection");
                     return;
                 }
             }
@@ -1314,7 +1313,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                     };
 
                     if !shared_model.is_loaded() {
-                        info!("Transcription skipped: model not loaded");
+                        crate::info!("Transcription skipped: model not loaded");
                         return;
                     }
 
@@ -1323,7 +1322,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                     let app_handle = app_handle_for_callback.clone();
                     let recording_state = recording_state_for_callback.clone();
 
-                    info!("[silence_detection] Spawning transcription task for: {}", file_path);
+                    crate::info!("[silence_detection] Spawning transcription task for: {}", file_path);
 
                     tauri::async_runtime::spawn(async move {
                         // Execute transcription using shared helper
@@ -1360,7 +1359,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                         if let Some(ref state) = recording_state {
                             if let Ok(mut manager) = state.lock() {
                                 manager.clear_last_recording();
-                                debug!("Cleared recording buffer");
+                                crate::debug!("Cleared recording buffer");
                             }
                         }
                     });
@@ -1373,7 +1372,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         let mut det = match detectors.lock() {
             Ok(d) => d,
             Err(_) => {
-                warn!("Failed to lock recording detectors");
+                crate::warn!("Failed to lock recording detectors");
                 return;
             }
         };
@@ -1382,7 +1381,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         let recording_state_arc = match &self.recording_state {
             Some(rs) => rs.clone(),
             None => {
-                warn!("No recording state configured, cannot start silence detection");
+                crate::warn!("No recording state configured, cannot start silence detection");
                 return;
             }
         };
@@ -1394,12 +1393,12 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         let recording_emitter_for_detectors = match &self.app_handle {
             Some(handle) => Arc::new(crate::commands::TauriEventEmitter::new(handle.clone())),
             None => {
-                warn!("No app handle configured, cannot create emitter for silence detection");
+                crate::warn!("No app handle configured, cannot create emitter for silence detection");
                 return;
             }
         };
 
-        info!("[silence_detection] Starting monitoring for hotkey recording");
+        crate::info!("[silence_detection] Starting monitoring for hotkey recording");
         if let Err(e) = det.start_monitoring(
             buffer,
             recording_state_arc,
@@ -1409,9 +1408,9 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             self.listening_pipeline.clone(),
             transcription_callback,
         ) {
-            warn!("Failed to start silence detection: {}", e);
+            crate::warn!("Failed to start silence detection: {}", e);
         } else {
-            info!("[silence_detection] Monitoring started successfully");
+            crate::info!("[silence_detection] Monitoring started successfully");
         }
     }
 
@@ -1428,7 +1427,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
 
         if let Ok(mut det) = detectors.lock() {
             if det.is_running() {
-                info!("[silence_detection] Stopping monitoring (manual stop)");
+                crate::info!("[silence_detection] Stopping monitoring (manual stop)");
                 det.stop_monitoring();
             }
         }
@@ -1450,7 +1449,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
     fn register_escape_listener(&mut self) {
         // Skip if already registered or not configured
         if self.escape_registered.load(Ordering::SeqCst) {
-            debug!("Escape listener already registered, skipping");
+            crate::debug!("Escape listener already registered, skipping");
             return;
         }
 
@@ -1458,7 +1457,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         let escape_config = match &self.escape {
             Some(c) => c,
             None => {
-                debug!("No escape config, skipping Escape registration");
+                crate::debug!("No escape config, skipping Escape registration");
                 return;
             }
         };
@@ -1468,7 +1467,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         let callback = match &escape_config.callback {
             Some(c) => c.clone(),
             None => {
-                debug!("No escape callback configured, skipping Escape registration");
+                crate::debug!("No escape callback configured, skipping Escape registration");
                 return;
             }
         };
@@ -1489,18 +1488,18 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             match backend.register(super::ESCAPE_SHORTCUT, Box::new(move || {
                 if let Ok(mut det) = detector.lock() {
                     if det.on_tap() {
-                        debug!("Double-tap Escape detected, cancel triggered");
+                        crate::debug!("Double-tap Escape detected, cancel triggered");
                     } else {
-                        trace!("Single Escape tap recorded, waiting for double-tap");
+                        crate::trace!("Single Escape tap recorded, waiting for double-tap");
                     }
                 }
             })) {
                 Ok(()) => {
                     self.escape_registered.store(true, Ordering::SeqCst);
-                    info!("Escape key listener registered for recording cancel (double-tap required)");
+                    crate::info!("Escape key listener registered for recording cancel (double-tap required)");
                 }
                 Err(e) => {
-                    warn!("Failed to register Escape key listener: {}", e);
+                    crate::warn!("Failed to register Escape key listener: {}", e);
                     self.double_tap_detector = None;
                 }
             }
@@ -1521,19 +1520,19 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                 match backend.register(super::ESCAPE_SHORTCUT, Box::new(move || {
                     if let Ok(mut det) = detector.lock() {
                         if det.on_tap() {
-                            debug!("Double-tap Escape detected, cancel triggered");
+                            crate::debug!("Double-tap Escape detected, cancel triggered");
                         } else {
-                            trace!("Single Escape tap recorded, waiting for double-tap");
+                            crate::trace!("Single Escape tap recorded, waiting for double-tap");
                         }
                     }
                 })) {
                     Ok(()) => {
                         // Only set escape_registered to true AFTER successful registration
                         escape_registered.store(true, Ordering::SeqCst);
-                        info!("Escape key listener registered for recording cancel (double-tap required)");
+                        crate::info!("Escape key listener registered for recording cancel (double-tap required)");
                     }
                     Err(e) => {
-                        warn!("Failed to register Escape key listener: {}", e);
+                        crate::warn!("Failed to register Escape key listener: {}", e);
                         // escape_registered remains false, so unregister won't attempt cleanup
                     }
                 }
@@ -1580,10 +1579,10 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         {
             match backend.unregister(super::ESCAPE_SHORTCUT) {
                 Ok(()) => {
-                    debug!("Escape key listener unregistered");
+                    crate::debug!("Escape key listener unregistered");
                 }
                 Err(e) => {
-                    warn!("Failed to unregister Escape key listener: {}", e);
+                    crate::warn!("Failed to unregister Escape key listener: {}", e);
                 }
             }
         }
@@ -1599,11 +1598,11 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
 
                 match backend.unregister(super::ESCAPE_SHORTCUT) {
                     Ok(()) => {
-                        debug!("Escape key listener unregistered");
+                        crate::debug!("Escape key listener unregistered");
                     }
                     Err(e) => {
                         // This can happen if registration failed or was never completed
-                        warn!("Failed to unregister Escape key listener: {}", e);
+                        crate::warn!("Failed to unregister Escape key listener: {}", e);
                     }
                 }
             });
@@ -1628,7 +1627,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         let current_state = match state.lock() {
             Ok(guard) => guard.get_state(),
             Err(e) => {
-                error!("Failed to acquire lock for cancel: {}", e);
+                crate::error!("Failed to acquire lock for cancel: {}", e);
                 self.recording_emitter.emit_recording_error(RecordingErrorPayload {
                     message: "Internal error: state lock poisoned".to_string(),
                 });
@@ -1637,11 +1636,11 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         };
 
         if current_state != RecordingState::Recording {
-            debug!("Cancel ignored - not in recording state (current: {:?})", current_state);
+            crate::debug!("Cancel ignored - not in recording state (current: {:?})", current_state);
             return false;
         }
 
-        info!("Cancelling recording (reason: {})", reason);
+        crate::info!("Cancelling recording (reason: {})", reason);
 
         // 1. Unregister Escape key listener first
         self.unregister_escape_listener();
@@ -1653,7 +1652,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         if let Some(ref audio_thread) = self.audio_thread {
             // Stop the audio thread to halt capture
             if let Err(e) = audio_thread.stop() {
-                warn!("Failed to stop audio thread during cancel: {:?}", e);
+                crate::warn!("Failed to stop audio thread during cancel: {:?}", e);
                 // Continue anyway - the buffer will be discarded
             }
         }
@@ -1663,7 +1662,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
         let abort_result = match state.lock() {
             Ok(mut guard) => guard.abort_recording(RecordingState::Idle),
             Err(e) => {
-                error!("Failed to acquire lock for abort: {}", e);
+                crate::error!("Failed to acquire lock for abort: {}", e);
                 self.recording_emitter.emit_recording_error(RecordingErrorPayload {
                     message: "Internal error: state lock poisoned".to_string(),
                 });
@@ -1679,11 +1678,11 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                     timestamp: current_timestamp(),
                 });
 
-                info!("Recording cancelled successfully");
+                crate::info!("Recording cancelled successfully");
                 true
             }
             Err(e) => {
-                error!("Failed to abort recording: {}", e);
+                crate::error!("Failed to abort recording: {}", e);
                 self.recording_emitter.emit_recording_error(RecordingErrorPayload {
                     message: format!("Failed to cancel recording: {}", e),
                 });

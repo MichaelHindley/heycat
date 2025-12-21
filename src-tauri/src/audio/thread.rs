@@ -5,7 +5,6 @@
 // it on a dedicated thread and communicate via channels.
 
 use super::{AudioBuffer, AudioCaptureBackend, AudioCaptureError, CpalBackend, StopReason};
-use crate::{debug, error, info};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -164,9 +163,9 @@ impl std::error::Error for AudioThreadError {
 /// This runs on a dedicated thread where CpalBackend can safely live.
 #[cfg_attr(coverage_nightly, coverage(off))]
 fn audio_thread_main(receiver: Receiver<AudioCommand>) {
-    info!("Audio thread started, creating CpalBackend...");
+    crate::info!("Audio thread started, creating CpalBackend...");
     let mut backend = CpalBackend::new();
-    debug!("CpalBackend created, waiting for commands...");
+    crate::debug!("CpalBackend created, waiting for commands...");
 
     // Track the stop signal receiver when recording is active
     let mut stop_signal_rx: Option<Receiver<StopReason>> = None;
@@ -177,11 +176,11 @@ fn audio_thread_main(receiver: Receiver<AudioCommand>) {
         // Check for stop signals from callbacks (non-blocking)
         if let Some(ref rx) = stop_signal_rx {
             if let Ok(reason) = rx.try_recv() {
-                info!("Received auto-stop signal: {:?}", reason);
+                crate::info!("Received auto-stop signal: {:?}", reason);
                 // Auto-stop the recording
                 match backend.stop() {
-                    Ok(()) => debug!("Auto-stopped successfully"),
-                    Err(e) => error!("Auto-stop failed: {:?}", e),
+                    Ok(()) => crate::debug!("Auto-stopped successfully"),
+                    Err(e) => crate::error!("Auto-stop failed: {:?}", e),
                 }
                 // Store the reason for when Stop command arrives
                 pending_stop_reason = Some(reason);
@@ -211,7 +210,7 @@ fn audio_thread_main(receiver: Receiver<AudioCommand>) {
                 response_tx,
                 device_name,
             } => {
-                debug!("Received START command, device={:?}", device_name);
+                crate::debug!("Received START command, device={:?}", device_name);
                 // Create stop signal channel for callbacks
                 let (stop_tx, stop_rx) = mpsc::channel();
                 stop_signal_rx = Some(stop_rx);
@@ -220,10 +219,10 @@ fn audio_thread_main(receiver: Receiver<AudioCommand>) {
                 let result = backend.start(buffer, Some(stop_tx), device_name);
                 match &result {
                     Ok(sample_rate) => {
-                        info!("Audio capture started at {} Hz", sample_rate)
+                        crate::info!("Audio capture started at {} Hz", sample_rate)
                     }
                     Err(e) => {
-                        error!("Audio capture failed to start: {:?}", e);
+                        crate::error!("Audio capture failed to start: {:?}", e);
                         stop_signal_rx = None; // Clear receiver on failure
                     }
                 }
@@ -231,14 +230,14 @@ fn audio_thread_main(receiver: Receiver<AudioCommand>) {
                 let _ = response_tx.send(result);
             }
             AudioCommand::Stop(response_tx) => {
-                debug!("Received STOP command");
+                crate::debug!("Received STOP command");
                 // Use pending reason if auto-stopped, otherwise None (user-initiated)
                 let reason = pending_stop_reason.take();
                 if reason.is_none() {
                     // Only stop if not already auto-stopped
                     match backend.stop() {
-                        Ok(()) => debug!("Audio capture stopped successfully"),
-                        Err(e) => error!("Audio capture failed to stop: {:?}", e),
+                        Ok(()) => crate::debug!("Audio capture stopped successfully"),
+                        Err(e) => crate::error!("Audio capture failed to stop: {:?}", e),
                     }
                 }
                 stop_signal_rx = None;
@@ -248,13 +247,13 @@ fn audio_thread_main(receiver: Receiver<AudioCommand>) {
                 }
             }
             AudioCommand::Shutdown => {
-                debug!("Received SHUTDOWN command");
+                crate::debug!("Received SHUTDOWN command");
                 let _ = backend.stop();
                 break;
             }
         }
     }
-    info!("Audio thread exiting");
+    crate::info!("Audio thread exiting");
 }
 
 #[cfg(test)]

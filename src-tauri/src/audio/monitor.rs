@@ -8,7 +8,6 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 
-use crate::debug;
 
 /// Commands sent to the audio monitor thread
 enum MonitorCommand {
@@ -103,7 +102,7 @@ impl Drop for AudioMonitorHandle {
 /// Main loop for the monitor thread
 #[cfg_attr(coverage_nightly, coverage(off))]
 fn monitor_thread_main(command_rx: Receiver<MonitorCommand>) {
-    debug!("Audio monitor thread started");
+    crate::debug!("Audio monitor thread started");
 
     // Stream is Option because we start/stop monitoring.
     // The stream is kept alive by holding it - dropping stops monitoring.
@@ -117,7 +116,7 @@ fn monitor_thread_main(command_rx: Receiver<MonitorCommand>) {
                 level_tx,
                 response_tx,
             }) => {
-                debug!("Monitor: Received START command");
+                crate::debug!("Monitor: Received START command");
 
                 // Stop existing stream first by dropping it
                 _stream = None;
@@ -134,22 +133,22 @@ fn monitor_thread_main(command_rx: Receiver<MonitorCommand>) {
                 }
             }
             Ok(MonitorCommand::Stop) => {
-                debug!("Monitor: Received STOP command");
+                crate::debug!("Monitor: Received STOP command");
                 _stream = None; // Drop stream to stop monitoring
             }
             Ok(MonitorCommand::Shutdown) => {
-                debug!("Monitor: Received SHUTDOWN command");
+                crate::debug!("Monitor: Received SHUTDOWN command");
                 _stream = None;
                 break;
             }
             Err(_) => {
-                debug!("Monitor: Command channel closed, exiting");
+                crate::debug!("Monitor: Command channel closed, exiting");
                 break;
             }
         }
     }
 
-    debug!("Audio monitor thread exiting");
+    crate::debug!("Audio monitor thread exiting");
 }
 
 /// Create a monitoring stream for the specified device
@@ -175,7 +174,7 @@ fn create_monitor_stream(
         .default_input_config()
         .map_err(|e| format!("Failed to get device config: {}", e))?;
 
-    debug!(
+    crate::debug!(
         "Starting audio monitor on {:?} at {} Hz",
         device.name(),
         config.sample_rate().0

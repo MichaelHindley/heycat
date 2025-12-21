@@ -15,7 +15,6 @@ use crate::recording::RecordingManager;
 use crate::voice_commands::executor::ActionDispatcher;
 use crate::voice_commands::matcher::{CommandMatcher, MatchResult};
 use crate::voice_commands::registry::CommandRegistry;
-use crate::{debug, error, info, warn};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::AppHandle;
@@ -169,7 +168,7 @@ where
     pub fn process_recording(&self, file_path: String) {
         // Check if model is loaded
         if !self.shared_transcription_model.is_loaded() {
-            info!("Transcription skipped: transcription model not loaded");
+            crate::info!("Transcription skipped: transcription model not loaded");
             return;
         }
 
@@ -185,7 +184,7 @@ where
         let semaphore = self.transcription_semaphore.clone();
         let timeout_duration = self.transcription_timeout;
 
-        info!("Spawning transcription task for: {}", file_path);
+        crate::info!("Spawning transcription task for: {}", file_path);
 
         // Spawn async task using Tauri's async runtime
         tauri::async_runtime::spawn(async move {
@@ -193,7 +192,7 @@ where
             let clear_recording_buffer = || {
                 if let Ok(mut manager) = recording_state.lock() {
                     manager.clear_last_recording();
-                    debug!("Cleared recording buffer");
+                    crate::debug!("Cleared recording buffer");
                 }
             };
 
@@ -201,7 +200,7 @@ where
             let _permit = match semaphore.try_acquire() {
                 Ok(permit) => permit,
                 Err(_) => {
-                    warn!("Too many concurrent transcriptions, skipping this one");
+                    crate::warn!("Too many concurrent transcriptions, skipping this one");
                     transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
                         error: "Too many transcriptions in progress. Please wait and try again."
                             .to_string(),
@@ -217,7 +216,7 @@ where
                 timestamp: current_timestamp(),
             });
 
-            debug!("Transcribing file: {}", file_path);
+            crate::debug!("Transcribing file: {}", file_path);
 
             // Perform transcription on blocking thread pool (CPU-intensive) with timeout
             let transcriber = shared_model.clone();
@@ -230,30 +229,30 @@ where
             let text = match transcription_result {
                 Ok(Ok(Ok(text))) => text,
                 Ok(Ok(Err(e))) => {
-                    error!("Transcription failed: {}", e);
+                    crate::error!("Transcription failed: {}", e);
                     transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
                         error: e.to_string(),
                     });
                     if let Err(reset_err) = shared_model.reset_to_idle() {
-                        warn!("Failed to reset transcription state: {}", reset_err);
+                        crate::warn!("Failed to reset transcription state: {}", reset_err);
                     }
                     clear_recording_buffer();
                     return;
                 }
                 Ok(Err(e)) => {
-                    error!("Transcription task panicked: {}", e);
+                    crate::error!("Transcription task panicked: {}", e);
                     transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
                         error: "Internal transcription error.".to_string(),
                     });
                     if let Err(reset_err) = shared_model.reset_to_idle() {
-                        warn!("Failed to reset transcription state: {}", reset_err);
+                        crate::warn!("Failed to reset transcription state: {}", reset_err);
                     }
                     clear_recording_buffer();
                     return;
                 }
                 Err(_) => {
                     // Timeout error
-                    error!("Transcription timed out after {:?}", timeout_duration);
+                    crate::error!("Transcription timed out after {:?}", timeout_duration);
                     transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
                         error: format!(
                             "Transcription timed out after {} seconds. The audio may be too long or the model may be stuck.",
@@ -261,7 +260,7 @@ where
                         ),
                     });
                     if let Err(reset_err) = shared_model.reset_to_idle() {
-                        warn!("Failed to reset transcription state: {}", reset_err);
+                        crate::warn!("Failed to reset transcription state: {}", reset_err);
                     }
                     clear_recording_buffer();
                     return;
@@ -269,7 +268,7 @@ where
             };
 
             let duration_ms = start_time.elapsed().as_millis() as u64;
-            info!(
+            crate::info!(
                 "Transcription completed in {}ms: {} chars",
                 duration_ms,
                 text.len()
@@ -283,19 +282,19 @@ where
             // Fallback to clipboard if no command was handled
             if !command_handled {
                 if let Err(e) = app_handle.clipboard().write_text(&text) {
-                    warn!("Failed to copy to clipboard: {}", e);
+                    crate::warn!("Failed to copy to clipboard: {}", e);
                 } else {
-                    debug!("Transcribed text copied to clipboard");
+                    crate::debug!("Transcribed text copied to clipboard");
                     if let Err(e) = simulate_paste() {
-                        warn!("Failed to auto-paste: {}", e);
+                        crate::warn!("Failed to auto-paste: {}", e);
                     } else {
-                        debug!("Auto-pasted transcribed text");
+                        crate::debug!("Auto-pasted transcribed text");
                     }
                 }
             }
 
             // Always emit transcription_completed (whether command handled or not)
-            info!("Emitting transcription_completed");
+            crate::info!("Emitting transcription_completed");
             transcription_emitter.emit_transcription_completed(TranscriptionCompletedPayload {
                 text,
                 duration_ms,
@@ -303,7 +302,7 @@ where
 
             // Reset transcription state to idle
             if let Err(e) = shared_model.reset_to_idle() {
-                warn!("Failed to reset transcription state: {}", e);
+                crate::warn!("Failed to reset transcription state: {}", e);
             }
 
             // Clear recording buffer to free memory
@@ -331,7 +330,7 @@ where
         ) {
             (Some(r), Some(m), Some(d), Some(e)) => (r, m, d, e),
             _ => {
-                debug!("Voice commands not configured, skipping command matching");
+                crate::debug!("Voice commands not configured, skipping command matching");
                 return false;
             }
         };
@@ -356,7 +355,7 @@ where
             let registry_guard = match registry.lock() {
                 Ok(g) => g,
                 Err(_) => {
-                    error!("Failed to lock command registry - lock poisoned");
+                    crate::error!("Failed to lock command registry - lock poisoned");
                     transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
                         error: "Internal error: command registry unavailable. Please restart the application.".to_string(),
                     });
@@ -414,7 +413,7 @@ where
                 trigger,
                 confidence,
             } => {
-                info!(
+                crate::info!(
                     "Command matched: {} (confidence: {:.2})",
                     trigger, confidence
                 );
@@ -430,7 +429,7 @@ where
                 // Execute command
                 match dispatcher.execute(&cmd).await {
                     Ok(action_result) => {
-                        info!("Command executed: {}", action_result.message);
+                        crate::info!("Command executed: {}", action_result.message);
                         emitter.emit_command_executed(CommandExecutedPayload {
                             command_id: cmd.id.to_string(),
                             trigger: trigger.clone(),
@@ -438,7 +437,7 @@ where
                         });
                     }
                     Err(action_error) => {
-                        error!("Command execution failed: {}", action_error);
+                        crate::error!("Command execution failed: {}", action_error);
                         emitter.emit_command_failed(CommandFailedPayload {
                             command_id: cmd.id.to_string(),
                             trigger: trigger.clone(),
@@ -450,7 +449,7 @@ where
                 true // Command was handled
             }
             MatchOutcome::Ambiguous { candidates } => {
-                info!("Ambiguous match: {} candidates", candidates.len());
+                crate::info!("Ambiguous match: {} candidates", candidates.len());
 
                 // Emit command_ambiguous event for disambiguation UI
                 emitter.emit_command_ambiguous(CommandAmbiguousPayload {
@@ -460,7 +459,7 @@ where
                 true // Command matching was handled (ambiguous)
             }
             MatchOutcome::NoMatch => {
-                debug!("No command match for: {}", text);
+                crate::debug!("No command match for: {}", text);
                 false // Fall through to clipboard
             }
         }

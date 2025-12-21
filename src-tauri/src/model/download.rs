@@ -1,7 +1,6 @@
 // Model download functionality
 // Contains the core download logic, testable independently from Tauri commands
 
-use crate::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -184,7 +183,7 @@ pub async fn download_model_files<E: ModelDownloadEventEmitter>(
 
     // If model already exists (all files present), return early
     if check_model_exists_for_type(manifest.model_type)? {
-        info!("Model {} already exists at {:?}", model_type_str, final_dir);
+        crate::info!("Model {} already exists at {:?}", model_type_str, final_dir);
         return Ok(final_dir);
     }
 
@@ -193,7 +192,7 @@ pub async fn download_model_files<E: ModelDownloadEventEmitter>(
     let temp_dir_name = format!(".{}-{}", manifest.model_type.dir_name(), Uuid::new_v4());
     let temp_dir = models_dir.join(&temp_dir_name);
 
-    info!(
+    crate::info!(
         "Starting multi-file download for {} to {:?}",
         model_type_str, temp_dir
     );
@@ -210,7 +209,7 @@ pub async fn download_model_files<E: ModelDownloadEventEmitter>(
         let url = format!("{}{}", manifest.base_url, model_file.name);
         let file_path = temp_dir.join(&model_file.name);
 
-        debug!(
+        crate::debug!(
             "Downloading file {}/{}: {} from {}",
             file_index + 1,
             total_files,
@@ -306,7 +305,7 @@ pub async fn download_model_files<E: ModelDownloadEventEmitter>(
             return Err(ModelError::IoError(e.to_string()));
         }
 
-        info!(
+        crate::info!(
             "Downloaded {}/{}: {} ({} bytes)",
             file_index + 1,
             total_files,
@@ -316,14 +315,14 @@ pub async fn download_model_files<E: ModelDownloadEventEmitter>(
     }
 
     // Atomic rename: move temp dir to final location
-    debug!(
+    crate::debug!(
         "All files downloaded, renaming {:?} to {:?}",
         temp_dir, final_dir
     );
 
     // Check if another process completed the download
     if final_dir.exists() {
-        warn!(
+        crate::warn!(
             "Model {} was downloaded by another process, using existing directory",
             model_type_str
         );
@@ -335,7 +334,7 @@ pub async fn download_model_files<E: ModelDownloadEventEmitter>(
     if let Err(e) = std::fs::rename(&temp_dir, &final_dir) {
         // Check again in case of race condition
         if final_dir.exists() {
-            warn!(
+            crate::warn!(
                 "Model {} was downloaded by another process, using existing directory",
                 model_type_str
             );
@@ -350,7 +349,7 @@ pub async fn download_model_files<E: ModelDownloadEventEmitter>(
         )));
     }
 
-    info!("Model {} downloaded successfully to {:?}", model_type_str, final_dir);
+    crate::info!("Model {} downloaded successfully to {:?}", model_type_str, final_dir);
     Ok(final_dir)
 }
 

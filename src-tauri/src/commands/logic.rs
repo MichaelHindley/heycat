@@ -3,7 +3,6 @@
 use crate::audio::{
     encode_wav, parse_duration_from_file, AudioThreadHandle, SystemFileWriter, TARGET_SAMPLE_RATE,
 };
-use crate::{debug, error, info};
 use crate::recording::{AudioData, RecordingManager, RecordingMetadata, RecordingState};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -56,26 +55,26 @@ pub fn start_recording_impl(
     model_available: bool,
     device_name: Option<String>,
 ) -> Result<(), String> {
-    debug!(
+    crate::debug!(
         "start_recording_impl called, model_available={}, device={:?}",
         model_available, device_name
     );
 
     // Check model availability first
     if !model_available {
-        debug!("Recording rejected: model not available");
+        crate::debug!("Recording rejected: model not available");
         return Err("Please download the transcription model first.".to_string());
     }
     let mut manager = state.lock().map_err(|_| {
-        error!("Failed to acquire recording state lock in start_recording_impl");
+        crate::error!("Failed to acquire recording state lock in start_recording_impl");
         "Unable to access recording state. Please try again or restart the application."
     })?;
 
     // Check current state - allow starting from Idle or Listening (for wake word activation)
     let current_state = manager.get_state();
-    debug!("Current recording state: {:?}", current_state);
+    crate::debug!("Current recording state: {:?}", current_state);
     if current_state != RecordingState::Idle && current_state != RecordingState::Listening {
-        debug!("Recording rejected: already in {:?} state", current_state);
+        crate::debug!("Recording rejected: already in {:?} state", current_state);
         return Err(
             "Cannot start recording: already recording or processing.".to_string(),
         );
@@ -85,10 +84,10 @@ pub fn start_recording_impl(
     let buffer = manager
         .start_recording(TARGET_SAMPLE_RATE)
         .map_err(|e| {
-            error!("Failed to start recording: {:?}", e);
+            crate::error!("Failed to start recording: {:?}", e);
             "Failed to initialize recording."
         })?;
-    debug!("Recording buffer initialized");
+    crate::debug!("Recording buffer initialized");
 
     // Start audio capture if audio thread is available
     if let Some(audio_thread) = audio_thread {
@@ -96,11 +95,11 @@ pub fn start_recording_impl(
             Ok(sample_rate) => {
                 // Update with actual sample rate from device
                 manager.set_sample_rate(sample_rate);
-                info!("Audio capture started at {}Hz", sample_rate);
+                crate::info!("Audio capture started at {}Hz", sample_rate);
             }
             Err(e) => {
                 // Audio capture failed - rollback state and return error
-                error!("Audio capture failed: {:?}", e);
+                crate::error!("Audio capture failed: {:?}", e);
                 manager.reset_to_idle();
                 return Err(
                     "Could not access the microphone. Please check that your microphone is connected and permissions are granted.".to_string(),
@@ -108,10 +107,10 @@ pub fn start_recording_impl(
             }
         }
     } else {
-        debug!("No audio thread available, recording without capture");
+        crate::debug!("No audio thread available, recording without capture");
     }
 
-    info!("Recording started successfully");
+    crate::info!("Recording started successfully");
     Ok(())
 }
 
@@ -136,49 +135,49 @@ pub fn stop_recording_impl(
     audio_thread: Option<&AudioThreadHandle>,
     return_to_listening: bool,
 ) -> Result<RecordingMetadata, String> {
-    debug!("stop_recording_impl called");
+    crate::debug!("stop_recording_impl called");
 
     let mut manager = state.lock().map_err(|_| {
-        error!("Failed to acquire recording state lock in stop_recording_impl");
+        crate::error!("Failed to acquire recording state lock in stop_recording_impl");
         "Unable to access recording state. Please try again or restart the application."
     })?;
 
     // Check current state
     let current_state = manager.get_state();
-    debug!("Current recording state: {:?}", current_state);
+    crate::debug!("Current recording state: {:?}", current_state);
     if current_state != RecordingState::Recording {
-        debug!("Stop rejected: not in Recording state");
+        crate::debug!("Stop rejected: not in Recording state");
         return Err("No recording in progress. Start a recording first.".to_string());
     }
 
     // Stop audio capture if audio thread is available
     let stop_result = if let Some(audio_thread) = audio_thread {
-        debug!("Stopping audio thread");
+        crate::debug!("Stopping audio thread");
         match audio_thread.stop() {
             Ok(result) => Some(result),
             Err(e) => {
-                error!("Audio thread stop failed: {:?}", e);
+                crate::error!("Audio thread stop failed: {:?}", e);
                 // Continue with recording stop - we can't "unstop", but log the error
                 None
             }
         }
     } else {
-        debug!("No audio thread to stop");
+        crate::debug!("No audio thread to stop");
         None
     };
 
     // Get the actual sample rate before transitioning
     let sample_rate = manager.get_sample_rate().unwrap_or(TARGET_SAMPLE_RATE);
-    debug!("Sample rate: {}Hz", sample_rate);
+    crate::debug!("Sample rate: {}Hz", sample_rate);
 
     // Transition to Processing
     manager
         .transition_to(RecordingState::Processing)
         .map_err(|e| {
-            error!("Failed to transition to Processing: {:?}", e);
+            crate::error!("Failed to transition to Processing: {:?}", e);
             "Failed to process recording."
         })?;
-    debug!("Transitioned to Processing state");
+    crate::debug!("Transitioned to Processing state");
 
     // Get the audio buffer and encode
     let buffer = manager
@@ -191,20 +190,20 @@ pub fn stop_recording_impl(
         .map_err(|_| "Unable to access recorded audio.")?
         .clone();
     let sample_count = samples.len();
-    debug!("Got {} samples from buffer", sample_count);
+    crate::debug!("Got {} samples from buffer", sample_count);
 
     // Encode WAV if we have samples
     let file_path = if !samples.is_empty() {
         let writer = SystemFileWriter;
         let path = encode_wav(&samples, sample_rate, &writer)
             .map_err(|e| {
-                error!("WAV encoding failed: {:?}", e);
+                crate::error!("WAV encoding failed: {:?}", e);
                 "Failed to save the recording. Please check disk space and try again."
             })?;
-        debug!("WAV encoded to: {}", path);
+        crate::debug!("WAV encoded to: {}", path);
         path
     } else {
-        debug!("No samples to encode");
+        crate::debug!("No samples to encode");
         // No samples recorded - return placeholder
         String::new()
     };
@@ -221,14 +220,14 @@ pub fn stop_recording_impl(
     manager
         .transition_to(target_state)
         .map_err(|e| {
-            error!("Failed to transition to {:?}: {:?}", target_state, e);
+            crate::error!("Failed to transition to {:?}: {:?}", target_state, e);
             "Failed to complete recording."
         })?;
 
     // Extract stop reason from result
     let stop_reason = stop_result.and_then(|r| r.reason);
 
-    info!("Recording stopped: {} samples, {:.2}s, stop_reason={:?}",
+    crate::info!("Recording stopped: {} samples, {:.2}s, stop_reason={:?}",
           sample_count, duration_secs, stop_reason);
 
     Ok(RecordingMetadata {
@@ -321,7 +320,7 @@ pub fn list_recordings_impl() -> Result<Vec<RecordingInfo>, String> {
     }
 
     let entries = std::fs::read_dir(&recordings_dir).map_err(|e| {
-        error!("Failed to read recordings directory: {}", e);
+        crate::error!("Failed to read recordings directory: {}", e);
         format!("Unable to access recordings directory: {}", e)
     })?;
 
@@ -331,7 +330,7 @@ pub fn list_recordings_impl() -> Result<Vec<RecordingInfo>, String> {
         let entry = match entry {
             Ok(e) => e,
             Err(e) => {
-                error!("Failed to read directory entry: {}", e);
+                crate::error!("Failed to read directory entry: {}", e);
                 continue;
             }
         };
@@ -347,7 +346,7 @@ pub fn list_recordings_impl() -> Result<Vec<RecordingInfo>, String> {
         let filename = match path.file_name().and_then(|s| s.to_str()) {
             Some(name) => name.to_string(),
             None => {
-                error!("Invalid filename for {}", path.display());
+                crate::error!("Invalid filename for {}", path.display());
                 continue;
             }
         };
@@ -369,7 +368,7 @@ pub fn list_recordings_impl() -> Result<Vec<RecordingInfo>, String> {
                         datetime.to_rfc3339()
                     })
                     .unwrap_or_else(|e| {
-                        error!("Failed to get creation time for {}: {}", path.display(), e);
+                        crate::error!("Failed to get creation time for {}: {}", path.display(), e);
                         let err_msg = "Missing creation date";
                         recording_error = Some(err_msg.to_string());
                         String::new()
@@ -377,7 +376,7 @@ pub fn list_recordings_impl() -> Result<Vec<RecordingInfo>, String> {
                 (size, created)
             }
             Err(e) => {
-                error!("Failed to read metadata for {}: {}", path.display(), e);
+                crate::error!("Failed to read metadata for {}: {}", path.display(), e);
                 recording_error = Some(format!("Cannot read file metadata: {}", e));
                 (0, String::new())
             }
@@ -387,7 +386,7 @@ pub fn list_recordings_impl() -> Result<Vec<RecordingInfo>, String> {
         let duration_secs = match parse_duration_from_file(&path) {
             Ok(d) => d,
             Err(e) => {
-                error!(
+                crate::error!(
                     "Failed to parse duration for {}: {:?}",
                     path.display(),
                     e
@@ -448,7 +447,7 @@ pub fn delete_recording_impl(file_path: &str) -> Result<(), String> {
         .unwrap_or_else(|_| recordings_dir.clone());
 
     if !canonical_path.starts_with(&canonical_recordings) {
-        error!(
+        crate::error!(
             "Security: Attempted to delete file outside recordings directory: {}",
             file_path
         );
@@ -462,11 +461,11 @@ pub fn delete_recording_impl(file_path: &str) -> Result<(), String> {
 
     // Delete the file
     std::fs::remove_file(path).map_err(|e| {
-        error!("Failed to delete recording {}: {}", file_path, e);
+        crate::error!("Failed to delete recording {}: {}", file_path, e);
         format!("Failed to delete recording: {}", e)
     })?;
 
-    info!("Deleted recording: {}", file_path);
+    crate::info!("Deleted recording: {}", file_path);
     Ok(())
 }
 
@@ -492,7 +491,7 @@ pub fn transcribe_file_impl(
 ) -> Result<String, String> {
     use crate::parakeet::TranscriptionService;
 
-    debug!("transcribe_file_impl called for: {}", file_path);
+    crate::debug!("transcribe_file_impl called for: {}", file_path);
 
     // Check if TDT model is loaded
     if !shared_model.is_loaded() {
@@ -509,7 +508,7 @@ pub fn transcribe_file_impl(
         .transcribe(file_path)
         .map_err(|e| format!("Transcription failed: {}", e))?;
 
-    info!("Transcription complete: {} characters", text.len());
+    crate::info!("Transcription complete: {} characters", text.len());
     Ok(text)
 }
 
@@ -545,17 +544,17 @@ pub fn enable_listening_impl<E: ListeningEventEmitter + 'static>(
     emitter: std::sync::Arc<E>,
     device_name: Option<String>,
 ) -> Result<(), String> {
-    debug!("enable_listening_impl called");
+    crate::debug!("enable_listening_impl called");
 
     // First, enable listening mode and transition state
     {
         let mut lm = listening_manager.lock().map_err(|_| {
-            error!("Failed to acquire listening manager lock");
+            crate::error!("Failed to acquire listening manager lock");
             "Unable to access listening state. Please try again."
         })?;
 
         lm.enable_listening(recording_manager).map_err(|e| {
-            error!("Failed to enable listening: {}", e);
+            crate::error!("Failed to enable listening: {}", e);
             match e {
                 crate::listening::ListeningError::RecordingInProgress => {
                     "Cannot enable listening while recording. Stop the recording first.".to_string()
@@ -571,7 +570,7 @@ pub fn enable_listening_impl<E: ListeningEventEmitter + 'static>(
     // Start the listening pipeline
     {
         let mut pipeline = listening_pipeline.lock().map_err(|_| {
-            error!("Failed to acquire listening pipeline lock");
+            crate::error!("Failed to acquire listening pipeline lock");
             "Unable to access listening pipeline. Please try again."
         })?;
 
@@ -580,14 +579,14 @@ pub fn enable_listening_impl<E: ListeningEventEmitter + 'static>(
             pipeline
                 .start_with_device(audio_thread, emitter, device_name)
                 .map_err(|e| {
-                    error!("Failed to start listening pipeline: {}", e);
+                    crate::error!("Failed to start listening pipeline: {}", e);
                     format!("Failed to start listening: {}", e)
                 })?;
-            info!("Listening pipeline started");
+            crate::info!("Listening pipeline started");
         }
     }
 
-    info!("Listening mode enabled");
+    crate::info!("Listening mode enabled");
     Ok(())
 }
 
@@ -611,38 +610,38 @@ pub fn disable_listening_impl(
     listening_pipeline: &Mutex<ListeningPipeline>,
     audio_thread: &AudioThreadHandle,
 ) -> Result<(), String> {
-    debug!("disable_listening_impl called");
+    crate::debug!("disable_listening_impl called");
 
     // Stop the listening pipeline first
     {
         let mut pipeline = listening_pipeline.lock().map_err(|_| {
-            error!("Failed to acquire listening pipeline lock");
+            crate::error!("Failed to acquire listening pipeline lock");
             "Unable to access listening pipeline. Please try again."
         })?;
 
         if pipeline.is_running() {
             pipeline.stop(audio_thread).map_err(|e| {
-                error!("Failed to stop listening pipeline: {}", e);
+                crate::error!("Failed to stop listening pipeline: {}", e);
                 format!("Failed to stop listening: {}", e)
             })?;
-            info!("Listening pipeline stopped");
+            crate::info!("Listening pipeline stopped");
         }
     }
 
     // Disable listening mode and transition state
     {
         let mut lm = listening_manager.lock().map_err(|_| {
-            error!("Failed to acquire listening manager lock");
+            crate::error!("Failed to acquire listening manager lock");
             "Unable to access listening state. Please try again."
         })?;
 
         lm.disable_listening(recording_manager).map_err(|e| {
-            error!("Failed to disable listening: {}", e);
+            crate::error!("Failed to disable listening: {}", e);
             format!("Failed to disable listening: {}", e)
         })?;
     }
 
-    info!("Listening mode disabled");
+    crate::info!("Listening mode disabled");
     Ok(())
 }
 
@@ -661,12 +660,12 @@ pub fn get_listening_status_impl(
     recording_manager: &Mutex<RecordingManager>,
 ) -> Result<ListeningStatus, String> {
     let lm = listening_manager.lock().map_err(|_| {
-        error!("Failed to acquire listening manager lock");
+        crate::error!("Failed to acquire listening manager lock");
         "Unable to access listening state. Please try again."
     })?;
 
     lm.get_status(recording_manager).map_err(|e| {
-        error!("Failed to get listening status: {}", e);
+        crate::error!("Failed to get listening status: {}", e);
         format!("Failed to get listening status: {}", e)
     })
 }

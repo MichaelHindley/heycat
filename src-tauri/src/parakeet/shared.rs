@@ -7,7 +7,6 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use super::types::{TranscriptionError, TranscriptionResult, TranscriptionService, TranscriptionState};
 use super::utils::fix_parakeet_text;
-use crate::{debug, info};
 
 // ============================================================================
 // TranscribingGuard - RAII guard for state transitions
@@ -164,7 +163,7 @@ impl SharedTranscriptionModel {
             TranscriptionError::ModelLoadFailed("Invalid path encoding".to_string())
         })?;
 
-        info!("Loading shared Parakeet TDT model from {}...", path_str);
+        crate::info!("Loading shared Parakeet TDT model from {}...", path_str);
 
         let tdt = ParakeetTDT::from_pretrained(path_str, None)
             .map_err(|e| TranscriptionError::ModelLoadFailed(e.to_string()))?;
@@ -185,7 +184,7 @@ impl SharedTranscriptionModel {
             *state = TranscriptionState::Idle;
         }
 
-        info!("Shared Parakeet TDT model loaded successfully");
+        crate::info!("Shared Parakeet TDT model loaded successfully");
         Ok(())
     }
 
@@ -259,7 +258,7 @@ impl SharedTranscriptionModel {
                 Ok(transcribe_result) => {
                     let fixed_text = fix_parakeet_text(&transcribe_result.tokens);
 
-                    debug!("Transcription result: {:?}", fixed_text);
+                    crate::debug!("Transcription result: {:?}", fixed_text);
 
                     Ok(fixed_text)
                 }

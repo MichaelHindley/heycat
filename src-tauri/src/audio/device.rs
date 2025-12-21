@@ -4,7 +4,6 @@
 use cpal::traits::{DeviceTrait, HostTrait};
 use serde::{Deserialize, Serialize};
 
-use crate::{debug, warn};
 
 /// Represents an audio input device with its properties
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -23,20 +22,20 @@ pub struct AudioInputDevice {
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub fn list_input_devices() -> Vec<AudioInputDevice> {
     let host = cpal::default_host();
-    debug!("Listing input devices for host: {:?}", host.id());
+    crate::debug!("Listing input devices for host: {:?}", host.id());
 
     // Get the default device name for comparison
     let default_name = host
         .default_input_device()
         .and_then(|d| d.name().ok());
 
-    debug!("Default input device: {:?}", default_name);
+    crate::debug!("Default input device: {:?}", default_name);
 
     // Get all input devices
     let devices = match host.input_devices() {
         Ok(devices) => devices,
         Err(e) => {
-            warn!("Failed to enumerate input devices: {}", e);
+            crate::warn!("Failed to enumerate input devices: {}", e);
             return Vec::new();
         }
     };
@@ -54,7 +53,7 @@ pub fn list_input_devices() -> Vec<AudioInputDevice> {
     // Sort with default device first
     device_list.sort_by(|a, b| b.is_default.cmp(&a.is_default));
 
-    debug!("Found {} input devices", device_list.len());
+    crate::debug!("Found {} input devices", device_list.len());
     device_list
 }
 
