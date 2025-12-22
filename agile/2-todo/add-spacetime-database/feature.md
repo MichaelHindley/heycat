@@ -10,7 +10,7 @@ discovery_phase: complete
 
 ## Description
 
-[What should be built and why - provide context for the team]
+Integrate SpacetimeDB as the foundational data persistence and synchronization layer for heycat. SpacetimeDB runs as a Tauri sidecar process bound to localhost, providing local data storage with future multi-user collaboration capabilities. All user data (recordings metadata, settings, dictionary entries, voice commands) will be migrated from current file-based storage to SpacetimeDB tables. The frontend accesses data exclusively through existing IPC commands - SpacetimeDB is never exposed to the network or frontend directly.
 
 ## BDD Scenarios
 
@@ -101,8 +101,12 @@ Feature: Add Spacetime Database
 
 > Detailed acceptance criteria go in individual spec files
 
-- [ ] [High-level criterion 1]
-- [ ] [High-level criterion 2]
+- [ ] SpacetimeDB sidecar starts automatically with the app (bound to 127.0.0.1)
+- [ ] Backend connects to SpacetimeDB with identity credentials
+- [ ] All 4 data tables created (recordings, settings, dictionary_entries, voice_commands)
+- [ ] Existing Tauri commands refactored to use SpacetimeDB instead of file storage
+- [ ] Frontend continues to work unchanged via existing IPC commands
+- [ ] Data persists across app restarts
 
 ## Definition of Done
 

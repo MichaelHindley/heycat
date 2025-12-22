@@ -15,6 +15,7 @@ interface SettingsPanelProps {
   autoEnter: boolean;
   onSuffixChange: (value: string) => void;
   onAutoEnterChange: (value: boolean) => void;
+  suffixError?: string | null;
 }
 
 function SettingsPanel({
@@ -22,6 +23,7 @@ function SettingsPanel({
   autoEnter,
   onSuffixChange,
   onAutoEnterChange,
+  suffixError,
 }: SettingsPanelProps) {
   return (
     <div
@@ -36,16 +38,22 @@ function SettingsPanel({
           >
             Suffix
           </label>
-          <Input
-            id="suffix-input"
-            type="text"
-            value={suffix}
-            onChange={(e) => onSuffixChange(e.target.value)}
-            placeholder="e.g., . or ?"
-            maxLength={5}
-            className="w-20 text-center"
-            aria-label="Suffix"
-          />
+          <div className="flex flex-col items-end gap-1">
+            <Input
+              id="suffix-input"
+              type="text"
+              value={suffix}
+              onChange={(e) => onSuffixChange(e.target.value)}
+              placeholder="e.g., . or ?"
+              maxLength={5}
+              className={`w-20 text-center ${suffixError ? "border-error" : ""}`}
+              aria-label="Suffix"
+              aria-invalid={!!suffixError}
+            />
+            {suffixError && (
+              <span className="text-error text-xs">{suffixError}</span>
+            )}
+          </div>
         </div>
         <div className="flex items-center justify-between gap-4">
           <label
@@ -82,9 +90,24 @@ function AddEntryForm({ onSubmit, existingTriggers }: AddEntryFormProps) {
   const [autoEnter, setAutoEnter] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [triggerError, setTriggerError] = useState<string | null>(null);
+  const [suffixError, setSuffixError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const hasSettings = suffix !== "" || autoEnter;
+
+  const validateSuffix = (value: string): boolean => {
+    if (value.length > 5) {
+      setSuffixError("Suffix must be 5 characters or less");
+      return false;
+    }
+    setSuffixError(null);
+    return true;
+  };
+
+  const handleSuffixChange = (value: string) => {
+    setSuffix(value);
+    validateSuffix(value);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -101,6 +124,11 @@ function AddEntryForm({ onSubmit, existingTriggers }: AddEntryFormProps) {
       return;
     }
 
+    // Validate suffix
+    if (!validateSuffix(suffix)) {
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       await onSubmit(
@@ -112,6 +140,7 @@ function AddEntryForm({ onSubmit, existingTriggers }: AddEntryFormProps) {
       setTrigger("");
       setExpansion("");
       setSuffix("");
+      setSuffixError(null);
       setAutoEnter(false);
       setIsSettingsOpen(false);
     } finally {
@@ -164,7 +193,7 @@ function AddEntryForm({ onSubmit, existingTriggers }: AddEntryFormProps) {
                   <span className="absolute top-1 right-1 w-2 h-2 bg-heycat-orange rounded-full" />
                 )}
               </Button>
-              <Button type="submit" disabled={isSubmitting}>
+              <Button type="submit" disabled={isSubmitting || !!suffixError}>
                 <Plus className="h-4 w-4" />
                 Add
               </Button>
@@ -174,8 +203,9 @@ function AddEntryForm({ onSubmit, existingTriggers }: AddEntryFormProps) {
             <SettingsPanel
               suffix={suffix}
               autoEnter={autoEnter}
-              onSuffixChange={setSuffix}
+              onSuffixChange={handleSuffixChange}
               onAutoEnterChange={setAutoEnter}
+              suffixError={suffixError}
             />
           )}
         </form>
@@ -192,6 +222,7 @@ interface EntryItemProps {
   isDeleting: boolean;
   editValues: { trigger: string; expansion: string; suffix: string; autoEnter: boolean };
   editError: string | null;
+  editSuffixError: string | null;
   onEditChange: (field: "trigger" | "expansion" | "suffix" | "autoEnter", value: string | boolean) => void;
   onSaveEdit: () => void;
   onCancelEdit: () => void;
@@ -207,6 +238,7 @@ function EntryItem({
   isDeleting,
   editValues,
   editError,
+  editSuffixError,
   onEditChange,
   onSaveEdit,
   onCancelEdit,
@@ -257,6 +289,7 @@ function EntryItem({
             <Button
               size="sm"
               onClick={onSaveEdit}
+              disabled={!!editSuffixError}
               aria-label="Save changes"
             >
               <Check className="h-4 w-4" />
@@ -277,6 +310,7 @@ function EntryItem({
             autoEnter={editValues.autoEnter}
             onSuffixChange={(value) => onEditChange("suffix", value)}
             onAutoEnterChange={(value) => onEditChange("autoEnter", value)}
+            suffixError={editSuffixError}
           />
         )}
       </Card>
@@ -394,6 +428,7 @@ export function Dictionary(_props: DictionaryProps) {
     autoEnter: false,
   });
   const [editError, setEditError] = useState<string | null>(null);
+  const [editSuffixError, setEditSuffixError] = useState<string | null>(null);
 
   const entryList = Array.isArray(entries.data) ? entries.data : [];
 
@@ -447,6 +482,7 @@ export function Dictionary(_props: DictionaryProps) {
       autoEnter: entry.autoEnter || false,
     });
     setEditError(null);
+    setEditSuffixError(null);
   }, []);
 
   const handleEditChange = useCallback(
@@ -454,6 +490,13 @@ export function Dictionary(_props: DictionaryProps) {
       setEditValues((prev) => ({ ...prev, [field]: value }));
       if (field === "trigger") {
         setEditError(null);
+      }
+      if (field === "suffix" && typeof value === "string") {
+        if (value.length > 5) {
+          setEditSuffixError("Suffix must be 5 characters or less");
+        } else {
+          setEditSuffixError(null);
+        }
       }
     },
     []
@@ -479,6 +522,12 @@ export function Dictionary(_props: DictionaryProps) {
       return;
     }
 
+    // Validate suffix
+    if (editValues.suffix.length > 5) {
+      setEditSuffixError("Suffix must be 5 characters or less");
+      return;
+    }
+
     try {
       await updateEntry.mutateAsync({
         id: editingId,
@@ -495,6 +544,7 @@ export function Dictionary(_props: DictionaryProps) {
       setEditingId(null);
       setEditValues({ trigger: "", expansion: "", suffix: "", autoEnter: false });
       setEditError(null);
+      setEditSuffixError(null);
     } catch (e) {
       toast({
         type: "error",
@@ -508,6 +558,7 @@ export function Dictionary(_props: DictionaryProps) {
     setEditingId(null);
     setEditValues({ trigger: "", expansion: "", suffix: "", autoEnter: false });
     setEditError(null);
+    setEditSuffixError(null);
   }, []);
 
   const handleConfirmDelete = useCallback(async () => {
@@ -626,6 +677,7 @@ export function Dictionary(_props: DictionaryProps) {
               isDeleting={deleteConfirmId === entry.id}
               editValues={editValues}
               editError={editError}
+              editSuffixError={editSuffixError}
               onEditChange={handleEditChange}
               onSaveEdit={handleSaveEdit}
               onCancelEdit={handleCancelEdit}

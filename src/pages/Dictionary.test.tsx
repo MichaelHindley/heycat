@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -562,6 +562,178 @@ describe("Dictionary", () => {
       const secondEntry = entries[1];
       const noIndicator = secondEntry.querySelector(".text-heycat-orange");
       expect(noIndicator).toBeNull();
+    });
+  });
+
+  describe("Suffix Validation", () => {
+    it("add form: allows exactly 5 characters without error", async () => {
+      const user = userEvent.setup();
+      mockInvoke.mockResolvedValue([]);
+
+      render(<Dictionary />, { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("Trigger phrase")).toBeDefined();
+      });
+
+      // Open settings panel
+      await user.click(screen.getByRole("button", { name: /toggle settings/i }));
+
+      // Type exactly 5 characters
+      await user.type(screen.getByLabelText("Suffix"), "12345");
+
+      // No error should be shown
+      expect(screen.queryByText("Suffix must be 5 characters or less")).toBeNull();
+
+      // Add button should be enabled
+      const addButton = screen.getByRole("button", { name: /^add$/i });
+      expect(addButton).not.toBeDisabled();
+    });
+
+    it("add form: shows error and disables save when suffix exceeds 5 characters via paste", async () => {
+      const user = userEvent.setup();
+      mockInvoke.mockResolvedValue([]);
+
+      render(<Dictionary />, { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("Trigger phrase")).toBeDefined();
+      });
+
+      // Fill in required fields first
+      await user.type(screen.getByLabelText("Trigger phrase"), "test");
+      await user.type(screen.getByLabelText("Expansion text"), "test expansion");
+
+      // Open settings panel
+      await user.click(screen.getByRole("button", { name: /toggle settings/i }));
+
+      // Simulate paste (bypass maxLength) using fireEvent
+      const suffixInput = screen.getByLabelText("Suffix");
+      // Paste bypasses maxLength so we use fireEvent
+      fireEvent.change(suffixInput, { target: { value: "123456" } });
+
+      // Error should be shown
+      expect(screen.getByText("Suffix must be 5 characters or less")).toBeDefined();
+
+      // Add button should be disabled
+      const addButton = screen.getByRole("button", { name: /^add$/i });
+      expect(addButton).toBeDisabled();
+    });
+
+    it("add form: clears error when suffix is corrected to 5 or fewer characters", async () => {
+      const user = userEvent.setup();
+      mockInvoke.mockResolvedValue([]);
+
+      render(<Dictionary />, { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("Trigger phrase")).toBeDefined();
+      });
+
+      // Open settings panel
+      await user.click(screen.getByRole("button", { name: /toggle settings/i }));
+
+      // Set invalid value (bypass maxLength via fireEvent)
+      const suffixInput = screen.getByLabelText("Suffix");
+      fireEvent.change(suffixInput, { target: { value: "123456" } });
+
+      // Error should be shown
+      expect(screen.getByText("Suffix must be 5 characters or less")).toBeDefined();
+
+      // Correct to valid value
+      fireEvent.change(suffixInput, { target: { value: "12345" } });
+
+      // Error should be cleared
+      expect(screen.queryByText("Suffix must be 5 characters or less")).toBeNull();
+
+      // Add button should be enabled
+      const addButton = screen.getByRole("button", { name: /^add$/i });
+      expect(addButton).not.toBeDisabled();
+    });
+
+    it("add form: allows empty suffix without error", async () => {
+      const user = userEvent.setup();
+      mockInvoke.mockResolvedValue([]);
+
+      render(<Dictionary />, { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("Trigger phrase")).toBeDefined();
+      });
+
+      // Open settings panel
+      await user.click(screen.getByRole("button", { name: /toggle settings/i }));
+
+      // Suffix is empty by default - no error should be shown
+      expect(screen.queryByText("Suffix must be 5 characters or less")).toBeNull();
+
+      // Add button should be enabled
+      const addButton = screen.getByRole("button", { name: /^add$/i });
+      expect(addButton).not.toBeDisabled();
+    });
+
+    it("edit: shows error and disables save when suffix exceeds 5 characters", async () => {
+      const user = userEvent.setup();
+      mockInvoke.mockResolvedValue(sampleEntries);
+
+      render(<Dictionary />, { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(screen.getByText('"brb"')).toBeDefined();
+      });
+
+      // Click edit button
+      await user.click(screen.getByRole("button", { name: /edit brb/i }));
+
+      // Open settings panel in edit mode
+      const toggleButtons = screen.getAllByRole("button", { name: /toggle settings/i });
+      await user.click(toggleButtons[1]); // Edit mode toggle
+
+      // Set invalid suffix value (bypass maxLength via fireEvent)
+      const suffixInput = screen.getByLabelText("Suffix");
+      fireEvent.change(suffixInput, { target: { value: "123456" } });
+
+      // Error should be shown
+      expect(screen.getByText("Suffix must be 5 characters or less")).toBeDefined();
+
+      // Save button should be disabled
+      const saveButton = screen.getByRole("button", { name: /save changes/i });
+      expect(saveButton).toBeDisabled();
+    });
+
+    it("edit: clears error when suffix is corrected", async () => {
+      const user = userEvent.setup();
+      mockInvoke.mockResolvedValue(sampleEntries);
+
+      render(<Dictionary />, { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(screen.getByText('"brb"')).toBeDefined();
+      });
+
+      // Click edit button
+      await user.click(screen.getByRole("button", { name: /edit brb/i }));
+
+      // Open settings panel in edit mode
+      const toggleButtons = screen.getAllByRole("button", { name: /toggle settings/i });
+      await user.click(toggleButtons[1]); // Edit mode toggle
+
+      // Set invalid suffix value
+      const suffixInput = screen.getByLabelText("Suffix");
+      fireEvent.change(suffixInput, { target: { value: "123456" } });
+
+      // Error should be shown
+      expect(screen.getByText("Suffix must be 5 characters or less")).toBeDefined();
+
+      // Correct to valid value
+      fireEvent.change(suffixInput, { target: { value: "12345" } });
+
+      // Error should be cleared
+      expect(screen.queryByText("Suffix must be 5 characters or less")).toBeNull();
+
+      // Save button should be enabled
+      const saveButton = screen.getByRole("button", { name: /save changes/i });
+      expect(saveButton).not.toBeDisabled();
     });
   });
 });
