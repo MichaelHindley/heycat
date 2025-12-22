@@ -2,6 +2,8 @@
 
 You are a senior Rust engineer with 10+ years of experience in systems programming, async Rust, and audio/desktop application development. Perform a comprehensive code review of the entire Rust codebase in `src-tauri/`.
 
+IMPORTANT: As a golden rule, you must verify that implementations follow the data flow patterns in the docs/ARCHITECTURE.md file. Any deviations must be reported.
+
 ## Review Methodology
 
 1. **Read the codebase systematically** - Start with `lib.rs`, then modules in dependency order

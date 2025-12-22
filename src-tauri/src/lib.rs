@@ -160,9 +160,9 @@ pub fn run() {
                 app.handle().clone(),
             );
 
-            // Load dictionary entries and create expander for transcription service
+            // Create shared dictionary store (used by both transcription and CRUD commands)
             debug!("Loading dictionary entries...");
-            {
+            let dictionary_store = {
                 let mut store = match dictionary::DictionaryStore::with_default_path() {
                     Ok(store) => store,
                     Err(e) => {
@@ -173,6 +173,12 @@ pub fn run() {
                 if let Err(e) = store.load() {
                     warn!("Failed to load dictionary entries: {}, using empty dictionary", e);
                 }
+                Mutex::new(store)
+            };
+
+            // Create expander for transcription service from shared store
+            {
+                let store = dictionary_store.lock().expect("dictionary store lock poisoned during setup");
                 let entries: Vec<dictionary::DictionaryEntry> = store.list().into_iter().cloned().collect();
                 if entries.is_empty() {
                     debug!("No dictionary entries loaded");
@@ -320,20 +326,7 @@ pub fn run() {
             let keyboard_capture = Arc::new(Mutex::new(keyboard_capture::KeyboardCapture::new()));
             app.manage(keyboard_capture);
 
-            // Create and manage dictionary store state for CRUD commands
-            let dictionary_store = {
-                let mut store = match dictionary::DictionaryStore::with_default_path() {
-                    Ok(store) => store,
-                    Err(e) => {
-                        warn!("Failed to initialize dictionary store for commands: {}, using temp path", e);
-                        dictionary::DictionaryStore::new(std::path::PathBuf::new())
-                    }
-                };
-                if let Err(e) = store.load() {
-                    warn!("Failed to load dictionary entries for commands: {}", e);
-                }
-                Mutex::new(store)
-            };
+            // Manage shared dictionary store for CRUD commands
             app.manage(dictionary_store);
 
             info!("Setup complete! Ready to record.");
