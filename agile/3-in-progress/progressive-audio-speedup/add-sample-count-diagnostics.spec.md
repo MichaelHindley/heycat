@@ -1,8 +1,9 @@
 ---
-status: pending
+status: in-review
 created: 2025-12-22
 completed: null
 dependencies: []
+review_round: 1
 ---
 
 # Spec: Add atomic counters to track input/output sample counts in CallbackState

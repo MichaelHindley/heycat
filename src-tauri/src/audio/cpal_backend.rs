@@ -188,6 +188,59 @@ impl CallbackState {
         }
     }
 
+    /// Flush any remaining samples in the resample buffer
+    ///
+    /// Called from stop() after the stream is dropped but before CallbackState is dropped.
+    /// This ensures residual samples that didn't fill a complete chunk are processed.
+    fn flush_residuals(&self) {
+        // Only need to flush if we have a resampler
+        let Some(ref resampler) = self.resampler else {
+            return;
+        };
+
+        let mut resample_buf = match self.resample_buffer.lock() {
+            Ok(buf) => buf,
+            Err(_) => return,
+        };
+
+        let residual_count = resample_buf.len();
+        if residual_count == 0 || residual_count >= self.chunk_size {
+            // No residuals, or already a full chunk (would have been processed)
+            return;
+        }
+
+        crate::debug!("Flushing {} residual samples from resample buffer", residual_count);
+
+        // Zero-pad to chunk size
+        resample_buf.resize(self.chunk_size, 0.0);
+
+        // Process the padded chunk
+        if let Ok(mut r) = resampler.lock() {
+            if let Ok(output) = r.process(&[resample_buf.as_slice()], None) {
+                if !output.is_empty() {
+                    // Calculate expected output samples based on residual count and resample ratio
+                    let expected_ratio = TARGET_SAMPLE_RATE as f64 / self.device_sample_rate as f64;
+                    let expected_output = (residual_count as f64 * expected_ratio).ceil() as usize;
+                    let actual_output = output[0].len().min(expected_output);
+
+                    // Track these output samples
+                    self.output_sample_count.fetch_add(actual_output, Ordering::Relaxed);
+
+                    // Push only the meaningful samples (not the zero-padded tail)
+                    self.buffer.push_samples(&output[0][..actual_output]);
+
+                    crate::debug!(
+                        "Flushed {} residual samples -> {} output samples",
+                        residual_count, actual_output
+                    );
+                }
+            }
+        }
+
+        // Clear the buffer
+        resample_buf.clear();
+    }
+
     /// Log sample count diagnostics when recording stops
     fn log_sample_diagnostics(&self) {
         let input = self.input_sample_count.load(Ordering::Relaxed);
@@ -389,17 +442,20 @@ impl AudioCaptureBackend for CpalBackend {
     fn stop(&mut self) -> Result<(), AudioCaptureError> {
         crate::debug!("Stopping audio capture...");
 
-        // Log sample diagnostics before dropping callback state
-        if let Some(ref callback_state) = self.callback_state {
-            callback_state.log_sample_diagnostics();
-        }
-
+        // First, stop the stream so audio callback stops running
         if let Some(stream) = self.stream.take() {
             // Stream will be dropped here, stopping capture
             drop(stream);
             crate::debug!("Audio stream stopped");
         } else {
             crate::debug!("No active stream to stop");
+        }
+
+        // Now flush any residual samples and log diagnostics
+        // This must happen after stream is stopped but before callback_state is dropped
+        if let Some(ref callback_state) = self.callback_state {
+            callback_state.flush_residuals();
+            callback_state.log_sample_diagnostics();
         }
 
         // Clear callback state

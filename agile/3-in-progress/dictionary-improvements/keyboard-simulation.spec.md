@@ -1,8 +1,9 @@
 ---
-status: in-progress
+status: in-review
 created: 2025-12-22
 completed: null
 dependencies: ["backend-storage-update"]
+review_round: 1
 ---
 
 # Spec: Implement enter keypress simulation in backend
