@@ -11,7 +11,7 @@ use rubato::{FftFixedIn, Resampler};
 
 use super::{AudioBuffer, AudioCaptureBackend, AudioCaptureError, CaptureState, StopReason, MAX_RESAMPLE_BUFFER_SAMPLES, TARGET_SAMPLE_RATE};
 use crate::audio_constants::RESAMPLE_CHUNK_SIZE;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
@@ -19,6 +19,8 @@ use std::sync::{Arc, Mutex};
 pub struct CpalBackend {
     state: CaptureState,
     stream: Option<Stream>,
+    /// Stores callback state reference for diagnostic logging on stop
+    callback_state: Option<Arc<CallbackState>>,
 }
 
 impl CpalBackend {
@@ -27,6 +29,7 @@ impl CpalBackend {
         Self {
             state: CaptureState::Idle,
             stream: None,
+            callback_state: None,
         }
     }
 }
@@ -91,6 +94,12 @@ struct CallbackState {
     resample_buffer: Arc<Mutex<Vec<f32>>>,
     chunk_buffer: Arc<Mutex<Vec<f32>>>,
     chunk_size: usize,
+    /// Tracks total input samples received from device (for diagnostic logging)
+    input_sample_count: Arc<AtomicUsize>,
+    /// Tracks total output samples after resampling (for diagnostic logging)
+    output_sample_count: Arc<AtomicUsize>,
+    /// Device sample rate (for ratio calculation in diagnostics)
+    device_sample_rate: u32,
 }
 
 impl CallbackState {
@@ -99,6 +108,9 @@ impl CallbackState {
     /// This is the core audio processing logic, extracted to avoid duplication
     /// across F32, I16, and U16 sample format callbacks.
     fn process_samples(&self, f32_samples: &[f32]) {
+        // Track input samples for diagnostic logging
+        self.input_sample_count.fetch_add(f32_samples.len(), Ordering::Relaxed);
+
         let samples_to_add = if let Some(ref resampler) = self.resampler {
             // Accumulate samples and resample when we have enough
             let mut resample_buf = match self.resample_buffer.lock() {
@@ -161,6 +173,9 @@ impl CallbackState {
             return;
         }
 
+        // Track output samples for diagnostic logging
+        self.output_sample_count.fetch_add(samples_to_add.len(), Ordering::Relaxed);
+
         // Push samples to ring buffer (lock-free)
         let pushed = self.buffer.push_samples(&samples_to_add);
         if pushed < samples_to_add.len() {
@@ -171,6 +186,26 @@ impl CallbackState {
                 }
             }
         }
+    }
+
+    /// Log sample count diagnostics when recording stops
+    fn log_sample_diagnostics(&self) {
+        let input = self.input_sample_count.load(Ordering::Relaxed);
+        let output = self.output_sample_count.load(Ordering::Relaxed);
+
+        if input == 0 {
+            crate::debug!("Sample diagnostics: No samples recorded");
+            return;
+        }
+
+        let actual_ratio = output as f64 / input as f64;
+        let expected_ratio = TARGET_SAMPLE_RATE as f64 / self.device_sample_rate as f64;
+        let ratio_error = ((actual_ratio - expected_ratio) / expected_ratio * 100.0).abs();
+
+        crate::info!(
+            "Sample diagnostics: input={}, output={}, actual_ratio={:.6}, expected_ratio={:.6}, error={:.2}%",
+            input, output, actual_ratio, expected_ratio, ratio_error
+        );
     }
 }
 
@@ -280,6 +315,9 @@ impl AudioCaptureBackend for CpalBackend {
             resample_buffer,
             chunk_buffer,
             chunk_size: RESAMPLE_CHUNK_SIZE,
+            input_sample_count: Arc::new(AtomicUsize::new(0)),
+            output_sample_count: Arc::new(AtomicUsize::new(0)),
+            device_sample_rate,
         });
 
         // Build the input stream based on sample format
@@ -311,7 +349,7 @@ impl AudioCaptureBackend for CpalBackend {
                 )
             }
             cpal::SampleFormat::U16 => {
-                let state = callback_state;
+                let state = callback_state.clone();
                 device.build_input_stream(
                     &config.into(),
                     move |data: &[u16], _: &cpal::InputCallbackInfo| {
@@ -342,6 +380,7 @@ impl AudioCaptureBackend for CpalBackend {
 
         crate::info!("Audio stream started successfully at {}Hz (output: {}Hz)", device_sample_rate, TARGET_SAMPLE_RATE);
         self.stream = Some(stream);
+        self.callback_state = Some(callback_state);
         self.state = CaptureState::Capturing;
         // Always return TARGET_SAMPLE_RATE since we resample if needed
         Ok(TARGET_SAMPLE_RATE)
@@ -349,6 +388,12 @@ impl AudioCaptureBackend for CpalBackend {
 
     fn stop(&mut self) -> Result<(), AudioCaptureError> {
         crate::debug!("Stopping audio capture...");
+
+        // Log sample diagnostics before dropping callback state
+        if let Some(ref callback_state) = self.callback_state {
+            callback_state.log_sample_diagnostics();
+        }
+
         if let Some(stream) = self.stream.take() {
             // Stream will be dropped here, stopping capture
             drop(stream);
@@ -356,6 +401,9 @@ impl AudioCaptureBackend for CpalBackend {
         } else {
             crate::debug!("No active stream to stop");
         }
+
+        // Clear callback state
+        self.callback_state = None;
         self.state = CaptureState::Stopped;
         Ok(())
     }

@@ -357,6 +357,23 @@ where
                         crate::warn!("Failed to auto-paste: {}", e);
                     } else {
                         crate::debug!("Auto-pasted transcribed text");
+
+                        // Simulate Enter keypress if auto_enter was triggered
+                        if expansion_result.should_press_enter {
+                            crate::debug!("Auto-enter triggered, simulating Enter keypress");
+                            match crate::keyboard::KeyboardSimulator::new() {
+                                Ok(mut simulator) => {
+                                    if let Err(e) = simulator.simulate_enter_keypress() {
+                                        crate::warn!("Failed to simulate enter keypress: {}", e);
+                                    } else {
+                                        crate::debug!("Successfully simulated Enter keypress");
+                                    }
+                                }
+                                Err(e) => {
+                                    crate::warn!("Failed to create keyboard simulator: {}", e);
+                                }
+                            }
+                        }
                     }
                 }
             }

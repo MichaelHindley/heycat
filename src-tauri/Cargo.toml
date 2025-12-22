@@ -41,6 +41,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 async-trait = "0.1"
 strsim = "0.11"
 thiserror = "2"
+enigo = "0.2"
 regex = "1"
 ringbuf = "0.4"
 core-foundation = "0.10"

@@ -9,6 +9,7 @@ mod commands;
 mod dictionary;
 mod events;
 mod hotkey;
+mod keyboard;
 mod keyboard_capture;
 mod listening;
 mod model;
