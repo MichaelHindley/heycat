@@ -140,4 +140,5 @@ fn test_backward_compatible_deserialization() {
 
     assert_eq!(entry.suffix, None);
     assert!(!entry.auto_enter);
+    assert!(!entry.disable_suffix);
 }

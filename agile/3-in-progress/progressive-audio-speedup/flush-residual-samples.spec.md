@@ -1,8 +1,9 @@
 ---
-status: pending
+status: in-review
 created: 2025-12-22
 completed: null
 dependencies: ["add-sample-count-diagnostics"]
+review_round: 1
 ---
 
 # Spec: Flush remaining samples from resample buffer when recording stops

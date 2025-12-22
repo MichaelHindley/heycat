@@ -172,3 +172,113 @@ fn test_expand_no_match_returns_false() {
     assert_eq!(result.expanded_text, "hello world");
     assert!(!result.should_press_enter); // No match, no auto_enter
 }
+
+// ============================================================================
+// disable_suffix tests
+// ============================================================================
+
+fn make_entry_with_disable_suffix(trigger: &str, expansion: &str) -> DictionaryEntry {
+    DictionaryEntry {
+        id: format!("test-{}", trigger),
+        trigger: trigger.to_string(),
+        expansion: expansion.to_string(),
+        suffix: None,
+        auto_enter: false,
+        disable_suffix: true,
+    }
+}
+
+#[test]
+fn test_expand_with_disable_suffix_strips_trailing_punctuation() {
+    // When disable_suffix is true, trailing punctuation after trigger should be stripped
+    let entries = vec![make_entry_with_disable_suffix("brb", "be right back")];
+    let expander = DictionaryExpander::new(&entries);
+
+    // With disable_suffix, the trailing period from transcription is stripped
+    assert_eq!(expander.expand("brb.").expanded_text, "be right back");
+    assert_eq!(expander.expand("brb!").expanded_text, "be right back");
+    assert_eq!(expander.expand("brb?").expanded_text, "be right back");
+    assert_eq!(expander.expand("brb,").expanded_text, "be right back");
+    assert_eq!(expander.expand("brb;").expanded_text, "be right back");
+    assert_eq!(expander.expand("brb:").expanded_text, "be right back");
+}
+
+#[test]
+fn test_expand_with_disable_suffix_no_trailing_punctuation() {
+    // When disable_suffix is true and there's no trailing punctuation, works normally
+    let entries = vec![make_entry_with_disable_suffix("brb", "be right back")];
+    let expander = DictionaryExpander::new(&entries);
+
+    assert_eq!(expander.expand("brb").expanded_text, "be right back");
+    assert_eq!(
+        expander.expand("I'll brb").expanded_text,
+        "I'll be right back"
+    );
+}
+
+#[test]
+fn test_expand_with_disable_suffix_multiple_punctuation() {
+    // When disable_suffix is true, multiple trailing punctuation marks are stripped
+    let entries = vec![make_entry_with_disable_suffix("brb", "be right back")];
+    let expander = DictionaryExpander::new(&entries);
+
+    assert_eq!(expander.expand("brb...").expanded_text, "be right back");
+    assert_eq!(expander.expand("brb!?").expanded_text, "be right back");
+}
+
+#[test]
+fn test_expand_without_disable_suffix_preserves_punctuation() {
+    // When disable_suffix is false (default), punctuation is preserved
+    let entries = vec![make_entry("brb", "be right back")];
+    let expander = DictionaryExpander::new(&entries);
+
+    assert_eq!(expander.expand("brb.").expanded_text, "be right back.");
+    assert_eq!(expander.expand("brb!").expanded_text, "be right back!");
+}
+
+#[test]
+fn test_expand_disable_suffix_ignores_explicit_suffix() {
+    // When disable_suffix is true, any explicit suffix field is ignored
+    let entry = DictionaryEntry {
+        id: "test".to_string(),
+        trigger: "brb".to_string(),
+        expansion: "be right back".to_string(),
+        suffix: Some(".".to_string()), // This should be ignored
+        auto_enter: false,
+        disable_suffix: true, // This takes precedence
+    };
+    let expander = DictionaryExpander::new(&[entry]);
+
+    // The suffix "." should NOT be added because disable_suffix is true
+    assert_eq!(expander.expand("brb").expanded_text, "be right back");
+}
+
+#[test]
+fn test_expand_with_suffix_and_disable_suffix_false() {
+    // Verify normal suffix behavior when disable_suffix is false
+    let entry = DictionaryEntry {
+        id: "test".to_string(),
+        trigger: "brb".to_string(),
+        expansion: "be right back".to_string(),
+        suffix: Some(".".to_string()),
+        auto_enter: false,
+        disable_suffix: false,
+    };
+    let expander = DictionaryExpander::new(&[entry]);
+
+    // The suffix "." should be added
+    assert_eq!(expander.expand("brb").expanded_text, "be right back.");
+}
+
+#[test]
+fn test_expand_disable_suffix_in_sentence() {
+    // Test disable_suffix within a sentence context
+    let entries = vec![make_entry_with_disable_suffix("brb", "be right back")];
+    let expander = DictionaryExpander::new(&entries);
+
+    // Punctuation after "brb" is stripped, rest of sentence preserved
+    assert_eq!(
+        expander.expand("I'll brb. Talk soon").expanded_text,
+        "I'll be right back Talk soon"
+    );
+}
