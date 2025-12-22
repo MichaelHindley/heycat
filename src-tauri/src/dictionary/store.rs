@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 /// A dictionary entry for text expansion
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 #[allow(dead_code)]
 pub struct DictionaryEntry {
     /// Unique identifier for the entry
@@ -25,11 +26,11 @@ pub struct DictionaryEntry {
     #[serde(default)]
     pub suffix: Option<String>,
     /// Whether to simulate enter keypress after expansion
-    #[serde(default)]
+    #[serde(default, alias = "auto_enter")]
     pub auto_enter: bool,
     /// Whether to suppress any trailing punctuation from the transcription
     /// When true, trailing punctuation after the trigger match is stripped
-    #[serde(default)]
+    #[serde(default, alias = "disable_suffix")]
     pub disable_suffix: bool,
 }
 
