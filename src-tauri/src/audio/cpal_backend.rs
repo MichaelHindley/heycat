@@ -464,3 +464,176 @@ impl AudioCaptureBackend for CpalBackend {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod resampler_tests {
+    use super::*;
+    use rubato::Resampler;
+
+    const SOURCE_RATE: usize = 48000;
+    const TARGET_RATE: usize = 16000;
+    const CHUNK_SIZE: usize = RESAMPLE_CHUNK_SIZE;
+
+    /// Test that the FFT resampler eventually produces output after enough input.
+    /// The FFT resampler has internal latency and may not produce output on every call.
+    #[test]
+    fn test_resampler_produces_output_after_warmup() {
+        let mut resampler =
+            FftFixedIn::<f32>::new(SOURCE_RATE, TARGET_RATE, CHUNK_SIZE, 1, 1).unwrap();
+
+        let mut total_output = 0usize;
+
+        // Process multiple chunks to warm up the resampler
+        for _ in 0..10 {
+            let chunk: Vec<f32> = vec![0.5f32; CHUNK_SIZE];
+            let output = resampler.process(&[&chunk], None).unwrap();
+            total_output += output[0].len();
+        }
+
+        // After enough input, we should have some output
+        assert!(
+            total_output > 0,
+            "Resampler should produce output after processing multiple chunks"
+        );
+    }
+
+    /// Test that sample ratio converges to expected value over many chunks.
+    /// The FFT resampler has internal latency that can cause ratio drift on small samples.
+    #[test]
+    fn test_sample_ratio_converges() {
+        let mut resampler =
+            FftFixedIn::<f32>::new(SOURCE_RATE, TARGET_RATE, CHUNK_SIZE, 1, 1).unwrap();
+        let expected_ratio = TARGET_RATE as f64 / SOURCE_RATE as f64;
+
+        let mut total_input = 0usize;
+        let mut total_output = 0usize;
+
+        // Process many chunks to get past initial latency effects
+        for _ in 0..100 {
+            let chunk: Vec<f32> = vec![0.5f32; CHUNK_SIZE];
+            let output = resampler.process(&[&chunk], None).unwrap();
+
+            total_input += CHUNK_SIZE;
+            total_output += output[0].len();
+        }
+
+        // With enough samples, ratio should be close to expected
+        // Allow 5% tolerance due to FFT windowing effects
+        let actual_ratio = total_output as f64 / total_input as f64;
+        let ratio_error = ((actual_ratio - expected_ratio) / expected_ratio * 100.0).abs();
+        assert!(
+            ratio_error < 5.0,
+            "Ratio error {:.2}% exceeds 5%",
+            ratio_error
+        );
+    }
+
+    /// Test edge case: flush when buffer is empty (should be a no-op)
+    #[test]
+    fn test_flush_with_empty_buffer() {
+        let resampler =
+            FftFixedIn::<f32>::new(SOURCE_RATE, TARGET_RATE, CHUNK_SIZE, 1, 1).unwrap();
+
+        // Create CallbackState with empty resample buffer
+        let callback_state = CallbackState {
+            buffer: AudioBuffer::new(),
+            stop_signal: None,
+            signaled: Arc::new(AtomicBool::new(false)),
+            resampler: Some(Arc::new(Mutex::new(resampler))),
+            resample_buffer: Arc::new(Mutex::new(Vec::new())),
+            chunk_buffer: Arc::new(Mutex::new(vec![0.0f32; CHUNK_SIZE])),
+            chunk_size: CHUNK_SIZE,
+            input_sample_count: Arc::new(AtomicUsize::new(0)),
+            output_sample_count: Arc::new(AtomicUsize::new(0)),
+            device_sample_rate: SOURCE_RATE as u32,
+        };
+
+        // Flush should be a no-op when buffer is empty
+        callback_state.flush_residuals();
+
+        // Verify no samples were output
+        assert_eq!(
+            callback_state.output_sample_count.load(Ordering::Relaxed),
+            0
+        );
+    }
+
+    /// Test that resample buffer is cleared after flush
+    #[test]
+    fn test_buffer_cleared_after_flush() {
+        // First warm up the resampler so it has internal state
+        let mut resampler =
+            FftFixedIn::<f32>::new(SOURCE_RATE, TARGET_RATE, CHUNK_SIZE, 1, 1).unwrap();
+
+        // Process several chunks to warm up
+        for _ in 0..5 {
+            let chunk: Vec<f32> = vec![0.5f32; CHUNK_SIZE];
+            let _ = resampler.process(&[&chunk], None).unwrap();
+        }
+
+        // Create CallbackState with residual samples in buffer
+        let residual_samples: Vec<f32> = vec![0.5f32; 500];
+        let callback_state = CallbackState {
+            buffer: AudioBuffer::new(),
+            stop_signal: None,
+            signaled: Arc::new(AtomicBool::new(false)),
+            resampler: Some(Arc::new(Mutex::new(resampler))),
+            resample_buffer: Arc::new(Mutex::new(residual_samples)),
+            chunk_buffer: Arc::new(Mutex::new(vec![0.0f32; CHUNK_SIZE])),
+            chunk_size: CHUNK_SIZE,
+            input_sample_count: Arc::new(AtomicUsize::new(5 * CHUNK_SIZE + 500)),
+            output_sample_count: Arc::new(AtomicUsize::new(0)),
+            device_sample_rate: SOURCE_RATE as u32,
+        };
+
+        // Flush the residual samples
+        callback_state.flush_residuals();
+
+        // Verify buffer is now empty
+        let resample_buf = callback_state.resample_buffer.lock().unwrap();
+        assert!(
+            resample_buf.is_empty(),
+            "Resample buffer should be empty after flush"
+        );
+
+        // The flush should process the residual samples through the resampler.
+        // Due to FFT latency, we may or may not get output, so just verify the buffer is cleared.
+    }
+
+    /// Test that flush processes residuals without panicking
+    #[test]
+    fn test_flush_residuals_does_not_panic() {
+        let resampler =
+            FftFixedIn::<f32>::new(SOURCE_RATE, TARGET_RATE, CHUNK_SIZE, 1, 1).unwrap();
+
+        // Test with various residual sizes
+        for residual_size in [1, 100, 500, 1023] {
+            let residual_samples: Vec<f32> = vec![0.5f32; residual_size];
+            let callback_state = CallbackState {
+                buffer: AudioBuffer::new(),
+                stop_signal: None,
+                signaled: Arc::new(AtomicBool::new(false)),
+                resampler: Some(Arc::new(Mutex::new(
+                    FftFixedIn::<f32>::new(SOURCE_RATE, TARGET_RATE, CHUNK_SIZE, 1, 1).unwrap(),
+                ))),
+                resample_buffer: Arc::new(Mutex::new(residual_samples)),
+                chunk_buffer: Arc::new(Mutex::new(vec![0.0f32; CHUNK_SIZE])),
+                chunk_size: CHUNK_SIZE,
+                input_sample_count: Arc::new(AtomicUsize::new(residual_size)),
+                output_sample_count: Arc::new(AtomicUsize::new(0)),
+                device_sample_rate: SOURCE_RATE as u32,
+            };
+
+            // Should not panic
+            callback_state.flush_residuals();
+
+            // Buffer should be cleared
+            let resample_buf = callback_state.resample_buffer.lock().unwrap();
+            assert!(
+                resample_buf.is_empty(),
+                "Buffer should be empty after flush with {} residuals",
+                residual_size
+            );
+        }
+    }
+}
