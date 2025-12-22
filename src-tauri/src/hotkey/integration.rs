@@ -316,6 +316,8 @@ pub struct HotkeyIntegration<R: RecordingEventEmitter, T: TranscriptionEventEmit
     // === Audio (partially grouped - thread is optional, state may be separate) ===
     /// Optional audio thread handle - when present, starts/stops capture on toggle
     audio_thread: Option<Arc<AudioThreadHandle>>,
+    /// Optional shared denoiser for noise suppression (loaded once at startup)
+    shared_denoiser: Option<Arc<crate::audio::SharedDenoiser>>,
     /// Reference to recording state for getting audio buffer in transcription thread
     recording_state: Option<Arc<Mutex<RecordingManager>>>,
     /// Recording detectors for silence-based auto-stop (shared with wake word flow)
@@ -353,6 +355,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             silence: SilenceDetectionConfig::default(),
             // Audio (kept separate for flexible builder pattern)
             audio_thread: None,
+            shared_denoiser: None,
             recording_state: None,
             recording_detectors: None,
             // Listening/wake word
@@ -386,6 +389,18 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
     /// Add an audio thread handle (builder pattern)
     pub fn with_audio_thread(mut self, handle: Arc<AudioThreadHandle>) -> Self {
         self.audio_thread = Some(handle);
+        self
+    }
+
+    /// Add shared denoiser for noise suppression (builder pattern)
+    ///
+    /// When set, the denoiser will be used for noise suppression during recording.
+    /// The denoiser is loaded once at app startup to eliminate the ~2s loading delay.
+    pub fn with_shared_denoiser(
+        mut self,
+        denoiser: Option<Arc<crate::audio::SharedDenoiser>>,
+    ) -> Self {
+        self.shared_denoiser = denoiser;
         self
     }
 
@@ -695,6 +710,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             silence: SilenceDetectionConfig::default(),
             // Audio (kept separate for flexible builder pattern)
             audio_thread: None,
+            shared_denoiser: None,
             recording_state: None,
             recording_detectors: None,
             // Listening/wake word
@@ -762,7 +778,9 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                 // Use unified command implementation
                 // Read selected device from persistent settings store
                 let device_name = self.get_selected_audio_device();
-                match start_recording_impl(state, self.audio_thread.as_deref(), model_available, device_name) {
+                // Clone shared denoiser for this recording (if available)
+                let denoiser = self.shared_denoiser.clone();
+                match start_recording_impl(state, self.audio_thread.as_deref(), model_available, device_name, denoiser) {
                     Ok(()) => {
                         self.recording_emitter
                             .emit_recording_started(RecordingStartedPayload {

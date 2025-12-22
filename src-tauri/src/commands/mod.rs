@@ -24,7 +24,7 @@ use crate::events::{
     RecordingStoppedPayload, TranscriptionCompletedPayload, TranscriptionErrorPayload,
     TranscriptionEventEmitter, TranscriptionStartedPayload,
 };
-use crate::audio::{AudioDeviceError, AudioInputDevice, AudioThreadHandle, StopReason};
+use crate::audio::{AudioDeviceError, AudioInputDevice, AudioThreadHandle, SharedDenoiser, StopReason};
 use crate::parakeet::SharedTranscriptionModel;
 use crate::recording::{AudioData, RecordingManager, RecordingMetadata, RecordingState};
 use std::sync::{Arc, Mutex};
@@ -57,6 +57,9 @@ pub type HotkeyIntegrationState = Arc<Mutex<crate::hotkey::HotkeyIntegration<Tau
 
 /// Type alias for recording detectors state
 pub type RecordingDetectorsState = Arc<Mutex<crate::listening::RecordingDetectors>>;
+
+/// Type alias for shared denoiser state
+pub type SharedDenoiserState = Option<Arc<SharedDenoiser>>;
 
 /// Type alias for transcription service state
 pub type TranscriptionServiceState = Arc<crate::transcription::RecordingTranscriptionService<TauriEventEmitter, TauriEventEmitter>>;
@@ -165,6 +168,7 @@ pub fn start_recording(
     app_handle: AppHandle,
     state: State<'_, ProductionState>,
     audio_thread: State<'_, AudioThreadState>,
+    shared_denoiser: State<'_, SharedDenoiserState>,
     device_name: Option<String>,
 ) -> Result<(), String> {
     // Check for audio devices first
@@ -202,6 +206,7 @@ pub fn start_recording(
         Some(audio_thread.as_ref()),
         model_available,
         device_name,
+        (*shared_denoiser).clone(),
     );
 
     match &result {

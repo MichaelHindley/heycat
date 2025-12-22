@@ -10,7 +10,7 @@ use cpal::{SampleRate, Stream};
 use rubato::{FftFixedIn, Resampler};
 
 use super::{AudioBuffer, AudioCaptureBackend, AudioCaptureError, CaptureState, StopReason, MAX_RESAMPLE_BUFFER_SAMPLES, TARGET_SAMPLE_RATE};
-use super::denoiser::{load_embedded_models, DtlnDenoiser};
+use super::denoiser::{load_embedded_models, DtlnDenoiser, SharedDenoiser};
 use crate::audio_constants::RESAMPLE_CHUNK_SIZE;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
@@ -32,6 +32,27 @@ impl CpalBackend {
             stream: None,
             callback_state: None,
         }
+    }
+
+    /// Start audio capture with optional shared denoiser
+    ///
+    /// This is the main implementation. When a shared denoiser is provided,
+    /// it's used directly (eliminating the ~2s model loading delay).
+    /// Otherwise, falls back to loading the denoiser inline.
+    ///
+    /// # Arguments
+    /// * `buffer` - Audio buffer to fill with captured samples
+    /// * `stop_signal` - Optional channel to signal auto-stop events
+    /// * `device_name` - Optional device name; falls back to default
+    /// * `shared_denoiser` - Optional pre-loaded shared denoiser
+    pub fn start_with_denoiser(
+        &mut self,
+        buffer: AudioBuffer,
+        stop_signal: Option<Sender<StopReason>>,
+        device_name: Option<String>,
+        shared_denoiser: Option<Arc<SharedDenoiser>>,
+    ) -> Result<u32, AudioCaptureError> {
+        self.start_internal(buffer, stop_signal, device_name, shared_denoiser)
     }
 }
 
@@ -279,6 +300,45 @@ impl AudioCaptureBackend for CpalBackend {
         stop_signal: Option<Sender<StopReason>>,
         device_name: Option<String>,
     ) -> Result<u32, AudioCaptureError> {
+        // Delegate to internal implementation without shared denoiser
+        self.start_internal(buffer, stop_signal, device_name, None)
+    }
+
+    fn stop(&mut self) -> Result<(), AudioCaptureError> {
+        crate::debug!("Stopping audio capture...");
+
+        // First, stop the stream so audio callback stops running
+        if let Some(stream) = self.stream.take() {
+            // Stream will be dropped here, stopping capture
+            drop(stream);
+            crate::debug!("Audio stream stopped");
+        } else {
+            crate::debug!("No active stream to stop");
+        }
+
+        // Now flush any residual samples and log diagnostics
+        // This must happen after stream is stopped but before callback_state is dropped
+        if let Some(ref callback_state) = self.callback_state {
+            callback_state.flush_residuals();
+            callback_state.log_sample_diagnostics();
+        }
+
+        // Clear callback state
+        self.callback_state = None;
+        self.state = CaptureState::Stopped;
+        Ok(())
+    }
+}
+
+impl CpalBackend {
+    /// Internal start implementation that accepts optional shared denoiser
+    fn start_internal(
+        &mut self,
+        buffer: AudioBuffer,
+        stop_signal: Option<Sender<StopReason>>,
+        device_name: Option<String>,
+        shared_denoiser: Option<Arc<SharedDenoiser>>,
+    ) -> Result<u32, AudioCaptureError> {
         crate::info!("Starting audio capture (target: {}Hz)...", TARGET_SAMPLE_RATE);
 
         // Get the default audio host
@@ -375,18 +435,28 @@ impl AudioCaptureBackend for CpalBackend {
         // Pre-allocated chunk buffer to avoid allocations in hot path
         let chunk_buffer: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(vec![0.0f32; RESAMPLE_CHUNK_SIZE]));
 
-        // Initialize noise suppression denoiser with graceful degradation
-        let denoiser: Option<Arc<Mutex<DtlnDenoiser>>> = match load_embedded_models() {
-            Ok(models) => {
-                crate::info!("DTLN noise suppression initialized successfully");
-                Some(Arc::new(Mutex::new(DtlnDenoiser::new(models))))
-            }
-            Err(e) => {
-                crate::warn!(
-                    "Failed to initialize noise suppression, continuing without denoising: {}",
-                    e
-                );
-                None
+        // Initialize noise suppression denoiser
+        // Use shared denoiser if provided (eliminates ~2s loading delay), otherwise load inline
+        let denoiser: Option<Arc<Mutex<DtlnDenoiser>>> = if let Some(shared) = shared_denoiser {
+            // Reset the shared denoiser's LSTM states for this new recording
+            shared.reset();
+            crate::info!("Using shared DTLN denoiser (reset for new recording)");
+            Some(shared.inner())
+        } else {
+            // Fallback: load denoiser inline (slow path, ~2s delay)
+            crate::debug!("No shared denoiser provided, loading inline...");
+            match load_embedded_models() {
+                Ok(models) => {
+                    crate::info!("DTLN noise suppression initialized inline");
+                    Some(Arc::new(Mutex::new(DtlnDenoiser::new(models))))
+                }
+                Err(e) => {
+                    crate::warn!(
+                        "Failed to initialize noise suppression, continuing without denoising: {}",
+                        e
+                    );
+                    None
+                }
             }
         };
 
@@ -469,31 +539,6 @@ impl AudioCaptureBackend for CpalBackend {
         self.state = CaptureState::Capturing;
         // Always return TARGET_SAMPLE_RATE since we resample if needed
         Ok(TARGET_SAMPLE_RATE)
-    }
-
-    fn stop(&mut self) -> Result<(), AudioCaptureError> {
-        crate::debug!("Stopping audio capture...");
-
-        // First, stop the stream so audio callback stops running
-        if let Some(stream) = self.stream.take() {
-            // Stream will be dropped here, stopping capture
-            drop(stream);
-            crate::debug!("Audio stream stopped");
-        } else {
-            crate::debug!("No active stream to stop");
-        }
-
-        // Now flush any residual samples and log diagnostics
-        // This must happen after stream is stopped but before callback_state is dropped
-        if let Some(ref callback_state) = self.callback_state {
-            callback_state.flush_residuals();
-            callback_state.log_sample_diagnostics();
-        }
-
-        // Clear callback state
-        self.callback_state = None;
-        self.state = CaptureState::Stopped;
-        Ok(())
     }
 }
 

@@ -9,7 +9,11 @@ use thiserror::Error;
 use tract_onnx::prelude::*;
 
 mod dtln;
-pub use dtln::{DtlnDenoiser, FRAME_SHIFT, FRAME_SIZE, FFT_BINS};
+mod shared;
+// Only DtlnDenoiser is used outside this module (by cpal_backend.rs)
+// FRAME_SHIFT, FRAME_SIZE, FFT_BINS are internal implementation details
+pub use dtln::DtlnDenoiser;
+pub use shared::SharedDenoiser;
 
 #[cfg(test)]
 mod tests;
@@ -25,7 +29,8 @@ pub enum DenoiserError {
         source: TractError,
     },
 
-    /// Model file not found
+    /// Model file not found (used by file-based loading path)
+    #[allow(dead_code)]
     #[error("Model file not found: {0}")]
     ModelNotFound(String),
 
@@ -34,7 +39,8 @@ pub enum DenoiserError {
     ModelOptimizationError(String),
 }
 
-/// Type alias for tract's typed model
+/// Type alias for tract's typed model (public API surface for advanced usage)
+#[allow(dead_code)]
 pub type TypedModel = tract_onnx::prelude::TypedModel;
 
 /// Type alias for a runnable model (optimized for inference)
@@ -57,6 +63,9 @@ pub struct DtlnModels {
 impl DtlnModels {
     /// Load DTLN models from ONNX files
     ///
+    /// This method is for loading models from custom file paths (testing, development).
+    /// Production uses `load_embedded_models()` which loads from compiled-in bytes.
+    ///
     /// # Arguments
     /// * `model_1_path` - Path to model_1.onnx (magnitude masking)
     /// * `model_2_path` - Path to model_2.onnx (time-domain refinement)
@@ -64,6 +73,7 @@ impl DtlnModels {
     /// # Returns
     /// * `Ok(DtlnModels)` - Successfully loaded and optimized models
     /// * `Err(DenoiserError)` - If loading or optimization fails
+    #[allow(dead_code)]
     pub fn load<P: AsRef<Path>>(model_1_path: P, model_2_path: P) -> Result<Self, DenoiserError> {
         let model_1_path = model_1_path.as_ref();
         let model_2_path = model_2_path.as_ref();
@@ -107,7 +117,8 @@ impl DtlnModels {
         Ok(Self { model_1, model_2 })
     }
 
-    /// Load and optimize a single ONNX model from file
+    /// Load and optimize a single ONNX model from file (used by `load()`)
+    #[allow(dead_code)]
     fn load_and_optimize_model(path: &Path) -> Result<RunnableModel, DenoiserError> {
         let model = tract_onnx::onnx()
             .model_for_path(path)

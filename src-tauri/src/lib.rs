@@ -110,8 +110,25 @@ pub fn run() {
             let audio_thread = Arc::new(audio::AudioThreadHandle::spawn());
             debug!("Audio thread spawned");
 
+            // Initialize shared denoiser at startup (eliminates 2s delay on each recording)
+            // Graceful degradation: if loading fails, recordings work without noise suppression
+            debug!("Loading shared DTLN denoiser...");
+            let shared_denoiser = match audio::SharedDenoiser::try_load() {
+                Ok(denoiser) => {
+                    info!("Shared DTLN denoiser loaded successfully (eliminates 2s recording delay)");
+                    Some(Arc::new(denoiser))
+                }
+                Err(e) => {
+                    warn!("Failed to load shared denoiser, recordings will work without noise suppression: {}", e);
+                    None
+                }
+            };
+
             // Manage audio thread state for Tauri commands
             app.manage(audio_thread.clone());
+
+            // Manage shared denoiser for Tauri commands
+            app.manage(shared_denoiser.clone());
 
             // Manage shared transcription model for Tauri commands
             app.manage(shared_transcription_model.clone());
@@ -233,6 +250,7 @@ pub fn run() {
             >::new(recording_emitter)
                 .with_app_handle(app.handle().clone())
                 .with_audio_thread(audio_thread)
+                .with_shared_denoiser(shared_denoiser)
                 .with_shared_transcription_model(shared_transcription_model)
                 .with_transcription_emitter(emitter)
                 .with_recording_state(recording_state.clone())

@@ -25,9 +25,7 @@ pub mod wav;
 pub use wav::{encode_wav, parse_duration_from_file, SystemFileWriter};
 
 pub mod denoiser;
-pub use denoiser::{
-    load_embedded_models, DenoiserError, DtlnDenoiser, DtlnModels, FRAME_SHIFT, FRAME_SIZE,
-};
+pub use denoiser::SharedDenoiser;
 
 #[cfg(test)]
 mod mod_test;
@@ -241,6 +239,11 @@ pub trait AudioCaptureBackend {
     /// * `buffer` - The audio buffer to capture samples into
     /// * `stop_signal` - Optional sender to signal stop (e.g., buffer full, lock error)
     /// * `device_name` - Optional device name to use; falls back to default if not found
+    ///
+    /// Note: Production code uses `CpalBackend::start_with_denoiser()` directly for
+    /// SharedDenoiser support. This trait method is kept for API completeness and
+    /// future mock implementations.
+    #[allow(dead_code)]
     fn start(
         &mut self,
         buffer: AudioBuffer,

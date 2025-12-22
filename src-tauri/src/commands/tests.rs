@@ -35,7 +35,7 @@ fn test_get_recording_state_returns_idle_initially() {
 #[test]
 fn test_get_recording_state_returns_recording_after_start() {
     let state = create_test_state();
-    start_recording_impl(&state, None, true, None).unwrap();
+    start_recording_impl(&state, None, true, None, None).unwrap();
 
     let result = get_recording_state_impl(&state);
     assert!(result.is_ok());
@@ -58,7 +58,7 @@ fn test_recording_state_info_serializes() {
 #[test]
 fn test_start_recording_returns_ok_from_idle() {
     let state = create_test_state();
-    let result = start_recording_impl(&state, None, true, None);
+    let result = start_recording_impl(&state, None, true, None, None);
 
     assert!(result.is_ok());
 }
@@ -66,7 +66,7 @@ fn test_start_recording_returns_ok_from_idle() {
 #[test]
 fn test_start_recording_transitions_to_recording() {
     let state = create_test_state();
-    start_recording_impl(&state, None, true, None).unwrap();
+    start_recording_impl(&state, None, true, None, None).unwrap();
 
     let manager = state.lock().unwrap();
     assert_eq!(manager.get_state(), RecordingState::Recording);
@@ -75,9 +75,9 @@ fn test_start_recording_transitions_to_recording() {
 #[test]
 fn test_start_recording_returns_error_when_already_recording() {
     let state = create_test_state();
-    start_recording_impl(&state, None, true, None).unwrap();
+    start_recording_impl(&state, None, true, None, None).unwrap();
 
-    let result = start_recording_impl(&state, None, true, None);
+    let result = start_recording_impl(&state, None, true, None, None);
 
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("already recording"));
@@ -86,7 +86,7 @@ fn test_start_recording_returns_error_when_already_recording() {
 #[test]
 fn test_start_recording_creates_audio_buffer() {
     let state = create_test_state();
-    start_recording_impl(&state, None, true, None).unwrap();
+    start_recording_impl(&state, None, true, None, None).unwrap();
 
     let manager = state.lock().unwrap();
     let buffer_result = manager.get_audio_buffer();
@@ -109,7 +109,7 @@ fn test_stop_recording_returns_error_when_not_recording() {
 #[test]
 fn test_stop_recording_transitions_to_idle() {
     let state = create_test_state();
-    start_recording_impl(&state, None, true, None).unwrap();
+    start_recording_impl(&state, None, true, None, None).unwrap();
     stop_recording_impl(&state, None, false).unwrap();
 
     let manager = state.lock().unwrap();
@@ -119,7 +119,7 @@ fn test_stop_recording_transitions_to_idle() {
 #[test]
 fn test_stop_recording_transitions_to_listening_when_enabled() {
     let state = create_test_state();
-    start_recording_impl(&state, None, true, None).unwrap();
+    start_recording_impl(&state, None, true, None, None).unwrap();
     stop_recording_impl(&state, None, true).unwrap();
 
     let manager = state.lock().unwrap();
@@ -129,7 +129,7 @@ fn test_stop_recording_transitions_to_listening_when_enabled() {
 #[test]
 fn test_stop_recording_returns_metadata_with_zero_samples() {
     let state = create_test_state();
-    start_recording_impl(&state, None, true, None).unwrap();
+    start_recording_impl(&state, None, true, None, None).unwrap();
 
     let result = stop_recording_impl(&state, None, false);
 
@@ -143,7 +143,7 @@ fn test_stop_recording_returns_metadata_with_zero_samples() {
 #[test]
 fn test_stop_recording_returns_metadata_with_samples() {
     let state = create_test_state();
-    start_recording_impl(&state, None, true, None).unwrap();
+    start_recording_impl(&state, None, true, None, None).unwrap();
 
     // Add samples to the buffer manually
     // TARGET_SAMPLE_RATE is 16000, so 16000 samples = 1 second
@@ -168,7 +168,7 @@ fn test_stop_recording_returns_metadata_with_samples() {
 #[test]
 fn test_stop_recording_returns_correct_duration() {
     let state = create_test_state();
-    start_recording_impl(&state, None, true, None).unwrap();
+    start_recording_impl(&state, None, true, None, None).unwrap();
 
     // Add 2 seconds of samples at 16kHz
     {
@@ -195,7 +195,7 @@ fn test_full_start_stop_cycle() {
     let state = create_test_state();
 
     // Start
-    assert!(start_recording_impl(&state, None, true, None).is_ok());
+    assert!(start_recording_impl(&state, None, true, None, None).is_ok());
     assert_eq!(
         get_recording_state_impl(&state).unwrap().state,
         RecordingState::Recording
@@ -214,7 +214,7 @@ fn test_multiple_start_stop_cycles() {
     let state = create_test_state();
 
     for _ in 0..3 {
-        assert!(start_recording_impl(&state, None, true, None).is_ok());
+        assert!(start_recording_impl(&state, None, true, None, None).is_ok());
         assert!(stop_recording_impl(&state, None, false).is_ok());
     }
 
@@ -240,7 +240,7 @@ fn test_get_last_recording_buffer_returns_error_when_no_recording() {
 #[test]
 fn test_get_last_recording_buffer_available_after_stop() {
     let state = create_test_state();
-    start_recording_impl(&state, None, true, None).unwrap();
+    start_recording_impl(&state, None, true, None, None).unwrap();
 
     // Add samples to the buffer
     {
@@ -266,7 +266,7 @@ fn test_get_last_recording_buffer_available_after_stop() {
 #[test]
 fn test_get_last_recording_buffer_correct_duration() {
     let state = create_test_state();
-    start_recording_impl(&state, None, true, None).unwrap();
+    start_recording_impl(&state, None, true, None, None).unwrap();
 
     // Add 1 second of samples at 16kHz
     {
@@ -285,7 +285,7 @@ fn test_get_last_recording_buffer_correct_duration() {
 #[test]
 fn test_get_last_recording_buffer_persists_in_idle() {
     let state = create_test_state();
-    start_recording_impl(&state, None, true, None).unwrap();
+    start_recording_impl(&state, None, true, None, None).unwrap();
 
     {
         let manager = state.lock().unwrap();
@@ -310,7 +310,7 @@ fn test_get_last_recording_buffer_updates_on_new_recording() {
     let state = create_test_state();
 
     // First recording
-    start_recording_impl(&state, None, true, None).unwrap();
+    start_recording_impl(&state, None, true, None, None).unwrap();
     {
         let manager = state.lock().unwrap();
         let buffer = manager.get_audio_buffer().unwrap();
@@ -320,7 +320,7 @@ fn test_get_last_recording_buffer_updates_on_new_recording() {
     stop_recording_impl(&state, None, false).unwrap();
 
     // Second recording with different data
-    start_recording_impl(&state, None, true, None).unwrap();
+    start_recording_impl(&state, None, true, None, None).unwrap();
     {
         let manager = state.lock().unwrap();
         let buffer = manager.get_audio_buffer().unwrap();
@@ -349,7 +349,7 @@ fn test_clear_last_recording_buffer_succeeds_when_empty() {
 #[test]
 fn test_clear_last_recording_buffer_clears_data() {
     let state = create_test_state();
-    start_recording_impl(&state, None, true, None).unwrap();
+    start_recording_impl(&state, None, true, None, None).unwrap();
 
     {
         let manager = state.lock().unwrap();
@@ -376,14 +376,14 @@ fn test_clear_last_recording_buffer_allows_new_recording() {
     let state = create_test_state();
 
     // Record and stop
-    start_recording_impl(&state, None, true, None).unwrap();
+    start_recording_impl(&state, None, true, None, None).unwrap();
     stop_recording_impl(&state, None, false).unwrap();
 
     // Clear
     clear_last_recording_buffer_impl(&state).unwrap();
 
     // Should be able to record again
-    assert!(start_recording_impl(&state, None, true, None).is_ok());
+    assert!(start_recording_impl(&state, None, true, None, None).is_ok());
     assert!(stop_recording_impl(&state, None, false).is_ok());
 }
 
@@ -440,7 +440,7 @@ fn test_recording_info_struct_serializes() {
 fn test_list_recordings_after_stop_recording() {
     // After creating a recording via stop_recording_impl, list_recordings should find it
     let state = create_test_state();
-    start_recording_impl(&state, None, true, None).unwrap();
+    start_recording_impl(&state, None, true, None, None).unwrap();
 
     // Add samples to create a valid recording
     {
@@ -507,7 +507,7 @@ fn test_recording_info_without_error_omits_field() {
 #[test]
 fn test_start_recording_returns_error_when_model_not_available() {
     let state = create_test_state();
-    let result = start_recording_impl(&state, None, false, None);
+    let result = start_recording_impl(&state, None, false, None, None);
 
     assert!(result.is_err());
     let error_msg = result.unwrap_err();
@@ -521,7 +521,7 @@ fn test_start_recording_returns_error_when_model_not_available() {
 #[test]
 fn test_start_recording_succeeds_when_model_is_available() {
     let state = create_test_state();
-    let result = start_recording_impl(&state, None, true, None);
+    let result = start_recording_impl(&state, None, true, None, None);
 
     assert!(result.is_ok());
 }
@@ -529,7 +529,7 @@ fn test_start_recording_succeeds_when_model_is_available() {
 #[test]
 fn test_start_recording_model_error_message_is_user_friendly() {
     let state = create_test_state();
-    let result = start_recording_impl(&state, None, false, None);
+    let result = start_recording_impl(&state, None, false, None, None);
 
     let error_msg = result.unwrap_err();
     // Verify the exact user-friendly message
@@ -551,7 +551,7 @@ fn test_start_recording_model_check_comes_before_state_check() {
     );
 
     // Model not available should fail before state is checked
-    let result = start_recording_impl(&state, None, false, None);
+    let result = start_recording_impl(&state, None, false, None, None);
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("download the transcription model"));
 
@@ -575,6 +575,7 @@ fn test_start_recording_with_device_name_succeeds() {
         None,  // No audio thread
         true,  // Model available
         Some("Test Microphone".to_string()),
+        None,  // No shared denoiser
     );
 
     assert!(result.is_ok());
@@ -588,7 +589,7 @@ fn test_start_recording_with_device_name_succeeds() {
 fn test_start_recording_with_none_device_uses_default() {
     let state = create_test_state();
     // Pass None for device - should use default
-    let result = start_recording_impl(&state, None, true, None);
+    let result = start_recording_impl(&state, None, true, None, None);
 
     assert!(result.is_ok());
 }
@@ -598,15 +599,15 @@ fn test_start_recording_device_param_does_not_affect_state() {
     let state = create_test_state();
 
     // Start with a device name
-    start_recording_impl(&state, None, true, Some("Device1".to_string())).unwrap();
+    start_recording_impl(&state, None, true, Some("Device1".to_string()), None).unwrap();
     stop_recording_impl(&state, None, false).unwrap();
 
     // Start with different device name
-    start_recording_impl(&state, None, true, Some("Device2".to_string())).unwrap();
+    start_recording_impl(&state, None, true, Some("Device2".to_string()), None).unwrap();
     stop_recording_impl(&state, None, false).unwrap();
 
     // Start with no device name
-    start_recording_impl(&state, None, true, None).unwrap();
+    start_recording_impl(&state, None, true, None, None).unwrap();
 
     // Final state should be Recording
     assert_eq!(

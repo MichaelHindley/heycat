@@ -1,8 +1,10 @@
 // Command implementation logic - testable functions separate from Tauri wrappers
 
 use crate::audio::{
-    encode_wav, parse_duration_from_file, AudioThreadHandle, SystemFileWriter, TARGET_SAMPLE_RATE,
+    encode_wav, parse_duration_from_file, AudioThreadHandle, SharedDenoiser, SystemFileWriter,
+    TARGET_SAMPLE_RATE,
 };
+use std::sync::Arc;
 use crate::recording::{AudioData, RecordingManager, RecordingMetadata, RecordingState};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -41,6 +43,7 @@ pub struct RecordingStateInfo {
 /// * `audio_thread` - Optional audio thread handle for starting capture
 /// * `model_available` - Whether the transcription model is available
 /// * `device_name` - Optional device name to use; falls back to default if not found
+/// * `shared_denoiser` - Optional shared denoiser for noise suppression (loaded at app startup)
 ///
 /// # Errors
 /// Returns an error string if:
@@ -54,6 +57,7 @@ pub fn start_recording_impl(
     audio_thread: Option<&AudioThreadHandle>,
     model_available: bool,
     device_name: Option<String>,
+    shared_denoiser: Option<Arc<SharedDenoiser>>,
 ) -> Result<(), String> {
     crate::debug!(
         "start_recording_impl called, model_available={}, device={:?}",
@@ -91,7 +95,7 @@ pub fn start_recording_impl(
 
     // Start audio capture if audio thread is available
     if let Some(audio_thread) = audio_thread {
-        match audio_thread.start_with_device(buffer, device_name) {
+        match audio_thread.start_with_device_and_denoiser(buffer, device_name, shared_denoiser) {
             Ok(sample_rate) => {
                 // Update with actual sample rate from device
                 manager.set_sample_rate(sample_rate);
