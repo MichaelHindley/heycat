@@ -21,6 +21,7 @@ export const eventNames = {
   // Recording events
   RECORDING_STARTED: "recording_started",
   RECORDING_STOPPED: "recording_stopped",
+  RECORDING_CANCELLED: "recording_cancelled",
   RECORDING_ERROR: "recording_error",
 
   // Listening events
@@ -104,6 +105,14 @@ export async function setupEventBridge(
 
   unlistenFns.push(
     await listen(eventNames.RECORDING_ERROR, () => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.tauri.getRecordingState,
+      });
+    })
+  );
+
+  unlistenFns.push(
+    await listen(eventNames.RECORDING_CANCELLED, () => {
       queryClient.invalidateQueries({
         queryKey: queryKeys.tauri.getRecordingState,
       });

@@ -69,6 +69,7 @@ describe("eventBridge", () => {
 
       expect(eventHandlers.has(eventNames.RECORDING_STARTED)).toBe(true);
       expect(eventHandlers.has(eventNames.RECORDING_STOPPED)).toBe(true);
+      expect(eventHandlers.has(eventNames.RECORDING_CANCELLED)).toBe(true);
       expect(eventHandlers.has(eventNames.RECORDING_ERROR)).toBe(true);
       expect(eventHandlers.has(eventNames.TRANSCRIPTION_STARTED)).toBe(true);
       expect(eventHandlers.has(eventNames.TRANSCRIPTION_COMPLETED)).toBe(true);
@@ -85,8 +86,8 @@ describe("eventBridge", () => {
     it("cleanup function unsubscribes all listeners", async () => {
       const cleanup = await setupEventBridge(queryClient, mockStore);
 
-      // Should have registered 13 listeners (9 server state + 4 UI state)
-      expect(mockUnlistenFns.length).toBe(13);
+      // Should have registered 14 listeners (10 server state + 4 UI state)
+      expect(mockUnlistenFns.length).toBe(14);
 
       // Call cleanup
       cleanup();
@@ -126,6 +127,17 @@ describe("eventBridge", () => {
       await setupEventBridge(queryClient, mockStore);
 
       emitMockEvent(eventNames.RECORDING_ERROR);
+
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: queryKeys.tauri.getRecordingState,
+      });
+    });
+
+    it("recording_cancelled invalidates getRecordingState query", async () => {
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+      await setupEventBridge(queryClient, mockStore);
+
+      emitMockEvent(eventNames.RECORDING_CANCELLED);
 
       expect(invalidateSpy).toHaveBeenCalledWith({
         queryKey: queryKeys.tauri.getRecordingState,
