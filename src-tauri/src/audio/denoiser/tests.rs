@@ -87,47 +87,6 @@ fn test_loaded_models_are_runnable() {
     // If we got here without panic, the models are properly structured
 }
 
-/// Debug test to check model input requirements
-#[test]
-fn test_debug_model_inputs() {
-    use tract_onnx::prelude::*;
-
-    // Load model without full optimization to see its structure
-    let model = tract_onnx::onnx()
-        .model_for_read(&mut std::io::Cursor::new(embedded::MODEL_1_BYTES))
-        .expect("Should load model");
-
-    println!("\n=== Model 1 Structure ===");
-    println!("Inputs: {:?}", model.inputs);
-    for (i, input) in model.inputs.iter().enumerate() {
-        let fact = model.outlet_fact(*input).expect("Should get input fact");
-        println!("  Input {}: slot={:?}, fact={:?}", i, input, fact);
-    }
-
-    println!("Outputs: {:?}", model.outputs);
-    for (i, output) in model.outputs.iter().enumerate() {
-        let fact = model.outlet_fact(*output).expect("Should get output fact");
-        println!("  Output {}: slot={:?}, fact={:?}", i, output, fact);
-    }
-
-    // Also check model 2
-    let model2 = tract_onnx::onnx()
-        .model_for_read(&mut std::io::Cursor::new(embedded::MODEL_2_BYTES))
-        .expect("Should load model 2");
-
-    println!("\n=== Model 2 Structure ===");
-    println!("Inputs: {:?}", model2.inputs);
-    for (i, input) in model2.inputs.iter().enumerate() {
-        let fact = model2.outlet_fact(*input).expect("Should get input fact");
-        println!("  Input {}: slot={:?}, fact={:?}", i, input, fact);
-    }
-
-    println!("Outputs: {:?}", model2.outputs);
-    for (i, output) in model2.outputs.iter().enumerate() {
-        let fact = model2.outlet_fact(*output).expect("Should get output fact");
-        println!("  Output {}: slot={:?}, fact={:?}", i, output, fact);
-    }
-}
 
 // ============================================================================
 // DtlnDenoiser behavior tests
