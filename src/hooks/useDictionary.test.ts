@@ -64,6 +64,40 @@ describe("useDictionary", () => {
       expect(mockInvoke).toHaveBeenCalledWith("list_dictionary_entries");
       expect(result.current.entries.data).toEqual(mockEntries);
     });
+
+    it("returns entries with suffix and autoEnter fields", async () => {
+      const mockEntries = [
+        {
+          id: "1",
+          trigger: "brb",
+          expansion: "be right back",
+          suffix: ".",
+          autoEnter: true,
+        },
+        {
+          id: "2",
+          trigger: "omw",
+          expansion: "on my way",
+          suffix: null,
+          autoEnter: false,
+        },
+      ];
+      mockInvoke.mockResolvedValue(mockEntries);
+
+      const { result } = renderHook(() => useDictionary(), {
+        wrapper: createWrapper(),
+      });
+
+      await waitFor(() => {
+        expect(result.current.entries.isLoading).toBe(false);
+      });
+
+      expect(result.current.entries.data).toEqual(mockEntries);
+      expect(result.current.entries.data?.[0].suffix).toBe(".");
+      expect(result.current.entries.data?.[0].autoEnter).toBe(true);
+      expect(result.current.entries.data?.[1].suffix).toBeNull();
+      expect(result.current.entries.data?.[1].autoEnter).toBe(false);
+    });
   });
 
   describe("addEntry mutation", () => {
@@ -90,6 +124,73 @@ describe("useDictionary", () => {
       expect(mockInvoke).toHaveBeenCalledWith("add_dictionary_entry", {
         trigger: "brb",
         expansion: "be right back",
+      });
+    });
+
+    it("passes suffix to backend when provided", async () => {
+      mockInvoke.mockResolvedValueOnce([]); // Initial query
+      const newEntry = {
+        id: "1",
+        trigger: "brb",
+        expansion: "be right back",
+        suffix: ".",
+        autoEnter: false,
+      };
+      mockInvoke.mockResolvedValueOnce(newEntry); // Add mutation
+
+      const { result } = renderHook(() => useDictionary(), {
+        wrapper: createWrapper(),
+      });
+
+      await waitFor(() => {
+        expect(result.current.entries.isLoading).toBe(false);
+      });
+
+      await act(async () => {
+        await result.current.addEntry.mutateAsync({
+          trigger: "brb",
+          expansion: "be right back",
+          suffix: ".",
+        });
+      });
+
+      expect(mockInvoke).toHaveBeenCalledWith("add_dictionary_entry", {
+        trigger: "brb",
+        expansion: "be right back",
+        suffix: ".",
+      });
+    });
+
+    it("passes autoEnter to backend when provided", async () => {
+      mockInvoke.mockResolvedValueOnce([]); // Initial query
+      const newEntry = {
+        id: "1",
+        trigger: "brb",
+        expansion: "be right back",
+        autoEnter: true,
+      };
+      mockInvoke.mockResolvedValueOnce(newEntry); // Add mutation
+
+      const { result } = renderHook(() => useDictionary(), {
+        wrapper: createWrapper(),
+      });
+
+      await waitFor(() => {
+        expect(result.current.entries.isLoading).toBe(false);
+      });
+
+      await act(async () => {
+        await result.current.addEntry.mutateAsync({
+          trigger: "brb",
+          expansion: "be right back",
+          autoEnter: true,
+        });
+      });
+
+      expect(mockInvoke).toHaveBeenCalledWith("add_dictionary_entry", {
+        trigger: "brb",
+        expansion: "be right back",
+        auto_enter: true,
       });
     });
 
@@ -148,6 +249,64 @@ describe("useDictionary", () => {
         id: "1",
         trigger: "brb",
         expansion: "be right back soon",
+      });
+    });
+
+    it("passes suffix to backend when updating", async () => {
+      mockInvoke.mockResolvedValueOnce([]); // Initial query
+      mockInvoke.mockResolvedValueOnce(undefined); // Update mutation
+
+      const { result } = renderHook(() => useDictionary(), {
+        wrapper: createWrapper(),
+      });
+
+      await waitFor(() => {
+        expect(result.current.entries.isLoading).toBe(false);
+      });
+
+      await act(async () => {
+        await result.current.updateEntry.mutateAsync({
+          id: "1",
+          trigger: "brb",
+          expansion: "be right back",
+          suffix: "!",
+        });
+      });
+
+      expect(mockInvoke).toHaveBeenCalledWith("update_dictionary_entry", {
+        id: "1",
+        trigger: "brb",
+        expansion: "be right back",
+        suffix: "!",
+      });
+    });
+
+    it("passes autoEnter to backend when updating", async () => {
+      mockInvoke.mockResolvedValueOnce([]); // Initial query
+      mockInvoke.mockResolvedValueOnce(undefined); // Update mutation
+
+      const { result } = renderHook(() => useDictionary(), {
+        wrapper: createWrapper(),
+      });
+
+      await waitFor(() => {
+        expect(result.current.entries.isLoading).toBe(false);
+      });
+
+      await act(async () => {
+        await result.current.updateEntry.mutateAsync({
+          id: "1",
+          trigger: "brb",
+          expansion: "be right back",
+          autoEnter: true,
+        });
+      });
+
+      expect(mockInvoke).toHaveBeenCalledWith("update_dictionary_entry", {
+        id: "1",
+        trigger: "brb",
+        expansion: "be right back",
+        auto_enter: true,
       });
     });
   });
