@@ -1,8 +1,9 @@
 ---
-status: in-progress
+status: completed
 created: 2025-12-22
-completed: null
+completed: 2025-12-22
 dependencies: ["backend-storage-update"]
+review_round: 1
 ---
 
 # Spec: Update DictionaryExpander to append suffix when expanding
@@ -221,3 +222,118 @@ fn test_expand_no_match_returns_false() {
 
 - Test location: `src-tauri/src/dictionary/expander_test.rs`
 - Verification: [ ] Integration test passes
+
+## Review
+
+**Reviewed:** 2025-12-22
+**Reviewer:** Claude
+
+### Pre-Review Gate Results
+
+```
+Build Warning Check:
+warning: method `get` is never used (src/dictionary/store.rs:218)
+  - This is a PRE-EXISTING issue in DictionaryStore, NOT introduced by this spec
+
+Command Registration Check: PASS (no new commands added)
+Event Subscription Check: N/A (no new events)
+```
+
+### Acceptance Criteria Verification
+
+| Criterion | Status | Evidence |
+|-----------|--------|----------|
+| `expand()` returns `ExpansionResult` struct with `expanded_text` and `should_press_enter` fields | PASS | src-tauri/src/dictionary/expander.rs:9-15, 59-84 |
+| When entry has suffix, expansion includes suffix (e.g., "brb" with suffix "." -> "be right back.") | PASS | expander.rs:66-69, test at expander_test.rs:116-124 |
+| When entry has no suffix, expansion is unchanged | PASS | expander.rs:68, test at expander_test.rs:126-135 |
+| When any expanded entry has `auto_enter: true`, result has `should_press_enter: true` | PASS | expander.rs:74-76, test at expander_test.rs:137-146 |
+| Multiple expansions in same text all apply their suffixes correctly | PASS | test at expander_test.rs:148-160 |
+
+### Test Coverage Audit
+
+| Test Case | Status | Location |
+|-----------|--------|----------|
+| Expand "brb" with suffix "." -> "be right back." | PASS | src-tauri/src/dictionary/expander_test.rs:116-124 |
+| Expand "brb" without suffix -> "be right back" | PASS | src-tauri/src/dictionary/expander_test.rs:126-135 |
+| Expand "brb" with auto_enter=true -> should_press_enter is true | PASS | src-tauri/src/dictionary/expander_test.rs:137-146 |
+| Expand text with multiple triggers, one has auto_enter -> should_press_enter is true | PASS | src-tauri/src/dictionary/expander_test.rs:148-160 |
+| Expand text with no matches -> should_press_enter is false | PASS | src-tauri/src/dictionary/expander_test.rs:162-171 |
+
+### Manual Review Questions
+
+#### 1. Is the code wired up end-to-end?
+- [x] New functions are called from production code (not just tests)
+- [x] New structs are instantiated in production code (not just tests)
+
+**Evidence:**
+- `ExpansionResult` struct is used in production at `src-tauri/src/transcription/service.rs:316-342`
+- `expander.expand()` is called in production transcription flow at `service.rs:319`
+- The `expanded_text` field is used for clipboard/paste at `service.rs:343, 352, 366`
+
+#### 2. What would break if this code was deleted?
+
+| New Code | Type | Production Call Site | Reachable from main/UI? |
+|----------|------|---------------------|-------------------------|
+| ExpansionResult | struct | transcription/service.rs:316-342 | YES |
+| ExpansionResult.expanded_text | field | service.rs:343, 352, 366 | YES |
+| ExpansionResult.should_press_enter | field | service.rs (returned but not yet consumed) | DEFERRED |
+| suffix handling in expand() | logic | service.rs:319 via expander.expand() | YES |
+| auto_enter tracking in expand() | logic | service.rs:319 via expander.expand() | YES |
+
+**Note on should_press_enter:** This field is correctly returned but consumption is intentionally deferred to the `keyboard-simulation.spec.md` which is a documented pending spec in this same feature. This is acceptable as the spec explicitly states this is for "the keyboard simulation spec" in its description.
+
+#### 3. Where does the data flow?
+
+```
+[Recording stopped]
+     |
+     v
+[TranscriptionService] src-tauri/src/transcription/service.rs
+     | calls expander.expand(&text) at line 319
+     v
+[DictionaryExpander.expand()] src-tauri/src/dictionary/expander.rs:59-84
+     | applies suffix if present, tracks auto_enter
+     v
+[ExpansionResult] { expanded_text, should_press_enter }
+     |
+     v
+[expanded_text used] service.rs:343, 352, 366
+     | copied to clipboard and pasted
+     v
+[should_press_enter] (deferred to keyboard-simulation spec)
+```
+
+**Data flow is complete for this spec's scope.** The `should_press_enter` consumption is explicitly deferred to `keyboard-simulation.spec.md`.
+
+#### 4. Are there any deferrals?
+
+| Deferral Text | Location | Tracking Spec |
+|---------------|----------|---------------|
+| should_press_enter not consumed | service.rs | keyboard-simulation.spec.md |
+
+The spec explicitly documents this in the Description: "Track whether any expanded entry has `auto_enter: true` for the keyboard simulation spec"
+
+#### 5. Automated check results
+
+```
+Build Check: PASS (1 pre-existing warning unrelated to this spec)
+Command Registration Check: PASS (no new commands)
+Event Subscription Check: N/A (no new events)
+Test Execution: PASS (27 dictionary tests pass, including 6 new suffix/auto_enter tests)
+```
+
+### Code Quality
+
+**Strengths:**
+- Clean implementation of ExpansionResult struct with clear documentation
+- Proper handling of suffix appending with Option type
+- Good test coverage for all spec requirements (6 dedicated tests)
+- Production integration in TranscriptionService is complete for expanded_text
+- Follows existing code patterns in the codebase
+
+**Concerns:**
+- None identified. The should_press_enter field is correctly implemented and available for the subsequent keyboard-simulation spec.
+
+### Verdict
+
+**APPROVED** - All acceptance criteria are met and verified with tests. The ExpansionResult struct is correctly integrated into the production transcription flow. The `should_press_enter` field is intentionally deferred to the documented `keyboard-simulation.spec.md` pending spec, which is acceptable per the spec's description.
