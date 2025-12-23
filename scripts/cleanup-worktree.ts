@@ -528,7 +528,10 @@ async function main(): Promise<void> {
   await cleanupCommand(positionalArgs[0], flags.force, flags.removeWorktree);
 }
 
-main().catch((err) => {
-  error(err.message || String(err));
-  process.exit(1);
-});
+// Only run main when executed directly, not when imported as a module
+if (import.meta.main) {
+  main().catch((err) => {
+    error(err.message || String(err));
+    process.exit(1);
+  });
+}
