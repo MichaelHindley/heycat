@@ -1,11 +1,10 @@
 // Model download functionality
 // Contains the core download logic, testable independently from Tauri commands
 
+use crate::paths;
+use crate::worktree::WorktreeContext;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-
-pub const MODELS_DIR_NAME: &str = "models";
-pub const APP_DIR_NAME: &str = "heycat";
 
 /// Model type for multi-model support
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,16 +112,44 @@ impl std::fmt::Display for ModelError {
 impl std::error::Error for ModelError {}
 
 /// Get the path where models should be stored
+///
+/// Returns:
+/// - Main repo: `~/.local/share/heycat/models/`
+/// - Worktree: `~/.local/share/heycat-{identifier}/models/`
+///
+/// For API-compatibility, passing `None` returns the main repo path.
+pub fn get_models_dir_with_context(
+    worktree_context: Option<&WorktreeContext>,
+) -> Result<PathBuf, ModelError> {
+    paths::get_models_dir(worktree_context).map_err(|e| match e {
+        paths::PathError::DataDirNotFound => ModelError::DataDirNotFound,
+        paths::PathError::ConfigDirNotFound => ModelError::DataDirNotFound,
+        paths::PathError::DirectoryCreationFailed(msg) => ModelError::DirectoryCreationFailed(msg),
+    })
+}
+
+/// Get the path where models should be stored (API-compatible, uses main repo path)
 /// Returns {app_data_dir}/heycat/models/
 pub fn get_models_dir() -> Result<PathBuf, ModelError> {
-    let data_dir = dirs::data_dir().ok_or(ModelError::DataDirNotFound)?;
-    Ok(data_dir.join(APP_DIR_NAME).join(MODELS_DIR_NAME))
+    get_models_dir_with_context(None)
 }
 
 /// Get the directory path for a specific model type
+///
+/// Returns:
+/// - Main repo: `~/.local/share/heycat/models/{model_type_dir}/`
+/// - Worktree: `~/.local/share/heycat-{identifier}/models/{model_type_dir}/`
+pub fn get_model_dir_with_context(
+    model_type: ModelType,
+    worktree_context: Option<&WorktreeContext>,
+) -> Result<PathBuf, ModelError> {
+    Ok(get_models_dir_with_context(worktree_context)?.join(model_type.dir_name()))
+}
+
+/// Get the directory path for a specific model type (API-compatible, uses main repo path)
 /// Returns {app_data_dir}/heycat/models/{model_type_dir}/
 pub fn get_model_dir(model_type: ModelType) -> Result<PathBuf, ModelError> {
-    Ok(get_models_dir()?.join(model_type.dir_name()))
+    get_model_dir_with_context(model_type, None)
 }
 
 /// Check if all model files exist in a given directory
@@ -133,23 +160,38 @@ fn check_model_files_exist_in_dir(dir: &std::path::Path, manifest: &ModelManifes
     manifest.files.iter().all(|f| dir.join(&f.name).exists())
 }
 
-/// Check if a multi-file model exists (all files present)
-pub fn check_model_exists_for_type(model_type: ModelType) -> Result<bool, ModelError> {
-    let model_dir = get_model_dir(model_type)?;
+/// Check if a multi-file model exists (all files present) with worktree context
+pub fn check_model_exists_for_type_with_context(
+    model_type: ModelType,
+    worktree_context: Option<&WorktreeContext>,
+) -> Result<bool, ModelError> {
+    let model_dir = get_model_dir_with_context(model_type, worktree_context)?;
     let manifest = match model_type {
         ModelType::ParakeetTDT => ModelManifest::tdt(),
     };
     Ok(check_model_files_exist_in_dir(&model_dir, &manifest))
 }
 
-/// Create the models directory if it doesn't exist
-pub fn ensure_models_dir() -> Result<PathBuf, ModelError> {
-    let models_dir = get_models_dir()?;
+/// Check if a multi-file model exists (all files present) (API-compatible, uses main repo path)
+pub fn check_model_exists_for_type(model_type: ModelType) -> Result<bool, ModelError> {
+    check_model_exists_for_type_with_context(model_type, None)
+}
+
+/// Create the models directory if it doesn't exist with worktree context
+pub fn ensure_models_dir_with_context(
+    worktree_context: Option<&WorktreeContext>,
+) -> Result<PathBuf, ModelError> {
+    let models_dir = get_models_dir_with_context(worktree_context)?;
     if !models_dir.exists() {
         std::fs::create_dir_all(&models_dir)
             .map_err(|e| ModelError::DirectoryCreationFailed(e.to_string()))?;
     }
     Ok(models_dir)
+}
+
+/// Create the models directory if it doesn't exist (API-compatible, uses main repo path)
+pub fn ensure_models_dir() -> Result<PathBuf, ModelError> {
+    ensure_models_dir_with_context(None)
 }
 
 /// Trait for emitting model download progress events
