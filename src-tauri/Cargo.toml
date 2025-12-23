@@ -68,3 +68,12 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage,coverage_nightly)
 lto = true
 opt-level = "s"
 codegen-units = 1
+
+[profile.dev]
+codegen-units = 256
+incremental = true
+opt-level = 0
+
+[profile.test]
+inherits = "dev"
+codegen-units = 256

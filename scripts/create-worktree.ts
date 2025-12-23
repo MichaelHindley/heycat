@@ -125,15 +125,16 @@ function getWorktreeIdentifier(worktreePath: string): string {
 
 /**
  * Get the heycat application support directory path.
- * On macOS: ~/Library/Application Support/heycat
+ * Uses Tauri's bundle identifier for the directory name.
+ * On macOS: ~/Library/Application Support/com.heycat.app
  */
 function getAppSupportDir(): string {
   const home = homedir();
   if (process.platform === "darwin") {
-    return resolve(home, "Library/Application Support/heycat");
+    return resolve(home, "Library/Application Support/com.heycat.app");
   }
-  // Linux/other: ~/.local/share/heycat
-  return resolve(home, ".local/share/heycat");
+  // Linux/other: ~/.local/share/com.heycat.app
+  return resolve(home, ".local/share/com.heycat.app");
 }
 
 /**
