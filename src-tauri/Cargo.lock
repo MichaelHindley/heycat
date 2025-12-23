@@ -2247,6 +2247,7 @@ dependencies = [
  "futures-util",
  "hound",
  "io-kit-sys",
+ "libc",
  "parakeet-rs",
  "regex",
  "ringbuf",
