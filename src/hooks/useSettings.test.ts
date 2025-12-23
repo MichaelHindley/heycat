@@ -38,6 +38,7 @@ describe("useSettings", () => {
         if (key === "listening.enabled") return Promise.resolve(true);
         if (key === "listening.autoStartOnLaunch") return Promise.resolve(true);
         if (key === "audio.selectedDevice") return Promise.resolve("USB Microphone");
+        if (key === "audio.noiseSuppression") return Promise.resolve(false);
         if (key === "shortcuts.distinguishLeftRight") return Promise.resolve(true);
         return Promise.resolve(undefined);
       });
@@ -49,7 +50,7 @@ describe("useSettings", () => {
       expect(state.isSettingsLoaded).toBe(true);
       expect(state.settingsCache).toEqual({
         listening: { enabled: true, autoStartOnLaunch: true },
-        audio: { selectedDevice: "USB Microphone" },
+        audio: { selectedDevice: "USB Microphone", noiseSuppression: false },
         shortcuts: { distinguishLeftRight: true },
       });
     });
@@ -71,7 +72,7 @@ describe("useSettings", () => {
       useAppStore.setState({
         settingsCache: {
           listening: { enabled: true, autoStartOnLaunch: false },
-          audio: { selectedDevice: "My Mic" },
+          audio: { selectedDevice: "My Mic", noiseSuppression: true },
           shortcuts: { distinguishLeftRight: false },
         },
         isSettingsLoaded: true,
@@ -96,7 +97,7 @@ describe("useSettings", () => {
       useAppStore.setState({
         settingsCache: {
           listening: { enabled: false, autoStartOnLaunch: false },
-          audio: { selectedDevice: null },
+          audio: { selectedDevice: null, noiseSuppression: true },
           shortcuts: { distinguishLeftRight: false },
         },
         isSettingsLoaded: true,
@@ -121,7 +122,7 @@ describe("useSettings", () => {
       useAppStore.setState({
         settingsCache: {
           listening: { enabled: false, autoStartOnLaunch: false },
-          audio: { selectedDevice: null },
+          audio: { selectedDevice: null, noiseSuppression: true },
           shortcuts: { distinguishLeftRight: false },
         },
         isSettingsLoaded: true,
@@ -141,7 +142,7 @@ describe("useSettings", () => {
       useAppStore.setState({
         settingsCache: {
           listening: { enabled: false, autoStartOnLaunch: false },
-          audio: { selectedDevice: "USB Microphone" },
+          audio: { selectedDevice: "USB Microphone", noiseSuppression: true },
           shortcuts: { distinguishLeftRight: false },
         },
         isSettingsLoaded: true,
@@ -155,6 +156,26 @@ describe("useSettings", () => {
 
       expect(mockStore.set).toHaveBeenCalledWith("audio.selectedDevice", null);
       expect(result.current.settings.audio.selectedDevice).toBeNull();
+    });
+
+    it("updates noise suppression setting in both stores", async () => {
+      useAppStore.setState({
+        settingsCache: {
+          listening: { enabled: false, autoStartOnLaunch: false },
+          audio: { selectedDevice: null, noiseSuppression: true },
+          shortcuts: { distinguishLeftRight: false },
+        },
+        isSettingsLoaded: true,
+      });
+
+      const { result } = renderHook(() => useSettings());
+
+      await act(async () => {
+        await result.current.updateNoiseSuppression(false);
+      });
+
+      expect(mockStore.set).toHaveBeenCalledWith("audio.noiseSuppression", false);
+      expect(result.current.settings.audio.noiseSuppression).toBe(false);
     });
   });
 });

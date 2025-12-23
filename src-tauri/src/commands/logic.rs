@@ -187,6 +187,13 @@ pub fn stop_recording_impl(
     let buffer = manager
         .get_audio_buffer()
         .map_err(|_| "No recorded audio available.")?;
+
+    // CRITICAL: Drain ring buffer to accumulated before encoding
+    // The audio callback pushes to the lock-free ring buffer, but lock() only
+    // returns the accumulated Vec. Without draining, samples stay in ring buffer.
+    let drained = buffer.drain_samples();
+    crate::debug!("Drained {} samples from ring buffer before WAV encoding", drained.len());
+
     // Clone samples and release lock before encoding - we can't hold the lock
     // across the WAV encoding I/O operation (it would block other threads)
     let samples = buffer

@@ -62,7 +62,6 @@ impl SharedDenoiser {
     pub fn reset(&self) {
         if let Ok(mut denoiser) = self.inner.lock() {
             denoiser.reset();
-            crate::debug!("SharedDenoiser reset for new recording");
         } else {
             crate::warn!("Failed to lock denoiser for reset - lock poisoned");
         }

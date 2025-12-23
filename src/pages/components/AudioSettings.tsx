@@ -7,6 +7,7 @@ import {
   Select,
   SelectItem,
   AudioLevelMeter,
+  LabeledToggle,
 } from "../../components/ui";
 import { useSettings } from "../../hooks/useSettings";
 import { useAudioDevices } from "../../hooks/useAudioDevices";
@@ -26,7 +27,7 @@ function getLevelIndicator(level: number): { text: string; color: string } {
 }
 
 export function AudioSettings({ className = "" }: AudioSettingsProps) {
-  const { settings, updateAudioDevice } = useSettings();
+  const { settings, updateAudioDevice, updateNoiseSuppression } = useSettings();
   const { devices, isLoading, error, refetch } = useAudioDevices();
   const { toast } = useToast();
 
@@ -66,6 +67,17 @@ export function AudioSettings({ className = "" }: AudioSettingsProps) {
       type: "success",
       title: "Setting saved",
       description: `Wake word sensitivity set to ${value}.`,
+    });
+  };
+
+  const handleNoiseSuppressionChange = async (checked: boolean) => {
+    await updateNoiseSuppression(checked);
+    toast({
+      type: "success",
+      title: "Setting saved",
+      description: checked
+        ? "Noise suppression enabled."
+        : "Noise suppression disabled.",
     });
   };
 
@@ -160,6 +172,15 @@ export function AudioSettings({ className = "" }: AudioSettingsProps) {
                 Test your microphone input
               </p>
             </div>
+
+            {/* Noise Suppression Toggle */}
+            <LabeledToggle
+              id="noise-suppression-toggle"
+              label="Noise Suppression"
+              description="Reduce background noise during recording"
+              checked={settings.audio.noiseSuppression}
+              onCheckedChange={handleNoiseSuppressionChange}
+            />
           </CardContent>
         </Card>
       </section>

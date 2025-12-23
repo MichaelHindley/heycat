@@ -1,5 +1,5 @@
 ---
-status: in-review
+status: completed
 created: 2025-12-22
 completed: null
 dependencies: ["pipeline-integration"]

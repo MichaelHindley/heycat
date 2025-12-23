@@ -44,6 +44,7 @@ export interface UseSettingsReturn {
   updateAutoStartListening: (enabled: boolean) => Promise<void>;
   updateAudioDevice: (deviceName: string | null) => Promise<void>;
   updateDistinguishLeftRight: (enabled: boolean) => Promise<void>;
+  updateNoiseSuppression: (enabled: boolean) => Promise<void>;
 }
 
 const STORE_FILE = "settings.json";
@@ -68,6 +69,9 @@ export async function initializeSettings(): Promise<void> {
   const audioSelectedDevice = await store.get<string | null>(
     "audio.selectedDevice"
   );
+  const audioNoiseSuppression = await store.get<boolean>(
+    "audio.noiseSuppression"
+  );
   const distinguishLeftRight = await store.get<boolean>(
     "shortcuts.distinguishLeftRight"
   );
@@ -81,6 +85,8 @@ export async function initializeSettings(): Promise<void> {
     audio: {
       selectedDevice:
         audioSelectedDevice ?? DEFAULT_SETTINGS.audio.selectedDevice,
+      noiseSuppression:
+        audioNoiseSuppression ?? DEFAULT_SETTINGS.audio.noiseSuppression,
     },
     shortcuts: {
       distinguishLeftRight:
@@ -168,6 +174,10 @@ export function useSettings(): UseSettingsReturn {
     );
   };
 
+  const updateNoiseSuppression = async (enabled: boolean): Promise<void> => {
+    await updateSettingInBothStores("audio", "noiseSuppression", enabled);
+  };
+
   return {
     settings,
     isLoading,
@@ -175,5 +185,6 @@ export function useSettings(): UseSettingsReturn {
     updateAutoStartListening,
     updateAudioDevice,
     updateDistinguishLeftRight,
+    updateNoiseSuppression,
   };
 }

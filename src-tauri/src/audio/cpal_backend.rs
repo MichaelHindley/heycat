@@ -112,6 +112,9 @@ struct CallbackState {
     buffer: AudioBuffer,
     stop_signal: Option<Sender<StopReason>>,
     signaled: Arc<AtomicBool>,
+    /// Stop flag - when true, callbacks should not process new samples
+    /// This prevents samples from being pushed to denoiser after stop is initiated
+    stop_flag: Arc<AtomicBool>,
     resampler: Option<Arc<Mutex<FftFixedIn<f32>>>>,
     resample_buffer: Arc<Mutex<Vec<f32>>>,
     chunk_buffer: Arc<Mutex<Vec<f32>>>,
@@ -132,6 +135,12 @@ impl CallbackState {
     /// This is the core audio processing logic, extracted to avoid duplication
     /// across F32, I16, and U16 sample format callbacks.
     fn process_samples(&self, f32_samples: &[f32]) {
+        // Check stop flag FIRST - don't process samples after stop is initiated
+        // This prevents stale samples from corrupting the shared denoiser state
+        if self.stop_flag.load(Ordering::SeqCst) {
+            return;
+        }
+
         // Track input samples for diagnostic logging
         self.input_sample_count.fetch_add(f32_samples.len(), Ordering::Relaxed);
 
@@ -222,54 +231,83 @@ impl CallbackState {
         }
     }
 
-    /// Flush any remaining samples in the resample buffer and the resampler's internal delay buffer
+    /// Flush any remaining samples in the resample buffer, resampler delay buffer, and denoiser
     ///
     /// Called from stop() after the stream is dropped but before CallbackState is dropped.
     /// This ensures:
     /// 1. Residual samples that didn't fill a complete chunk are processed via process_partial
     /// 2. The resampler's internal delay buffer (output_delay frames) is flushed
+    /// 3. Flushed resampler samples pass through the denoiser (if present)
+    /// 4. The denoiser's internal buffers are flushed
     ///
     /// The FFT resampler holds samples internally during processing. Without flushing the delay
     /// buffer, each recording loses ~100-500 samples, causing progressive audio speedup.
     fn flush_residuals(&self) {
-        // Only need to flush if we have a resampler
-        let Some(ref resampler) = self.resampler else {
-            return;
-        };
+        let mut resampled_residuals = Vec::new();
 
-        let mut resample_buf = match self.resample_buffer.lock() {
-            Ok(buf) => buf,
-            Err(_) => return,
-        };
+        // Step 1: Flush resampler residuals (if we have a resampler)
+        if let Some(ref resampler) = self.resampler {
+            let mut resample_buf = match self.resample_buffer.lock() {
+                Ok(buf) => buf,
+                Err(_) => return,
+            };
 
-        if let Ok(mut r) = resampler.lock() {
-            // Step 1: Process any remaining samples using process_partial
-            let residual_count = resample_buf.len();
-            if residual_count > 0 {
-                crate::debug!("Flushing {} residual samples via process_partial", residual_count);
-                if let Ok(output) = r.process_partial(Some(&[resample_buf.as_slice()]), None) {
-                    if !output.is_empty() && !output[0].is_empty() {
-                        self.output_sample_count.fetch_add(output[0].len(), Ordering::Relaxed);
-                        self.buffer.push_samples(&output[0]);
-                        crate::debug!("Residual flush produced {} output samples", output[0].len());
+            if let Ok(mut r) = resampler.lock() {
+                // Process any remaining samples using process_partial
+                let residual_count = resample_buf.len();
+                if residual_count > 0 {
+                    crate::debug!("Flushing {} residual samples via process_partial", residual_count);
+                    if let Ok(output) = r.process_partial(Some(&[resample_buf.as_slice()]), None) {
+                        if !output.is_empty() && !output[0].is_empty() {
+                            resampled_residuals.extend_from_slice(&output[0]);
+                            crate::debug!("Residual flush produced {} output samples", output[0].len());
+                        }
                     }
+                    resample_buf.clear();
                 }
-                resample_buf.clear();
-            }
 
-            // Step 2: Flush the resampler's internal delay buffer (CRITICAL)
-            // The FFT resampler holds output_delay() frames internally that must be extracted
-            let delay = r.output_delay();
-            crate::debug!("Flushing resampler delay buffer (delay={} frames)", delay);
-            if let Ok(output) = r.process_partial(None::<&[&[f32]]>, None) {
-                if !output.is_empty() && !output[0].is_empty() {
-                    let flushed = output[0].len();
-                    self.output_sample_count.fetch_add(flushed, Ordering::Relaxed);
-                    self.buffer.push_samples(&output[0]);
-                    crate::debug!("Flushed {} samples from delay buffer", flushed);
+                // Flush the resampler's internal delay buffer (CRITICAL)
+                let delay = r.output_delay();
+                crate::debug!("Flushing resampler delay buffer (delay={} frames)", delay);
+                if let Ok(output) = r.process_partial(None::<&[&[f32]]>, None) {
+                    if !output.is_empty() && !output[0].is_empty() {
+                        resampled_residuals.extend_from_slice(&output[0]);
+                        crate::debug!("Flushed {} samples from delay buffer", output[0].len());
+                    }
                 }
             }
         }
+
+        // Step 2: Pass resampled residuals through denoiser (if present)
+        if !resampled_residuals.is_empty() {
+            if let Some(ref denoiser) = self.denoiser {
+                if let Ok(mut d) = denoiser.lock() {
+                    let processed = d.process(&resampled_residuals);
+                    if !processed.is_empty() {
+                        self.output_sample_count.fetch_add(processed.len(), Ordering::Relaxed);
+                        self.buffer.push_samples(&processed);
+                    }
+                }
+            } else {
+                // No denoiser, push directly to buffer
+                self.output_sample_count.fetch_add(resampled_residuals.len(), Ordering::Relaxed);
+                self.buffer.push_samples(&resampled_residuals);
+            }
+        }
+
+        // Step 3: Flush denoiser's internal buffers
+        if let Some(ref denoiser) = self.denoiser {
+            if let Ok(mut d) = denoiser.lock() {
+                let flushed = d.flush();
+                if !flushed.is_empty() {
+                    self.output_sample_count.fetch_add(flushed.len(), Ordering::Relaxed);
+                    self.buffer.push_samples(&flushed);
+                }
+            }
+        }
+
+        crate::info!("[FLUSH] complete: output_sample_count={}",
+            self.output_sample_count.load(Ordering::Relaxed));
     }
 
     /// Log sample count diagnostics when recording stops
@@ -305,13 +343,24 @@ impl AudioCaptureBackend for CpalBackend {
     }
 
     fn stop(&mut self) -> Result<(), AudioCaptureError> {
-        crate::debug!("Stopping audio capture...");
+        crate::info!("========================================");
+        crate::info!("[STOP] RECORDING SESSION STOPPING");
+        crate::info!("========================================");
 
-        // First, stop the stream so audio callback stops running
+        // Set stop flag FIRST - prevents callbacks from processing new samples
+        // This must happen BEFORE dropping the stream to prevent race conditions
+        if let Some(ref callback_state) = self.callback_state {
+            callback_state.stop_flag.store(true, Ordering::SeqCst);
+            crate::debug!("[STOP] Stop flag set - callbacks will no longer process samples");
+        }
+
+        // Now stop the stream - any in-flight callbacks will see stop_flag=true
         if let Some(stream) = self.stream.take() {
             // Stream will be dropped here, stopping capture
             drop(stream);
-            crate::debug!("Audio stream stopped");
+            // Brief wait for any in-flight callbacks to check the flag and exit
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            crate::info!("[STOP] Audio stream stopped");
         } else {
             crate::debug!("No active stream to stop");
         }
@@ -339,6 +388,9 @@ impl CpalBackend {
         device_name: Option<String>,
         shared_denoiser: Option<Arc<SharedDenoiser>>,
     ) -> Result<u32, AudioCaptureError> {
+        crate::info!("========================================");
+        crate::info!("[START] NEW RECORDING SESSION STARTING");
+        crate::info!("========================================");
         crate::info!("Starting audio capture (target: {}Hz)...", TARGET_SAMPLE_RATE);
 
         // Get the default audio host
@@ -440,7 +492,6 @@ impl CpalBackend {
         let denoiser: Option<Arc<Mutex<DtlnDenoiser>>> = if let Some(shared) = shared_denoiser {
             // Reset the shared denoiser's LSTM states for this new recording
             shared.reset();
-            crate::info!("Using shared DTLN denoiser (reset for new recording)");
             Some(shared.inner())
         } else {
             // Fallback: load denoiser inline (slow path, ~2s delay)
@@ -465,6 +516,7 @@ impl CpalBackend {
             buffer,
             stop_signal,
             signaled,
+            stop_flag: Arc::new(AtomicBool::new(false)),
             resampler,
             resample_buffer,
             chunk_buffer,
@@ -616,6 +668,7 @@ mod resampler_tests {
             buffer: AudioBuffer::new(),
             stop_signal: None,
             signaled: Arc::new(AtomicBool::new(false)),
+            stop_flag: Arc::new(AtomicBool::new(false)),
             resampler: Some(Arc::new(Mutex::new(resampler))),
             resample_buffer: Arc::new(Mutex::new(Vec::new())),
             chunk_buffer: Arc::new(Mutex::new(vec![0.0f32; CHUNK_SIZE])),
@@ -655,6 +708,7 @@ mod resampler_tests {
             buffer: AudioBuffer::new(),
             stop_signal: None,
             signaled: Arc::new(AtomicBool::new(false)),
+            stop_flag: Arc::new(AtomicBool::new(false)),
             resampler: Some(Arc::new(Mutex::new(resampler))),
             resample_buffer: Arc::new(Mutex::new(residual_samples)),
             chunk_buffer: Arc::new(Mutex::new(vec![0.0f32; CHUNK_SIZE])),
@@ -689,6 +743,7 @@ mod resampler_tests {
                 buffer: AudioBuffer::new(),
                 stop_signal: None,
                 signaled: Arc::new(AtomicBool::new(false)),
+                stop_flag: Arc::new(AtomicBool::new(false)),
                 resampler: Some(Arc::new(Mutex::new(
                     FftFixedIn::<f32>::new(SOURCE_RATE, TARGET_RATE, CHUNK_SIZE, 1, 1).unwrap(),
                 ))),
@@ -817,6 +872,56 @@ mod resampler_tests {
             "Flushing should not significantly degrade ratio: with_flush error={:.3}%, without_flush error={:.3}%",
             error_with_flush,
             error_without_flush
+        );
+    }
+
+    // =========================================================================
+    // Regression tests for stop flag (audio-glitch.bug.md fix)
+    // =========================================================================
+
+    /// Regression test: stop_flag prevents sample processing
+    ///
+    /// Bug: Audio callbacks continued processing after stop() was called,
+    /// pushing stale samples to the SharedDenoiser and corrupting LSTM state.
+    ///
+    /// Fix: Added stop_flag atomic that callbacks check before processing.
+    #[test]
+    fn test_stop_flag_prevents_sample_processing() {
+        let resampler =
+            FftFixedIn::<f32>::new(SOURCE_RATE, TARGET_RATE, CHUNK_SIZE, 1, 1).unwrap();
+
+        let callback_state = CallbackState {
+            buffer: AudioBuffer::new(),
+            stop_signal: None,
+            signaled: Arc::new(AtomicBool::new(false)),
+            stop_flag: Arc::new(AtomicBool::new(false)),
+            resampler: Some(Arc::new(Mutex::new(resampler))),
+            resample_buffer: Arc::new(Mutex::new(Vec::new())),
+            chunk_buffer: Arc::new(Mutex::new(vec![0.0f32; CHUNK_SIZE])),
+            chunk_size: CHUNK_SIZE,
+            input_sample_count: Arc::new(AtomicUsize::new(0)),
+            output_sample_count: Arc::new(AtomicUsize::new(0)),
+            device_sample_rate: SOURCE_RATE as u32,
+            denoiser: None,
+        };
+
+        // Process some samples normally
+        let samples: Vec<f32> = vec![0.5f32; 1000];
+        callback_state.process_samples(&samples);
+
+        let input_before_stop = callback_state.input_sample_count.load(Ordering::Relaxed);
+        assert_eq!(input_before_stop, 1000, "Should have processed 1000 samples");
+
+        // Set the stop flag
+        callback_state.stop_flag.store(true, Ordering::SeqCst);
+
+        // Try to process more samples - should be ignored
+        callback_state.process_samples(&samples);
+
+        let input_after_stop = callback_state.input_sample_count.load(Ordering::Relaxed);
+        assert_eq!(
+            input_after_stop, 1000,
+            "Stop flag should prevent further sample processing"
         );
     }
 }

@@ -276,3 +276,191 @@ fn test_output_latency_is_approximately_one_frame() {
         output2.len()
     );
 }
+
+/// Test: flush() extracts remaining samples from partial input buffer
+///
+/// When recording stops mid-frame, flush() should pad and process the partial buffer.
+#[test]
+fn test_flush_extracts_partial_input_buffer() {
+    let mut denoiser = create_test_denoiser();
+
+    // Feed less than FRAME_SIZE samples (partial buffer)
+    let partial: Vec<f32> = vec![0.1; 300]; // Less than 512
+    let output = denoiser.process(&partial);
+
+    // Should get no output yet (buffer not full)
+    assert_eq!(output.len(), 0, "Partial input should not produce output yet");
+
+    // Flush should extract remaining samples
+    let flushed = denoiser.flush();
+
+    // Flush should produce:
+    // 1. FRAME_SHIFT (128) from the padded and processed frame
+    // 2. FRAME_SIZE - FRAME_SHIFT (384) from the overlap-add tail
+    // Total: 128 + 384 = 512
+    assert!(
+        !flushed.is_empty(),
+        "Flush should extract samples from partial buffer"
+    );
+    assert_eq!(
+        flushed.len(),
+        FRAME_SHIFT + (FRAME_SIZE - FRAME_SHIFT),
+        "Flush should produce FRAME_SHIFT + tail samples"
+    );
+}
+
+/// Test: flush() after normal processing extracts overlap-add tail
+///
+/// After processing complete frames, flush() should extract the remaining
+/// overlap-add tail that hasn't been output yet.
+#[test]
+fn test_flush_extracts_overlap_add_tail() {
+    let mut denoiser = create_test_denoiser();
+
+    // Feed exactly one frame
+    let one_frame: Vec<f32> = vec![0.1; FRAME_SIZE];
+    let output1 = denoiser.process(&one_frame);
+    assert_eq!(output1.len(), FRAME_SHIFT, "First frame should output FRAME_SHIFT samples");
+
+    // Flush should extract the remaining overlap-add tail
+    let flushed = denoiser.flush();
+
+    // After one frame processed:
+    // - input_buffer has (FRAME_SIZE - FRAME_SHIFT) = 384 samples left
+    // - output_buffer has overlap content
+    // Flush should pad input to 512, process, then extract tail
+    assert!(
+        !flushed.is_empty(),
+        "Flush should extract overlap-add tail"
+    );
+}
+
+/// Test: flush() clears internal buffers
+///
+/// After flush(), the denoiser should be in a clean state.
+#[test]
+fn test_flush_clears_buffers() {
+    let mut denoiser = create_test_denoiser();
+
+    // Feed some samples
+    let samples: Vec<f32> = vec![0.1; 600];
+    let _ = denoiser.process(&samples);
+
+    // Flush
+    let _ = denoiser.flush();
+
+    // Feed new samples - should work normally
+    let new_samples: Vec<f32> = vec![0.2; FRAME_SIZE];
+    let output = denoiser.process(&new_samples);
+
+    // Should produce normal output (FRAME_SHIFT samples)
+    assert_eq!(
+        output.len(),
+        FRAME_SHIFT,
+        "Denoiser should work normally after flush"
+    );
+}
+
+/// Test: flush() on empty buffer returns minimal samples
+///
+/// If no samples were processed, flush should return just the overlap-add tail.
+#[test]
+fn test_flush_on_empty_buffer() {
+    let mut denoiser = create_test_denoiser();
+
+    // Flush without processing anything
+    let flushed = denoiser.flush();
+
+    // Should return the overlap-add tail (384 samples of zeros)
+    assert_eq!(
+        flushed.len(),
+        FRAME_SIZE - FRAME_SHIFT,
+        "Empty flush should return tail length"
+    );
+}
+
+// ============================================================================
+// Regression tests for bugs fixed in audio-glitch.bug.md
+// ============================================================================
+
+/// Regression test: reset() after flush() should result in clean state
+///
+/// Bug: Stale samples appearing in denoiser between recordings caused
+/// LSTM state corruption and degraded audio quality on subsequent recordings.
+///
+/// This test verifies that after flush() -> reset(), the denoiser behaves
+/// identically to a freshly created denoiser.
+#[test]
+fn test_regression_reset_after_flush_is_clean() {
+    let mut denoiser = create_test_denoiser();
+
+    // Simulate first recording: process audio then flush
+    let recording1: Vec<f32> = (0..8000)
+        .map(|i| (2.0 * PI * 300.0 * i as f32 / 16000.0).sin() * 0.5)
+        .collect();
+    let _ = denoiser.process(&recording1);
+    let _ = denoiser.flush();
+
+    // Reset for "second recording"
+    denoiser.reset();
+
+    // Process silent audio - should be clean (no artifacts from recording1)
+    let silence: Vec<f32> = vec![0.0; 4000];
+    let output = denoiser.process(&silence);
+
+    // After reset, silent input should produce near-silent output
+    // If there were stale samples or corrupted LSTM state, we'd see non-zero output
+    if !output.is_empty() {
+        let max_amplitude: f32 = output.iter().map(|s| s.abs()).fold(0.0, f32::max);
+        assert!(
+            max_amplitude < 0.05,
+            "After reset, silent input should be very quiet, got max amplitude {}",
+            max_amplitude
+        );
+    }
+}
+
+/// Regression test: Multiple recording cycles don't degrade quality
+///
+/// Bug: Audio quality degraded on subsequent recordings due to LSTM state
+/// corruption from stale samples pushed between recordings.
+///
+/// This test simulates multiple recording cycles and verifies consistent behavior.
+#[test]
+fn test_regression_multiple_recordings_consistent_quality() {
+    let mut denoiser = create_test_denoiser();
+
+    // Create a test signal (speech-like)
+    let test_signal: Vec<f32> = (0..4000)
+        .map(|i| {
+            let t = i as f32 / 16000.0;
+            (2.0 * PI * 200.0 * t).sin() * 0.3 + (2.0 * PI * 500.0 * t).sin() * 0.2
+        })
+        .collect();
+
+    let mut output_energies = Vec::new();
+
+    // Simulate 5 recording cycles
+    for _ in 0..5 {
+        let output = denoiser.process(&test_signal);
+        let _ = denoiser.flush();
+        denoiser.reset();
+
+        // Calculate output energy
+        let energy: f32 = output.iter().map(|s| s * s).sum();
+        output_energies.push(energy);
+    }
+
+    // All recordings should have similar energy (within 50% tolerance)
+    // If there's LSTM corruption, later recordings would have very different energy
+    let first_energy = output_energies[0];
+    for (i, &energy) in output_energies.iter().enumerate().skip(1) {
+        let ratio = energy / first_energy;
+        assert!(
+            (0.5..=2.0).contains(&ratio),
+            "Recording {} has abnormal energy ratio {:.2} vs first recording",
+            i + 1,
+            ratio
+        );
+    }
+}

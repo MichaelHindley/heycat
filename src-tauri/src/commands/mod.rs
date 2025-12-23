@@ -171,6 +171,8 @@ pub fn start_recording(
     shared_denoiser: State<'_, SharedDenoiserState>,
     device_name: Option<String>,
 ) -> Result<(), String> {
+    use tauri_plugin_store::StoreExt;
+
     // Check for audio devices first
     let devices = crate::audio::list_input_devices();
     if devices.is_empty() {
@@ -192,6 +194,22 @@ pub fn start_recording(
         }
     }
 
+    // Read noise suppression setting from persistent store (defaults to true)
+    let noise_suppression_enabled = app_handle
+        .store("settings.json")
+        .ok()
+        .and_then(|store| store.get("audio.noiseSuppression"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true); // Default to enabled for new installations
+
+    // Only use shared denoiser if noise suppression is enabled
+    let denoiser_for_recording = if noise_suppression_enabled {
+        (*shared_denoiser).clone()
+    } else {
+        crate::info!("Noise suppression disabled by user setting");
+        None
+    };
+
     // Check model availability before starting recording (check TDT model for batch transcription)
     let model_available =
         match crate::model::check_model_exists_for_type(crate::model::ModelType::ParakeetTDT) {
@@ -206,7 +224,7 @@ pub fn start_recording(
         Some(audio_thread.as_ref()),
         model_available,
         device_name,
-        (*shared_denoiser).clone(),
+        denoiser_for_recording,
     );
 
     match &result {

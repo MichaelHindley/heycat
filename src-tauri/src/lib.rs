@@ -258,7 +258,8 @@ pub fn run() {
                 .with_listening_pipeline(listening_pipeline.clone())
                 .with_recording_detectors(recording_detectors.clone())
                 .with_shortcut_backend(escape_backend)
-                .with_transcription_callback(transcription_callback);
+                .with_transcription_callback(transcription_callback)
+                .with_silence_detection_enabled(false); // Disable for push-to-talk
 
             // Wire up voice command integration using grouped config if available
             // (still needed for HotkeyIntegration's silence detection callback)

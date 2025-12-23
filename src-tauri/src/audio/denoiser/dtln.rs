@@ -257,6 +257,58 @@ impl DtlnDenoiser {
         self.state_2 = Self::zeros_lstm_state();
     }
 
+    /// Flush remaining samples from internal buffers
+    ///
+    /// Call this when recording stops to extract any samples still in the
+    /// denoiser's internal buffers. This handles:
+    /// 1. Partial input buffer (< FRAME_SIZE samples) - padded with zeros and processed
+    /// 2. Overlap-add tail in output buffer - extracted directly
+    ///
+    /// # Returns
+    /// * Remaining denoised samples that were buffered internally
+    pub fn flush(&mut self) -> Vec<f32> {
+        let mut output = Vec::new();
+
+        // Pad input_buffer to FRAME_SIZE if there are residual samples
+        if !self.input_buffer.is_empty() && self.input_buffer.len() < FRAME_SIZE {
+            let padding = FRAME_SIZE - self.input_buffer.len();
+            self.input_buffer.extend(std::iter::repeat(0.0).take(padding));
+        }
+
+        // Process any complete frames (including the padded one)
+        while self.input_buffer.len() >= FRAME_SIZE {
+            let frame: Vec<f32> = self.input_buffer[..FRAME_SIZE].to_vec();
+            let processed = self.process_frame(&frame);
+
+            for (i, &sample) in processed.iter().enumerate() {
+                self.output_buffer[i] += sample;
+            }
+
+            output.extend_from_slice(&self.output_buffer[..FRAME_SHIFT]);
+            self.output_buffer.copy_within(FRAME_SHIFT.., 0);
+            for i in (FRAME_SIZE - FRAME_SHIFT)..FRAME_SIZE {
+                self.output_buffer[i] = 0.0;
+            }
+
+            self.input_buffer.drain(..FRAME_SHIFT);
+        }
+
+        // Extract remaining overlap-add tail from output buffer
+        // After processing, output_buffer contains partial overlap that hasn't been extracted
+        // The tail contains (FRAME_SIZE - FRAME_SHIFT) = 384 samples of overlap content
+        let tail_len = FRAME_SIZE - FRAME_SHIFT;
+        output.extend_from_slice(&self.output_buffer[..tail_len]);
+
+        // Clear buffers and reset LSTM states after flush
+        // This ensures the next recording starts with clean state
+        self.input_buffer.clear();
+        self.output_buffer.fill(0.0);
+        self.state_1 = Self::zeros_lstm_state();
+        self.state_2 = Self::zeros_lstm_state();
+
+        output
+    }
+
     /// Create a Hann window of given size
     fn hann_window(size: usize) -> Vec<f32> {
         (0..size)
