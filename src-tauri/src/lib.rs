@@ -82,28 +82,28 @@ pub fn run() {
 
             // Check for collision with another running instance
             // This must happen before any state initialization that writes to data directories
-            match worktree::check_collision(worktree_context.as_ref()) {
+            let collision_result = worktree::check_collision(worktree_context.as_ref());
+            match &collision_result {
                 Ok(worktree::CollisionResult::NoCollision) => {
                     debug!("No collision detected, proceeding with startup");
                 }
-                Ok(worktree::CollisionResult::InstanceRunning { pid, data_dir, .. }) => {
-                    error!(
-                        "Collision detected! Another heycat instance (PID: {}) is using: {:?}",
-                        pid, data_dir
-                    );
-                    // Log resolution steps for debugging
-                    warn!("Resolution: Close the other instance (PID: {}) and restart", pid);
-                    // Return error to prevent app from starting with conflicting data
-                    return Err(format!(
-                        "Another heycat instance is already running (PID: {}). \
-                         Please close it before starting a new instance.",
-                        pid
-                    ).into());
+                Ok(collision @ worktree::CollisionResult::InstanceRunning { .. }) => {
+                    // Use format_collision_error for consistent error messaging
+                    if let Some((title, message, steps)) = worktree::format_collision_error(collision) {
+                        error!("{}: {}", title, message);
+                        for step in &steps {
+                            warn!("Resolution: {}", step);
+                        }
+                        // Return error to prevent app from starting with conflicting data
+                        return Err(message.into());
+                    }
                 }
-                Ok(worktree::CollisionResult::StaleLock { lock_file }) => {
-                    warn!("Stale lock file detected: {:?}", lock_file);
+                Ok(collision @ worktree::CollisionResult::StaleLock { lock_file }) => {
+                    if let Some((title, message, _)) = worktree::format_collision_error(collision) {
+                        warn!("{}: {}", title, message);
+                    }
                     info!("Cleaning up stale lock file from crashed instance...");
-                    if let Err(e) = worktree::cleanup_stale_lock(&lock_file) {
+                    if let Err(e) = worktree::cleanup_stale_lock(lock_file) {
                         warn!("Failed to clean up stale lock file: {}", e);
                     } else {
                         info!("Stale lock file cleaned up successfully");

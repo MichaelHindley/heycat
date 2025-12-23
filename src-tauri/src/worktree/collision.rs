@@ -4,9 +4,11 @@
 // by checking for lock files. It provides user-friendly error messages with
 // resolution steps when collisions are detected.
 //
-// Note: Most items are marked #[allow(dead_code)] because they're used:
-// - In tests via cfg(test) re-exports in mod.rs
-// - In production by lib.rs setup() (integration happens in this spec)
+// Production usage (lib.rs setup):
+// - check_collision, create_lock, remove_lock, cleanup_stale_lock, format_collision_error
+//
+// Test-only helpers (marked #[allow(dead_code)]):
+// - check_collision_at, create_lock_at, remove_lock_at, LockInfo (re-exported via cfg(test))
 
 use crate::paths;
 use crate::worktree::WorktreeContext;
@@ -66,7 +68,6 @@ impl LockInfo {
 }
 
 /// Collision detection result
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum CollisionResult {
     /// No collision detected, safe to proceed
@@ -88,7 +89,6 @@ pub enum CollisionResult {
 }
 
 /// Error types for collision detection
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum CollisionError {
     /// Data directory could not be determined
@@ -122,7 +122,6 @@ impl std::error::Error for CollisionError {}
 /// * `Ok(CollisionResult::InstanceRunning { .. })` - Another instance is running
 /// * `Ok(CollisionResult::StaleLock { .. })` - Stale lock file found (can be cleaned)
 /// * `Err(CollisionError)` - Error during collision check
-#[allow(dead_code)]
 pub fn check_collision(
     worktree_context: Option<&WorktreeContext>,
 ) -> Result<CollisionResult, CollisionError> {
@@ -179,7 +178,6 @@ pub fn check_collision_at(lock_file: &PathBuf, data_dir: &PathBuf) -> Result<Col
 /// # Returns
 /// * `Ok(PathBuf)` - Path to the created lock file
 /// * `Err(CollisionError)` - Error creating lock file
-#[allow(dead_code)]
 pub fn create_lock(
     worktree_context: Option<&WorktreeContext>,
 ) -> Result<PathBuf, CollisionError> {
@@ -214,7 +212,6 @@ pub fn create_lock_at(lock_file: &PathBuf) -> Result<PathBuf, CollisionError> {
 ///
 /// # Arguments
 /// * `worktree_context` - Optional worktree context for path resolution
-#[allow(dead_code)]
 pub fn remove_lock(worktree_context: Option<&WorktreeContext>) -> Result<(), CollisionError> {
     let data_dir =
         paths::get_data_dir(worktree_context).map_err(|_| CollisionError::DataDirNotFound)?;
@@ -237,7 +234,6 @@ pub fn remove_lock_at(lock_file: &PathBuf) -> Result<(), CollisionError> {
 ///
 /// # Arguments
 /// * `lock_file` - Path to the stale lock file to remove
-#[allow(dead_code)]
 pub fn cleanup_stale_lock(lock_file: &PathBuf) -> Result<(), CollisionError> {
     remove_lock_at(lock_file)
 }
@@ -295,7 +291,6 @@ fn is_process_running(pid: u32) -> bool {
 ///
 /// # Returns
 /// A tuple of (title, message, resolution_steps)
-#[allow(dead_code)]
 pub fn format_collision_error(collision: &CollisionResult) -> Option<(String, String, Vec<String>)> {
     match collision {
         CollisionResult::NoCollision => None,
