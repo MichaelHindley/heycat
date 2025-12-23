@@ -1,7 +1,7 @@
 ---
-status: in-review
+status: completed
 created: 2025-12-23
-completed: null
+completed: 2025-12-23
 dependencies: [pipeline-integration]
 review_round: 1
 ---
@@ -164,12 +164,15 @@ Not applicable - no new events added.
 
 ### Verdict
 
-**NEEDS_WORK** - Missing AudioSettings component tests
+**APPROVED** - All acceptance criteria met
 
-1. **What failed**: Test Coverage Audit - spec lists `AudioSettings.test.tsx` tests that do not exist
-2. **Why it failed**: The file `src/pages/components/AudioSettings.test.tsx` does not exist, so the following test cases are missing:
-   - "Toggle renders and is checked by default"
-   - "Clicking toggle updates settings state"
-3. **How to fix**: Create `src/pages/components/AudioSettings.test.tsx` with tests for:
-   - Toggle renders in the Audio Input section and is checked by default (tests default value from settings)
-   - Clicking toggle calls `updateNoiseSuppression` with the toggled value
+All issues from previous review have been addressed:
+- Created `src/pages/components/AudioSettings.test.tsx` with 4 tests covering:
+  - Toggle renders with label and description
+  - Toggle is checked by default (noise suppression enabled)
+  - Clicking toggle calls `updateNoiseSuppression(false)`
+  - Toast notification shows after toggling
+
+Additional fixes applied during implementation:
+- Fixed hotkey path to respect noise suppression setting (`src-tauri/src/hotkey/integration.rs`)
+- Removed inline denoiser fallback that caused 2s delay when disabled (`src-tauri/src/audio/cpal_backend.rs`)

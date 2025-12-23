@@ -195,7 +195,7 @@ export async function setupEventBridge(queryClient: QueryClient, store: AppStore
 | **URL State** | React Router (`src/routes.tsx`) | Navigation, page routing | Current page, route params |
 | **Client State** | Zustand (`src/stores/appStore.ts`) | UI state, settings cache | Overlay mode, transcription status |
 | **Server State** | Tanstack Query (`src/lib/queryClient.ts`) | Cached backend data | Recording state, recordings list |
-| **Persistent** | Tauri Store (`settings.json`) | App settings | `listening.enabled`, `audio.selectedDevice` |
+| **Persistent** | Tauri Store (`settings.json`) | App settings | `listening.enabled`, `audio.selectedDevice`, `audio.noiseSuppression` |
 | **Backend Session** | `Arc<Mutex<T>>` | Runtime state | RecordingManager, ListeningManager |
 
 ### Key Principles
@@ -281,13 +281,16 @@ Events emitted at each transition for UI sync.
 
 ```
 Audio Subsystem
+├── SharedDenoiser (loaded at startup, Arc<SharedDenoiser>)
+│   └── DTLN noise suppression, reused across recordings, reset() between uses
+│   └── Controlled by audio.noiseSuppression setting (default: enabled)
 ├── Listening Pipeline (background)
 │   └── wake word detection, VAD, continuous analysis → triggers recording
 ├── Recording Manager (on-demand)
 │   └── audio capture, WAV encoding, file saving, transcription
 └── AudioThreadHandle (shared resource, one active at a time)
-    ├── start_with_device(), stop()
-    └── CPAL Backend (cross-platform)
+    ├── start_with_device_and_denoiser(), stop()
+    └── CPAL Backend (cross-platform, integrates denoiser in audio callback)
 ```
 
 ---
