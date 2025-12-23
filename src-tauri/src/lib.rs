@@ -14,6 +14,7 @@ mod keyboard_capture;
 mod listening;
 mod model;
 mod parakeet;
+mod paths;
 mod recording;
 mod transcription;
 mod voice_commands;
