@@ -6,12 +6,12 @@
 #![cfg_attr(coverage_nightly, coverage(off))]
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{SampleRate, Stream};
+use cpal::{BufferSize, SampleRate, Stream, StreamConfig};
 use rubato::{FftFixedIn, Resampler};
 
 use super::{AudioBuffer, AudioCaptureBackend, AudioCaptureError, CaptureState, StopReason, MAX_RESAMPLE_BUFFER_SAMPLES, TARGET_SAMPLE_RATE};
-use super::denoiser::{load_embedded_models, DtlnDenoiser, SharedDenoiser};
-use crate::audio_constants::RESAMPLE_CHUNK_SIZE;
+use super::denoiser::{DtlnDenoiser, SharedDenoiser};
+use crate::audio_constants::{PREFERRED_BUFFER_SIZE, RESAMPLE_CHUNK_SIZE};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
@@ -104,6 +104,22 @@ fn create_resampler(
         1, // channels - mono
     )
     .map_err(|e| AudioCaptureError::DeviceError(format!("Failed to create resampler: {}", e)))
+}
+
+/// Create a StreamConfig with the preferred buffer size.
+///
+/// Attempts to use `BufferSize::Fixed(PREFERRED_BUFFER_SIZE)` for consistent timing.
+/// The actual buffer size used by the driver may differ from the requested size.
+fn create_stream_config_with_buffer_size(base_config: cpal::SupportedStreamConfig) -> StreamConfig {
+    let mut config: StreamConfig = base_config.into();
+    config.buffer_size = BufferSize::Fixed(PREFERRED_BUFFER_SIZE);
+    crate::info!(
+        "Requesting buffer size: {} samples (~{:.1}ms at {}Hz)",
+        PREFERRED_BUFFER_SIZE,
+        PREFERRED_BUFFER_SIZE as f32 / config.sample_rate.0 as f32 * 1000.0,
+        config.sample_rate.0
+    );
+    config
 }
 
 /// Shared state for audio processing callback
@@ -468,6 +484,11 @@ impl CpalBackend {
         // Shared flag to ensure we only signal once
         let signaled = std::sync::Arc::new(AtomicBool::new(false));
 
+        // Clone stop_signal and signaled before moving into CallbackState
+        // These clones are needed for the fallback error handlers in buffer size retry logic
+        let stop_signal_for_state = stop_signal.clone();
+        let signaled_for_state = signaled.clone();
+
         // Create error handler that signals stop on stream errors
         let err_signal = stop_signal.clone();
         let err_signaled = signaled.clone();
@@ -502,8 +523,8 @@ impl CpalBackend {
         // Create shared callback state - all callbacks use the same processing logic
         let callback_state = Arc::new(CallbackState {
             buffer,
-            stop_signal,
-            signaled,
+            stop_signal: stop_signal_for_state,
+            signaled: signaled_for_state,
             stop_flag: Arc::new(AtomicBool::new(false)),
             resampler,
             resample_buffer,
@@ -515,46 +536,146 @@ impl CpalBackend {
             denoiser,
         });
 
+        // Create stream config with preferred buffer size
+        let stream_config = create_stream_config_with_buffer_size(config.clone());
+        let sample_format = config.sample_format();
+
         // Build the input stream based on sample format
         // Each callback converts to f32 and delegates to CallbackState::process_samples
-        let stream = match config.sample_format() {
+        // Try with fixed buffer size first, fall back to default if platform rejects it
+        let stream = match sample_format {
             cpal::SampleFormat::F32 => {
+                // Try fixed buffer size first
                 let state = callback_state.clone();
-                device.build_input_stream(
-                    &config.into(),
+                let err_signal = stop_signal.clone();
+                let err_signaled = signaled.clone();
+                let result = device.build_input_stream(
+                    &stream_config,
                     move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                        // F32 samples are already in the correct format
                         state.process_samples(data);
                     },
-                    err_fn,
+                    move |err: cpal::StreamError| {
+                        crate::error!("Audio stream error: {}", err);
+                        if !err_signaled.swap(true, Ordering::SeqCst) {
+                            if let Some(ref sender) = err_signal {
+                                let _ = sender.send(StopReason::StreamError);
+                            }
+                        }
+                    },
                     None,
-                )
+                );
+                match result {
+                    Ok(stream) => {
+                        crate::info!("Stream created with fixed buffer size: {} samples", PREFERRED_BUFFER_SIZE);
+                        Ok(stream)
+                    }
+                    Err(e) => {
+                        crate::warn!(
+                            "Fixed buffer size {} rejected ({}), falling back to platform default",
+                            PREFERRED_BUFFER_SIZE, e
+                        );
+                        let default_config: StreamConfig = config.clone().into();
+                        let state = callback_state.clone();
+                        device.build_input_stream(
+                            &default_config,
+                            move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                                state.process_samples(data);
+                            },
+                            err_fn,
+                            None,
+                        )
+                    }
+                }
             }
             cpal::SampleFormat::I16 => {
+                // Try fixed buffer size first
                 let state = callback_state.clone();
-                device.build_input_stream(
-                    &config.into(),
+                let err_signal = stop_signal.clone();
+                let err_signaled = signaled.clone();
+                let result = device.build_input_stream(
+                    &stream_config,
                     move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                        // Convert i16 samples to f32 normalized to [-1.0, 1.0]
                         let f32_samples: Vec<f32> = data.iter().map(|&s| s as f32 / i16::MAX as f32).collect();
                         state.process_samples(&f32_samples);
                     },
-                    err_fn,
+                    move |err: cpal::StreamError| {
+                        crate::error!("Audio stream error: {}", err);
+                        if !err_signaled.swap(true, Ordering::SeqCst) {
+                            if let Some(ref sender) = err_signal {
+                                let _ = sender.send(StopReason::StreamError);
+                            }
+                        }
+                    },
                     None,
-                )
+                );
+                match result {
+                    Ok(stream) => {
+                        crate::info!("Stream created with fixed buffer size: {} samples", PREFERRED_BUFFER_SIZE);
+                        Ok(stream)
+                    }
+                    Err(e) => {
+                        crate::warn!(
+                            "Fixed buffer size {} rejected ({}), falling back to platform default",
+                            PREFERRED_BUFFER_SIZE, e
+                        );
+                        let default_config: StreamConfig = config.clone().into();
+                        let state = callback_state.clone();
+                        device.build_input_stream(
+                            &default_config,
+                            move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                                let f32_samples: Vec<f32> = data.iter().map(|&s| s as f32 / i16::MAX as f32).collect();
+                                state.process_samples(&f32_samples);
+                            },
+                            err_fn,
+                            None,
+                        )
+                    }
+                }
             }
             cpal::SampleFormat::U16 => {
+                // Try fixed buffer size first
                 let state = callback_state.clone();
-                device.build_input_stream(
-                    &config.into(),
+                let err_signal = stop_signal.clone();
+                let err_signaled = signaled.clone();
+                let result = device.build_input_stream(
+                    &stream_config,
                     move |data: &[u16], _: &cpal::InputCallbackInfo| {
-                        // Convert u16 samples to f32 normalized to [-1.0, 1.0]
                         let f32_samples: Vec<f32> = data.iter().map(|&s| (s as f32 / u16::MAX as f32) * 2.0 - 1.0).collect();
                         state.process_samples(&f32_samples);
                     },
-                    err_fn,
+                    move |err: cpal::StreamError| {
+                        crate::error!("Audio stream error: {}", err);
+                        if !err_signaled.swap(true, Ordering::SeqCst) {
+                            if let Some(ref sender) = err_signal {
+                                let _ = sender.send(StopReason::StreamError);
+                            }
+                        }
+                    },
                     None,
-                )
+                );
+                match result {
+                    Ok(stream) => {
+                        crate::info!("Stream created with fixed buffer size: {} samples", PREFERRED_BUFFER_SIZE);
+                        Ok(stream)
+                    }
+                    Err(e) => {
+                        crate::warn!(
+                            "Fixed buffer size {} rejected ({}), falling back to platform default",
+                            PREFERRED_BUFFER_SIZE, e
+                        );
+                        let default_config: StreamConfig = config.clone().into();
+                        let state = callback_state.clone();
+                        device.build_input_stream(
+                            &default_config,
+                            move |data: &[u16], _: &cpal::InputCallbackInfo| {
+                                let f32_samples: Vec<f32> = data.iter().map(|&s| (s as f32 / u16::MAX as f32) * 2.0 - 1.0).collect();
+                                state.process_samples(&f32_samples);
+                            },
+                            err_fn,
+                            None,
+                        )
+                    }
+                }
             }
             _ => {
                 return Err(AudioCaptureError::DeviceError(

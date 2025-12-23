@@ -187,6 +187,25 @@ pub const EVENT_CHANNEL_BUFFER_SIZE: usize = 16;
 pub const RESAMPLE_CHUNK_SIZE: usize = 1024;
 
 // =============================================================================
+// BUFFER SIZE CONFIGURATION
+// =============================================================================
+
+/// Preferred audio buffer size for consistent timing (samples).
+///
+/// 256 samples = ~16ms at 16kHz, ~5ms at 48kHz.
+/// Smaller values reduce latency but increase CPU usage.
+/// This is passed to cpal's `BufferSize::Fixed` to request a specific
+/// buffer size from the audio driver, reducing glitches caused by
+/// variable platform defaults.
+///
+/// | Buffer Size | Latency @ 16kHz | Latency @ 48kHz | Notes |
+/// |-------------|-----------------|-----------------|-------|
+/// | 128         | 8ms             | 2.7ms           | Very low latency, higher CPU |
+/// | 256         | 16ms            | 5.3ms           | Good balance (recommended) |
+/// | 512         | 32ms            | 10.7ms          | Lower CPU, higher latency |
+pub const PREFERRED_BUFFER_SIZE: u32 = 256;
+
+// =============================================================================
 // UTILITY FUNCTIONS
 // =============================================================================
 
@@ -275,5 +294,29 @@ mod tests {
         assert!(ANALYSIS_INTERVAL_MS >= 50);
         // But less than 500ms for responsive detection
         assert!(ANALYSIS_INTERVAL_MS <= 500);
+    }
+
+    #[test]
+    fn test_preferred_buffer_size_reasonable() {
+        // Buffer size should be a power of 2 for efficient audio processing
+        assert!(PREFERRED_BUFFER_SIZE.is_power_of_two());
+        // Should be at least 64 samples for stable operation
+        assert!(PREFERRED_BUFFER_SIZE >= 64);
+        // Should be at most 1024 to keep latency reasonable
+        assert!(PREFERRED_BUFFER_SIZE <= 1024);
+        // 256 is the recommended default
+        assert_eq!(PREFERRED_BUFFER_SIZE, 256);
+    }
+
+    #[test]
+    fn test_buffer_latency_calculation() {
+        // Verify the latency values from the doc comment
+        let latency_16khz_ms = PREFERRED_BUFFER_SIZE as f32 / 16000.0 * 1000.0;
+        let latency_48khz_ms = PREFERRED_BUFFER_SIZE as f32 / 48000.0 * 1000.0;
+
+        // 256 samples @ 16kHz = 16ms
+        assert!((latency_16khz_ms - 16.0).abs() < 0.1);
+        // 256 samples @ 48kHz ≈ 5.3ms
+        assert!((latency_48khz_ms - 5.33).abs() < 0.1);
     }
 }
