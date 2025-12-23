@@ -51,7 +51,7 @@ heycat supports git worktrees for parallel feature development. Each worktree ge
 ### Create a worktree
 
 ```bash
-# Creates worktree at ../heycat-<branch> with unique hotkey
+# Creates worktree at worktrees/heycat-<branch> with unique hotkey
 bun scripts/create-worktree.ts <branch-name>
 
 # Or specify custom path
@@ -61,13 +61,13 @@ bun scripts/create-worktree.ts <branch-name> <path>
 Example:
 ```bash
 bun scripts/create-worktree.ts feature-audio
-# Creates ../heycat-feature-audio with branch feature-audio
+# Creates worktrees/heycat-feature-audio with branch feature-audio
 # Assigns unique hotkey (e.g., CmdOrControl+Shift+3)
 ```
 
 Then:
 ```bash
-cd ../heycat-feature-audio
+cd worktrees/heycat-feature-audio
 bun install
 bun run tauri dev
 ```
@@ -109,6 +109,6 @@ Each worktree uses a different recording hotkey, so you can run the main repo an
 bun run tauri dev   # Uses default hotkey
 
 # Terminal 2: worktree
-cd ../heycat-feature-audio
+cd worktrees/heycat-feature-audio
 bun run tauri dev   # Uses unique hotkey (CmdOrControl+Shift+N)
 ```

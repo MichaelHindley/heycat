@@ -10,7 +10,7 @@
  *
  * Usage: bun scripts/create-worktree.ts <branch-name> [path]
  *
- * The path defaults to ../heycat-<branch-name> (sibling directory)
+ * The path defaults to worktrees/heycat-<branch-name> (inside repository)
  */
 
 import { existsSync, mkdirSync, writeFileSync } from "fs";
@@ -184,7 +184,7 @@ ${colors.bold}Usage:${colors.reset} bun scripts/create-worktree.ts <branch-name>
 
 ${colors.bold}Arguments:${colors.reset}
   branch-name  Name for the new git branch (required)
-  path         Path for the worktree (default: ../heycat-<branch-name>)
+  path         Path for the worktree (default: worktrees/heycat-<branch-name>)
 
 ${colors.bold}Description:${colors.reset}
   Creates a new git worktree with heycat-specific setup:
@@ -194,7 +194,7 @@ ${colors.bold}Description:${colors.reset}
 
 ${colors.bold}Example:${colors.reset}
   bun scripts/create-worktree.ts feature-audio-improvements
-  bun scripts/create-worktree.ts bugfix-123 ../heycat-bugfix
+  bun scripts/create-worktree.ts bugfix-123 worktrees/heycat-bugfix
 `);
     process.exit(0);
   }
@@ -206,7 +206,7 @@ ${colors.bold}Example:${colors.reset}
   }
 
   const branchName = args[0];
-  const worktreePath = args[1] || resolve(process.cwd(), "..", `heycat-${branchName}`);
+  const worktreePath = args[1] || resolve(process.cwd(), "worktrees", `heycat-${branchName}`);
 
   log(`\n${colors.bold}Creating heycat worktree${colors.reset}\n`);
   info(`Branch: ${branchName}`);
