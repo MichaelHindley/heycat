@@ -220,12 +220,30 @@ pub struct PreprocessingChain {
 impl PreprocessingChain {
     /// Create a new preprocessing chain at the given sample rate.
     ///
+    /// Checks environment variables for bypass configuration:
+    /// - `HEYCAT_DISABLE_HIGHPASS=1` - Disable highpass filter
+    /// - `HEYCAT_DISABLE_PRE_EMPHASIS=1` - Disable pre-emphasis filter
+    ///
     /// # Arguments
     /// * `sample_rate` - Audio sample rate in Hz
     pub fn new(sample_rate: u32) -> Self {
+        let mut highpass = HighpassFilter::new(sample_rate);
+        let mut pre_emphasis = PreEmphasisFilter::new();
+
+        // Check for environment variable overrides for troubleshooting
+        if std::env::var("HEYCAT_DISABLE_HIGHPASS").map_or(false, |v| v == "1") {
+            highpass.set_enabled(false);
+            crate::info!("Highpass filter DISABLED via HEYCAT_DISABLE_HIGHPASS environment variable");
+        }
+
+        if std::env::var("HEYCAT_DISABLE_PRE_EMPHASIS").map_or(false, |v| v == "1") {
+            pre_emphasis.set_enabled(false);
+            crate::info!("Pre-emphasis filter DISABLED via HEYCAT_DISABLE_PRE_EMPHASIS environment variable");
+        }
+
         Self {
-            highpass: HighpassFilter::new(sample_rate),
-            pre_emphasis: PreEmphasisFilter::new(),
+            highpass,
+            pre_emphasis,
         }
     }
 

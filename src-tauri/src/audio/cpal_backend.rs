@@ -626,6 +626,7 @@ impl CpalBackend {
         };
 
         // Create preprocessing chain at device sample rate for best filter accuracy
+        // Environment variables can bypass filters: HEYCAT_DISABLE_HIGHPASS=1, HEYCAT_DISABLE_PRE_EMPHASIS=1
         let preprocessing = PreprocessingChain::new(device_sample_rate);
         crate::info!(
             "Preprocessing chain initialized at {}Hz (highpass {}Hz, pre-emphasis α={})",
