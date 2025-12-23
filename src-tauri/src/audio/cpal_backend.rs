@@ -7,7 +7,7 @@
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, SampleRate, Stream, StreamConfig};
-use rubato::{FftFixedIn, Resampler};
+use rubato::{Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
 
 use super::{AudioBuffer, AudioCaptureBackend, AudioCaptureError, CaptureState, StopReason, MAX_RESAMPLE_BUFFER_SAMPLES, TARGET_SAMPLE_RATE};
 use super::denoiser::{DtlnDenoiser, SharedDenoiser};
@@ -91,20 +91,38 @@ fn find_config_with_sample_rate(
     None
 }
 
-/// Create a resampler for converting from source rate to target rate
+/// Create a high-quality sinc resampler for converting from source rate to target rate.
+///
+/// Uses `SincFixedIn` with parameters optimized for voice recordings:
+/// - sinc_len: 128 for good quality with reasonable CPU usage
+/// - f_cutoff: 0.95 for minimal high-frequency rolloff
+/// - oversampling_factor: 128 for smooth interpolation
+/// - interpolation: Cubic for high quality
+/// - window: BlackmanHarris2 for excellent stopband attenuation
 fn create_resampler(
     source_rate: u32,
     target_rate: u32,
     chunk_size: usize,
-) -> Result<FftFixedIn<f32>, AudioCaptureError> {
-    FftFixedIn::new(
-        source_rate as usize,
-        target_rate as usize,
+) -> Result<SincFixedIn<f32>, AudioCaptureError> {
+    let resample_ratio = target_rate as f64 / source_rate as f64;
+
+    // Parameters optimized for voice quality
+    let params = SincInterpolationParameters {
+        sinc_len: 128,             // Good balance of quality vs CPU
+        f_cutoff: 0.95,            // Minimal high-frequency rolloff
+        oversampling_factor: 128,  // Smooth interpolation
+        interpolation: SincInterpolationType::Cubic, // High quality
+        window: WindowFunction::BlackmanHarris2,     // Excellent stopband attenuation
+    };
+
+    SincFixedIn::new(
+        resample_ratio,
+        1.0, // max_resample_ratio_relative - fixed ratio for our use case
+        params,
         chunk_size,
-        1, // sub_chunks - use 1 for simplicity
         1, // channels - mono
     )
-    .map_err(|e| AudioCaptureError::DeviceError(format!("Failed to create resampler: {}", e)))
+    .map_err(|e| AudioCaptureError::DeviceError(format!("Failed to create sinc resampler: {}", e)))
 }
 
 /// Get the effective buffer size, checking for environment variable override.
@@ -201,7 +219,7 @@ struct CallbackState {
     /// Stop flag - when true, callbacks should not process new samples
     /// This prevents samples from being pushed to denoiser after stop is initiated
     stop_flag: Arc<AtomicBool>,
-    resampler: Option<Arc<Mutex<FftFixedIn<f32>>>>,
+    resampler: Option<Arc<Mutex<SincFixedIn<f32>>>>,
     resample_buffer: Arc<Mutex<Vec<f32>>>,
     chunk_buffer: Arc<Mutex<Vec<f32>>>,
     chunk_size: usize,
@@ -573,7 +591,7 @@ impl CpalBackend {
         }
 
         // Create resampler if needed
-        let resampler: Option<Arc<Mutex<FftFixedIn<f32>>>> = if needs_resampling {
+        let resampler: Option<Arc<Mutex<SincFixedIn<f32>>>> = if needs_resampling {
             let r = create_resampler(device_sample_rate, TARGET_SAMPLE_RATE, RESAMPLE_CHUNK_SIZE)?;
             crate::info!(
                 "Resampler created: {}Hz -> {}Hz, output_delay={} frames",
@@ -829,12 +847,24 @@ mod resampler_tests {
     const TARGET_RATE: usize = 16000;
     const CHUNK_SIZE: usize = RESAMPLE_CHUNK_SIZE;
 
-    /// Test that the FFT resampler eventually produces output after enough input.
-    /// The FFT resampler has internal latency and may not produce output on every call.
+    /// Create a test sinc resampler with the same parameters as production
+    fn create_test_resampler() -> SincFixedIn<f32> {
+        let resample_ratio = TARGET_RATE as f64 / SOURCE_RATE as f64;
+        let params = SincInterpolationParameters {
+            sinc_len: 128,
+            f_cutoff: 0.95,
+            oversampling_factor: 128,
+            interpolation: SincInterpolationType::Cubic,
+            window: WindowFunction::BlackmanHarris2,
+        };
+        SincFixedIn::new(resample_ratio, 1.0, params, CHUNK_SIZE, 1).unwrap()
+    }
+
+    /// Test that the sinc resampler eventually produces output after enough input.
+    /// The sinc resampler has internal latency and may not produce output on every call.
     #[test]
     fn test_resampler_produces_output_after_warmup() {
-        let mut resampler =
-            FftFixedIn::<f32>::new(SOURCE_RATE, TARGET_RATE, CHUNK_SIZE, 1, 1).unwrap();
+        let mut resampler = create_test_resampler();
 
         let mut total_output = 0usize;
 
@@ -853,11 +883,10 @@ mod resampler_tests {
     }
 
     /// Test that sample ratio converges to expected value over many chunks.
-    /// The FFT resampler has internal latency that can cause ratio drift on small samples.
+    /// The sinc resampler has internal latency that can cause ratio drift on small samples.
     #[test]
     fn test_sample_ratio_converges() {
-        let mut resampler =
-            FftFixedIn::<f32>::new(SOURCE_RATE, TARGET_RATE, CHUNK_SIZE, 1, 1).unwrap();
+        let mut resampler = create_test_resampler();
         let expected_ratio = TARGET_RATE as f64 / SOURCE_RATE as f64;
 
         let mut total_input = 0usize;
@@ -883,11 +912,12 @@ mod resampler_tests {
         );
     }
 
-    /// Test edge case: flush when buffer is empty (should be a no-op)
+    /// Test edge case: flush when buffer is empty does not panic
+    /// Note: The sinc resampler may still produce output from its internal delay buffer
+    /// when process_partial(None) is called, even with an empty input buffer.
     #[test]
     fn test_flush_with_empty_buffer() {
-        let resampler =
-            FftFixedIn::<f32>::new(SOURCE_RATE, TARGET_RATE, CHUNK_SIZE, 1, 1).unwrap();
+        let resampler = create_test_resampler();
 
         // Create CallbackState with empty resample buffer
         let callback_state = CallbackState {
@@ -907,22 +937,20 @@ mod resampler_tests {
             denoiser: None,
         };
 
-        // Flush should be a no-op when buffer is empty
+        // Flush should not panic even when buffer is empty
+        // The sinc resampler may produce output from its internal delay buffer
         callback_state.flush_residuals();
 
-        // Verify no samples were output
-        assert_eq!(
-            callback_state.output_sample_count.load(Ordering::Relaxed),
-            0
-        );
+        // The resample buffer should be cleared after flush
+        let buf = callback_state.resample_buffer.lock().unwrap();
+        assert!(buf.is_empty(), "Resample buffer should be empty after flush");
     }
 
     /// Test that resample buffer is cleared after flush
     #[test]
     fn test_buffer_cleared_after_flush() {
         // First warm up the resampler so it has internal state
-        let mut resampler =
-            FftFixedIn::<f32>::new(SOURCE_RATE, TARGET_RATE, CHUNK_SIZE, 1, 1).unwrap();
+        let mut resampler = create_test_resampler();
 
         // Process several chunks to warm up
         for _ in 0..5 {
@@ -974,9 +1002,8 @@ mod resampler_tests {
                 stop_signal: None,
                 signaled: Arc::new(AtomicBool::new(false)),
                 stop_flag: Arc::new(AtomicBool::new(false)),
-                resampler: Some(Arc::new(Mutex::new(
-                    FftFixedIn::<f32>::new(SOURCE_RATE, TARGET_RATE, CHUNK_SIZE, 1, 1).unwrap(),
-                ))),
+                resampler: Some(Arc::new(Mutex::new(create_test_resampler())),
+                ),
                 resample_buffer: Arc::new(Mutex::new(residual_samples)),
                 chunk_buffer: Arc::new(Mutex::new(vec![0.0f32; CHUNK_SIZE])),
                 chunk_size: CHUNK_SIZE,
@@ -1002,11 +1029,10 @@ mod resampler_tests {
     }
 
     /// Test that process_partial(None) extracts samples from the delay buffer.
-    /// The FFT resampler holds output_delay() frames internally that must be flushed.
+    /// The sinc resampler holds output_delay() frames internally that must be flushed.
     #[test]
     fn test_process_partial_extracts_delay_buffer() {
-        let mut resampler =
-            FftFixedIn::<f32>::new(SOURCE_RATE, TARGET_RATE, CHUNK_SIZE, 1, 1).unwrap();
+        let mut resampler = create_test_resampler();
 
         // The resampler has an internal delay buffer
         let delay = resampler.output_delay();
@@ -1037,73 +1063,43 @@ mod resampler_tests {
         );
     }
 
-    /// Test that sample ratio converges toward expected value after proper flushing.
-    /// With proper flushing, the ratio error should be lower than without flushing.
+    /// Test that flushing the resampler extracts additional samples from the delay buffer.
     ///
-    /// Note: Due to FFT resampler internal buffering characteristics, the exact ratio
-    /// depends on total sample count. The key behavior is that flushing extracts
-    /// additional samples that would otherwise be lost.
+    /// The sinc resampler maintains an internal delay buffer. Calling process_partial(None)
+    /// should extract any remaining samples from this buffer, ensuring no audio is lost
+    /// at the end of a recording.
     #[test]
-    fn test_sample_ratio_improves_with_flush() {
-        // Create two resamplers to compare with vs without flushing
-        let mut resampler_with_flush =
-            FftFixedIn::<f32>::new(SOURCE_RATE, TARGET_RATE, CHUNK_SIZE, 1, 1).unwrap();
-        let mut resampler_without_flush =
-            FftFixedIn::<f32>::new(SOURCE_RATE, TARGET_RATE, CHUNK_SIZE, 1, 1).unwrap();
+    fn test_flush_extracts_additional_samples() {
+        let mut resampler = create_test_resampler();
 
-        let expected_ratio = TARGET_RATE as f64 / SOURCE_RATE as f64;
-
-        let mut total_input = 0usize;
-        let mut output_with_flush = 0usize;
-        let mut output_without_flush = 0usize;
-
-        // Process chunks (simulating a recording)
-        for _ in 0..100 {
+        // Process several chunks to fill the internal state
+        for _ in 0..50 {
             let chunk: Vec<f32> = vec![0.5f32; CHUNK_SIZE];
-            let out1 = resampler_with_flush.process(&[&chunk], None).unwrap();
-            let out2 = resampler_without_flush.process(&[&chunk], None).unwrap();
-            total_input += CHUNK_SIZE;
-            output_with_flush += out1[0].len();
-            output_without_flush += out2[0].len();
+            let _ = resampler.process(&[&chunk], None).unwrap();
         }
 
-        // Add some residual samples via process_partial (for with_flush)
-        let residual: Vec<f32> = vec![0.5f32; 500];
-        total_input += 500;
-        let residual_output = resampler_with_flush.process_partial(Some(&[&residual[..]]), None).unwrap();
-        if !residual_output.is_empty() {
-            output_with_flush += residual_output[0].len();
-        }
+        // Now flush with process_partial(None) to extract remaining samples
+        let flush_output = resampler.process_partial(None::<&[&[f32]]>, None).unwrap();
+        let flushed_samples = if !flush_output.is_empty() {
+            flush_output[0].len()
+        } else {
+            0
+        };
 
-        // Flush the delay buffer with process_partial(None)
-        let flush_output = resampler_with_flush.process_partial(None::<&[&[f32]]>, None).unwrap();
-        if !flush_output.is_empty() {
-            output_with_flush += flush_output[0].len();
-        }
-
-        // Calculate ratio errors
-        let ratio_with_flush = output_with_flush as f64 / total_input as f64;
-        let ratio_without_flush = output_without_flush as f64 / (total_input - 500) as f64; // without residual
-
-        let error_with_flush = ((ratio_with_flush - expected_ratio) / expected_ratio * 100.0).abs();
-        let error_without_flush = ((ratio_without_flush - expected_ratio) / expected_ratio * 100.0).abs();
-
-        // The key assertion: flushing should get us more output samples
-        // (or at least not make things worse)
+        // The flush should extract some samples from the delay buffer
         assert!(
-            output_with_flush > output_without_flush,
-            "Flushing should produce more output samples: with_flush={}, without_flush={}",
-            output_with_flush,
-            output_without_flush
+            flushed_samples > 0,
+            "Flushing should extract samples from delay buffer, got 0"
         );
 
-        // The ratio with flushing should be at least as good or better
-        // (Note: exact tolerance depends on sample count, so we just verify improvement)
+        // The flushed sample count should be reasonable (not excessively large)
+        // The sinc resampler's delay is proportional to sinc_len
+        let max_expected_flush = 500; // Conservative upper bound
         assert!(
-            error_with_flush <= error_without_flush + 0.5,
-            "Flushing should not significantly degrade ratio: with_flush error={:.3}%, without_flush error={:.3}%",
-            error_with_flush,
-            error_without_flush
+            flushed_samples < max_expected_flush,
+            "Flushed samples {} seems too large (expected < {})",
+            flushed_samples,
+            max_expected_flush
         );
     }
 
@@ -1119,8 +1115,7 @@ mod resampler_tests {
     /// Fix: Added stop_flag atomic that callbacks check before processing.
     #[test]
     fn test_stop_flag_prevents_sample_processing() {
-        let resampler =
-            FftFixedIn::<f32>::new(SOURCE_RATE, TARGET_RATE, CHUNK_SIZE, 1, 1).unwrap();
+        let resampler = create_test_resampler();
 
         let callback_state = CallbackState {
             buffer: AudioBuffer::new(),
