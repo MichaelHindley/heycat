@@ -156,6 +156,41 @@ fn create_stream_config_with_buffer_size(base_config: cpal::SupportedStreamConfi
     (config, buffer_size)
 }
 
+/// Mix multi-channel audio to mono.
+///
+/// Performs proper channel mixing with -3dB gain compensation to prevent clipping
+/// when summing channels. For stereo: `mono = (left + right) / 2 * 0.707`.
+///
+/// # Arguments
+/// * `samples` - Interleaved multi-channel samples (e.g., [L0, R0, L1, R1, ...])
+/// * `channels` - Number of channels in the input
+///
+/// # Returns
+/// Mono samples (one sample per frame)
+fn mix_to_mono(samples: &[f32], channels: u16) -> Vec<f32> {
+    if channels == 1 {
+        // Already mono - return as-is
+        return samples.to_vec();
+    }
+
+    let channels = channels as usize;
+    let frame_count = samples.len() / channels;
+    let mut mono = Vec::with_capacity(frame_count);
+
+    // -3dB gain compensation when summing channels (sqrt(0.5) ≈ 0.707)
+    // This prevents clipping when coherent signals are summed
+    const GAIN_COMPENSATION: f32 = 0.7071067811865476; // 1/sqrt(2)
+
+    for frame in 0..frame_count {
+        let frame_start = frame * channels;
+        let sum: f32 = samples[frame_start..frame_start + channels].iter().sum();
+        let avg = sum / channels as f32;
+        mono.push(avg * GAIN_COMPENSATION);
+    }
+
+    mono
+}
+
 /// Shared state for audio processing callback
 /// Captures all the Arc-wrapped resources needed by the callback
 struct CallbackState {
@@ -175,15 +210,23 @@ struct CallbackState {
     output_sample_count: Arc<AtomicUsize>,
     /// Device sample rate (for ratio calculation in diagnostics)
     device_sample_rate: u32,
+    /// Number of channels from the audio device (for stereo-to-mono mixing)
+    channel_count: u16,
     /// Optional noise suppression denoiser (None if failed to load)
     denoiser: Option<Arc<Mutex<DtlnDenoiser>>>,
 }
 
 impl CallbackState {
-    /// Process f32 audio samples - handles resampling and buffer management
+    /// Process f32 audio samples - handles channel mixing, resampling, and buffer management
     ///
     /// This is the core audio processing logic, extracted to avoid duplication
     /// across F32, I16, and U16 sample format callbacks.
+    ///
+    /// Processing order:
+    /// 1. Channel mixing (stereo → mono)
+    /// 2. Resampling (if needed)
+    /// 3. Noise suppression (if enabled)
+    /// 4. Ring buffer storage
     fn process_samples(&self, f32_samples: &[f32]) {
         // Check stop flag FIRST - don't process samples after stop is initiated
         // This prevents stale samples from corrupting the shared denoiser state
@@ -191,9 +234,18 @@ impl CallbackState {
             return;
         }
 
-        // Track input samples for diagnostic logging
+        // Track input samples for diagnostic logging (raw device samples)
         self.input_sample_count.fetch_add(f32_samples.len(), Ordering::Relaxed);
 
+        // Step 1: Mix multi-channel to mono (if needed)
+        // This must happen before resampling since resampler is configured for mono
+        let mono_samples = if self.channel_count > 1 {
+            mix_to_mono(f32_samples, self.channel_count)
+        } else {
+            f32_samples.to_vec()
+        };
+
+        // Step 2: Resample to target rate (if needed)
         let samples_to_add = if let Some(ref resampler) = self.resampler {
             // Accumulate samples and resample when we have enough
             let mut resample_buf = match self.resample_buffer.lock() {
@@ -202,7 +254,7 @@ impl CallbackState {
             };
 
             // Signal stop if resample buffer overflows - data loss is unacceptable
-            if resample_buf.len() + f32_samples.len() > MAX_RESAMPLE_BUFFER_SAMPLES {
+            if resample_buf.len() + mono_samples.len() > MAX_RESAMPLE_BUFFER_SAMPLES {
                 crate::error!("Resample buffer overflow: resampling can't keep up with audio input");
                 if !self.signaled.swap(true, Ordering::SeqCst) {
                     if let Some(ref sender) = self.stop_signal {
@@ -211,7 +263,7 @@ impl CallbackState {
                 }
                 return;
             }
-            resample_buf.extend_from_slice(f32_samples);
+            resample_buf.extend_from_slice(&mono_samples);
 
             // Process full chunks using pre-allocated buffer
             let mut resampled = Vec::new();
@@ -242,7 +294,7 @@ impl CallbackState {
             resampled
         } else {
             // No resampling needed
-            f32_samples.to_vec()
+            mono_samples
         };
 
         // Apply noise suppression if available
@@ -494,12 +546,21 @@ impl CpalBackend {
         };
 
         let device_sample_rate = config.sample_rate().0;
+        let channel_count = config.channels();
         crate::debug!(
             "Config: {} Hz, {:?}, {} channels",
             device_sample_rate,
             config.sample_format(),
-            config.channels()
+            channel_count
         );
+
+        // Log channel mixing information
+        if channel_count > 1 {
+            crate::info!(
+                "Device has {} channels - will mix to mono with -3dB gain compensation",
+                channel_count
+            );
+        }
 
         // Create resampler if needed
         let resampler: Option<Arc<Mutex<FftFixedIn<f32>>>> = if needs_resampling {
@@ -567,6 +628,7 @@ impl CpalBackend {
             input_sample_count: Arc::new(AtomicUsize::new(0)),
             output_sample_count: Arc::new(AtomicUsize::new(0)),
             device_sample_rate,
+            channel_count,
             denoiser,
         });
 
@@ -819,6 +881,7 @@ mod resampler_tests {
             input_sample_count: Arc::new(AtomicUsize::new(0)),
             output_sample_count: Arc::new(AtomicUsize::new(0)),
             device_sample_rate: SOURCE_RATE as u32,
+            channel_count: 1, // Tests use mono
             denoiser: None,
         };
 
@@ -859,6 +922,7 @@ mod resampler_tests {
             input_sample_count: Arc::new(AtomicUsize::new(5 * CHUNK_SIZE + 500)),
             output_sample_count: Arc::new(AtomicUsize::new(0)),
             device_sample_rate: SOURCE_RATE as u32,
+            channel_count: 1, // Tests use mono
             denoiser: None,
         };
 
@@ -896,6 +960,7 @@ mod resampler_tests {
                 input_sample_count: Arc::new(AtomicUsize::new(residual_size)),
                 output_sample_count: Arc::new(AtomicUsize::new(0)),
                 device_sample_rate: SOURCE_RATE as u32,
+                channel_count: 1, // Tests use mono
                 denoiser: None,
             };
 
@@ -1045,6 +1110,7 @@ mod resampler_tests {
             input_sample_count: Arc::new(AtomicUsize::new(0)),
             output_sample_count: Arc::new(AtomicUsize::new(0)),
             device_sample_rate: SOURCE_RATE as u32,
+            channel_count: 1, // Tests use mono
             denoiser: None,
         };
 
@@ -1066,5 +1132,105 @@ mod resampler_tests {
             input_after_stop, 1000,
             "Stop flag should prevent further sample processing"
         );
+    }
+
+    // =========================================================================
+    // Channel mixing tests
+    // =========================================================================
+
+    /// Test that mono input (1 channel) passes through unchanged
+    #[test]
+    fn test_mix_to_mono_preserves_mono() {
+        let mono_samples = vec![0.5f32, -0.3, 0.8, -0.1];
+        let result = mix_to_mono(&mono_samples, 1);
+
+        assert_eq!(result.len(), mono_samples.len());
+        assert_eq!(result, mono_samples);
+    }
+
+    /// Test that stereo input (2 channels) is correctly mixed to mono
+    #[test]
+    fn test_mix_to_mono_stereo_mixing() {
+        // Interleaved stereo: [L0, R0, L1, R1, ...]
+        let stereo_samples = vec![0.5f32, 0.5, -0.3, -0.3, 0.8, 0.8, -0.1, -0.1];
+        let result = mix_to_mono(&stereo_samples, 2);
+
+        // Should have half the samples (one per frame)
+        assert_eq!(result.len(), 4);
+
+        // When L == R, the result should be L * 0.707 (gain compensation)
+        let expected_gain = 0.7071067811865476f32;
+        assert!((result[0] - 0.5 * expected_gain).abs() < 0.0001);
+        assert!((result[1] - (-0.3) * expected_gain).abs() < 0.0001);
+        assert!((result[2] - 0.8 * expected_gain).abs() < 0.0001);
+        assert!((result[3] - (-0.1) * expected_gain).abs() < 0.0001);
+    }
+
+    /// Test that stereo 0dB sine wave results in approximately -3dB mono output
+    #[test]
+    fn test_mix_to_mono_gain_compensation() {
+        // Full-scale stereo signal (both channels at 1.0)
+        let stereo_samples = vec![1.0f32, 1.0];
+        let result = mix_to_mono(&stereo_samples, 2);
+
+        assert_eq!(result.len(), 1);
+
+        // -3dB = 0.707..., so (1.0 + 1.0) / 2 * 0.707 ≈ 0.707
+        let expected = 0.7071067811865476f32;
+        assert!(
+            (result[0] - expected).abs() < 0.0001,
+            "Expected ~{}, got {}",
+            expected,
+            result[0]
+        );
+    }
+
+    /// Test that multi-channel input (4+ channels) is handled without panics
+    #[test]
+    fn test_mix_to_mono_multichannel() {
+        // 4-channel audio: [Ch0, Ch1, Ch2, Ch3, Ch0, Ch1, Ch2, Ch3, ...]
+        let multichannel_samples = vec![
+            0.25f32, 0.25, 0.25, 0.25, // Frame 0: all channels at 0.25
+            0.5, 0.5, 0.5, 0.5, // Frame 1: all channels at 0.5
+        ];
+        let result = mix_to_mono(&multichannel_samples, 4);
+
+        // Should have 2 output samples (one per frame)
+        assert_eq!(result.len(), 2);
+
+        // Average of four 0.25 values = 0.25, with -3dB gain = 0.25 * 0.707 ≈ 0.177
+        let expected_frame0 = 0.25 * 0.7071067811865476f32;
+        let expected_frame1 = 0.5 * 0.7071067811865476f32;
+        assert!(
+            (result[0] - expected_frame0).abs() < 0.0001,
+            "Frame 0: expected ~{}, got {}",
+            expected_frame0,
+            result[0]
+        );
+        assert!(
+            (result[1] - expected_frame1).abs() < 0.0001,
+            "Frame 1: expected ~{}, got {}",
+            expected_frame1,
+            result[1]
+        );
+    }
+
+    /// Test that mixed output maintains correct sample count (input_samples / channels)
+    #[test]
+    fn test_mix_to_mono_sample_count() {
+        // 100 stereo frames = 200 samples
+        let stereo_samples: Vec<f32> = (0..200).map(|i| (i as f32) * 0.001).collect();
+        let result = mix_to_mono(&stereo_samples, 2);
+        assert_eq!(result.len(), 100);
+
+        // 100 mono frames = 100 samples
+        let mono_samples: Vec<f32> = (0..100).map(|i| (i as f32) * 0.001).collect();
+        let result = mix_to_mono(&mono_samples, 1);
+        assert_eq!(result.len(), 100);
+
+        // 100 quad-channel frames = 400 samples
+        let quad_samples: Vec<f32> = (0..400).map(|i| (i as f32) * 0.001).collect();
+        let result = mix_to_mono(&quad_samples, 4);
+        assert_eq!(result.len(), 100);
     }
 }
