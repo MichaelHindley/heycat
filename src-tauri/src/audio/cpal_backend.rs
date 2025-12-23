@@ -12,6 +12,7 @@ use rubato::{Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolat
 use super::{AudioBuffer, AudioCaptureBackend, AudioCaptureError, CaptureState, StopReason, MAX_RESAMPLE_BUFFER_SAMPLES, TARGET_SAMPLE_RATE};
 use super::agc::AutomaticGainControl;
 use super::denoiser::{DtlnDenoiser, SharedDenoiser};
+use super::diagnostics::RecordingDiagnostics;
 use super::preprocessing::PreprocessingChain;
 use crate::audio_constants::{PREFERRED_BUFFER_SIZE, RESAMPLE_CHUNK_SIZE};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -238,6 +239,8 @@ struct CallbackState {
     denoiser: Option<Arc<Mutex<DtlnDenoiser>>>,
     /// Automatic gain control for consistent volume levels
     agc: Arc<Mutex<AutomaticGainControl>>,
+    /// Recording diagnostics and quality metrics
+    diagnostics: Arc<RecordingDiagnostics>,
 }
 
 impl CallbackState {
@@ -262,6 +265,9 @@ impl CallbackState {
 
         // Track input samples for diagnostic logging (raw device samples)
         self.input_sample_count.fetch_add(f32_samples.len(), Ordering::Relaxed);
+
+        // Record input for diagnostics (before any processing)
+        self.diagnostics.record_input(f32_samples);
 
         // Step 1: Mix multi-channel to mono (if needed)
         // This must happen before resampling since resampler is configured for mono
@@ -359,6 +365,9 @@ impl CallbackState {
 
         // Track output samples for diagnostic logging
         self.output_sample_count.fetch_add(processed_samples.len(), Ordering::Relaxed);
+
+        // Record output for diagnostics (after all processing)
+        self.diagnostics.record_output(&processed_samples);
 
         // Push samples to ring buffer (lock-free)
         let pushed = self.buffer.push_samples(&processed_samples);
@@ -484,6 +493,19 @@ impl CallbackState {
             "Sample diagnostics: input={}, output={}, actual_ratio={:.6}, expected_ratio={:.6}, error={:.2}%",
             input, output, actual_ratio, expected_ratio, ratio_error
         );
+
+        // Log comprehensive diagnostics including quality metrics
+        let agc_gain_db = self.agc.lock().ok().map(|agc| agc.current_gain_db());
+        self.diagnostics.log_summary(agc_gain_db);
+
+        // Check for quality warnings (for logging purposes)
+        let warnings = self.diagnostics.check_warnings();
+        for warning in warnings {
+            crate::warn!("[QUALITY] {}: {}",
+                format!("{:?}", warning.warning_type).to_uppercase(),
+                warning.message
+            );
+        }
     }
 }
 
@@ -696,6 +718,7 @@ impl CpalBackend {
             preprocessing: Arc::new(Mutex::new(preprocessing)),
             denoiser,
             agc: Arc::new(Mutex::new(AutomaticGainControl::new())),
+            diagnostics: Arc::new(RecordingDiagnostics::new()),
         });
 
         // Create stream config with preferred buffer size
@@ -963,6 +986,7 @@ mod resampler_tests {
             preprocessing: Arc::new(Mutex::new(PreprocessingChain::new(SOURCE_RATE as u32))),
             denoiser: None,
             agc: Arc::new(Mutex::new(AutomaticGainControl::new())),
+            diagnostics: Arc::new(RecordingDiagnostics::new()),
         };
 
         // Flush should not panic even when buffer is empty
@@ -1004,6 +1028,7 @@ mod resampler_tests {
             preprocessing: Arc::new(Mutex::new(PreprocessingChain::new(SOURCE_RATE as u32))),
             denoiser: None,
             agc: Arc::new(Mutex::new(AutomaticGainControl::new())),
+            diagnostics: Arc::new(RecordingDiagnostics::new()),
         };
 
         // Flush the residual samples
@@ -1043,6 +1068,7 @@ mod resampler_tests {
                 preprocessing: Arc::new(Mutex::new(PreprocessingChain::new(SOURCE_RATE as u32))),
                 denoiser: None,
                 agc: Arc::new(Mutex::new(AutomaticGainControl::new())),
+                diagnostics: Arc::new(RecordingDiagnostics::new()),
             };
 
             // Should not panic
@@ -1163,6 +1189,7 @@ mod resampler_tests {
             preprocessing: Arc::new(Mutex::new(PreprocessingChain::new(SOURCE_RATE as u32))),
             denoiser: None,
             agc: Arc::new(Mutex::new(AutomaticGainControl::new())),
+            diagnostics: Arc::new(RecordingDiagnostics::new()),
         };
 
         // Process some samples normally
