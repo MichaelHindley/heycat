@@ -71,13 +71,20 @@ impl DictionaryStore {
         }
     }
 
-    /// Create a store using the default config path
-    pub fn with_default_path() -> Result<Self, DictionaryError> {
-        let config_dir = dirs::config_dir().ok_or_else(|| {
-            DictionaryError::LoadError("Could not determine config directory".to_string())
+    /// Create a store using the default config path with worktree context
+    pub fn with_default_path_context(
+        worktree_context: Option<&crate::worktree::WorktreeContext>,
+    ) -> Result<Self, DictionaryError> {
+        let config_dir = crate::paths::get_config_dir(worktree_context).map_err(|e| {
+            DictionaryError::LoadError(format!("Could not determine config directory: {}", e))
         })?;
-        let config_path = config_dir.join("heycat").join("dictionary.json");
+        let config_path = config_dir.join("dictionary.json");
         Ok(Self::new(config_path))
+    }
+
+    /// Create a store using the default config path (API-compatible, uses main repo path)
+    pub fn with_default_path() -> Result<Self, DictionaryError> {
+        Self::with_default_path_context(None)
     }
 
     /// Load entries from the persistence file
