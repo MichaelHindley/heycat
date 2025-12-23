@@ -25,7 +25,8 @@ pub enum PathError {
     DataDirNotFound,
     /// Config directory not found (platform issue)
     ConfigDirNotFound,
-    /// Failed to create directory
+    /// Failed to create directory (used by ensure_dir_exists helper)
+    #[allow(dead_code)]
     DirectoryCreationFailed(String),
 }
 
@@ -94,6 +95,11 @@ pub fn get_recordings_dir(worktree_context: Option<&WorktreeContext>) -> Result<
 /// Ensure a directory exists, creating it if necessary.
 ///
 /// Returns the path to the directory on success.
+///
+/// Note: Currently unused as each module handles directory creation inline
+/// (e.g., ensure_models_dir, WAV encoding, config persistence). Kept as a
+/// helper for future centralization if needed.
+#[allow(dead_code)]
 pub fn ensure_dir_exists(path: &PathBuf) -> Result<PathBuf, PathError> {
     if !path.exists() {
         std::fs::create_dir_all(path)

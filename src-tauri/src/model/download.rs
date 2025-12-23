@@ -130,6 +130,10 @@ pub fn get_models_dir_with_context(
 
 /// Get the path where models should be stored (API-compatible, uses main repo path)
 /// Returns {app_data_dir}/heycat/models/
+///
+/// Note: Currently only used in tests. Kept for API compatibility with existing code
+/// that doesn't have worktree context available.
+#[allow(dead_code)]
 pub fn get_models_dir() -> Result<PathBuf, ModelError> {
     get_models_dir_with_context(None)
 }

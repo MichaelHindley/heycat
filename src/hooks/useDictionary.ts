@@ -30,8 +30,8 @@ export function useDictionary() {
         trigger: data.trigger,
         expansion: data.expansion,
         suffix: data.suffix,
-        auto_enter: data.autoEnter,
-        disable_suffix: data.disableSuffix,
+        autoEnter: data.autoEnter,
+        disableSuffix: data.disableSuffix,
       }),
     // Note: NO onSuccess invalidation - Event Bridge handles it
   });
@@ -50,8 +50,8 @@ export function useDictionary() {
         trigger: data.trigger,
         expansion: data.expansion,
         suffix: data.suffix,
-        auto_enter: data.autoEnter,
-        disable_suffix: data.disableSuffix,
+        autoEnter: data.autoEnter,
+        disableSuffix: data.disableSuffix,
       }),
     // Note: NO onSuccess invalidation - Event Bridge handles it
   });
