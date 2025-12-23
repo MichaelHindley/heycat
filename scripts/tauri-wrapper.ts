@@ -54,10 +54,11 @@ if (isDevCommand) {
   console.log(`[tauri-wrapper] Dev server port: ${port}`);
 }
 
-// Set VITE_DEV_PORT for Vite to use
+// Set environment variables for Vite and Rust
 const env = {
   ...process.env,
   VITE_DEV_PORT: String(port),
+  HEYCAT_WORKTREE_ID: identifier || "", // Empty string = main repo
 };
 
 // Run tauri CLI via bunx to use local installation

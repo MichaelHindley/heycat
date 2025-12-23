@@ -45,6 +45,10 @@ impl WorktreeState {
 
 /// Detects if the application is running from a git worktree directory.
 ///
+/// Detection priority:
+/// 1. `HEYCAT_WORKTREE_ID` environment variable (set by tauri-wrapper.ts in dev mode)
+/// 2. CWD-based detection via `.git` file (fallback for release builds)
+///
 /// Git worktrees have a `.git` file (not directory) containing a `gitdir:` reference
 /// to the actual git directory inside the main repository's `.git/worktrees/` folder.
 ///
@@ -52,6 +56,19 @@ impl WorktreeState {
 /// - `Some(WorktreeContext)` if running in a worktree, with identifier and gitdir path
 /// - `None` if running in main repository or detection fails
 pub fn detect_worktree() -> Option<WorktreeContext> {
+    // Priority 1: Environment variable (set by tauri-wrapper.ts in dev mode)
+    // This is needed because when Tauri runs the Rust binary, the CWD may not be
+    // the worktree directory, so CWD-based detection fails.
+    if let Ok(identifier) = std::env::var("HEYCAT_WORKTREE_ID") {
+        if !identifier.is_empty() {
+            return Some(WorktreeContext {
+                identifier,
+                gitdir_path: PathBuf::new(), // Not needed when using env var
+            });
+        }
+    }
+
+    // Priority 2: CWD-based detection (fallback for release builds)
     detect_worktree_at(Path::new(".git"))
 }
 
