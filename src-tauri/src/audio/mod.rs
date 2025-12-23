@@ -34,7 +34,7 @@ pub mod agc;
 pub use agc::AutomaticGainControl;
 
 pub mod diagnostics;
-pub use diagnostics::{RecordingDiagnostics, QualityWarning};
+pub use diagnostics::{RecordingDiagnostics, QualityWarning, PipelineStage};
 
 #[cfg(test)]
 mod mod_test;

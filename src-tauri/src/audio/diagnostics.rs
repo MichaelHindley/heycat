@@ -9,6 +9,7 @@
 //! - Frontend warning events
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 /// Threshold for "too quiet" warning (-30dBFS RMS ≈ 0.0316 linear)
 const QUIET_THRESHOLD_RMS: f32 = 0.0316;
@@ -47,6 +48,19 @@ pub enum WarningSeverity {
     Info,
     /// Warning - likely to affect transcription quality
     Warning,
+}
+
+/// Pipeline processing stages for timing metrics
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PipelineStage {
+    /// Voice preprocessing (highpass + pre-emphasis)
+    Preprocessing,
+    /// Sample rate conversion
+    Resampling,
+    /// Noise suppression
+    Denoising,
+    /// Automatic gain control
+    Agc,
 }
 
 /// Quality warning event payload for frontend
@@ -114,6 +128,47 @@ impl LevelMetrics {
     }
 }
 
+/// Pipeline stage timing metrics
+#[derive(Debug, Clone, Default)]
+pub struct TimingMetrics {
+    /// Total time spent in preprocessing stage
+    pub preprocessing_ns: u64,
+    /// Total time spent in resampling stage
+    pub resampling_ns: u64,
+    /// Total time spent in denoising stage
+    pub denoising_ns: u64,
+    /// Total time spent in AGC stage
+    pub agc_ns: u64,
+    /// Number of timing samples collected
+    pub sample_count: usize,
+}
+
+impl TimingMetrics {
+    /// Get average preprocessing time in microseconds
+    pub fn avg_preprocessing_us(&self) -> f64 {
+        if self.sample_count == 0 { 0.0 }
+        else { self.preprocessing_ns as f64 / self.sample_count as f64 / 1000.0 }
+    }
+
+    /// Get average resampling time in microseconds
+    pub fn avg_resampling_us(&self) -> f64 {
+        if self.sample_count == 0 { 0.0 }
+        else { self.resampling_ns as f64 / self.sample_count as f64 / 1000.0 }
+    }
+
+    /// Get average denoising time in microseconds
+    pub fn avg_denoising_us(&self) -> f64 {
+        if self.sample_count == 0 { 0.0 }
+        else { self.denoising_ns as f64 / self.sample_count as f64 / 1000.0 }
+    }
+
+    /// Get average AGC time in microseconds
+    pub fn avg_agc_us(&self) -> f64 {
+        if self.sample_count == 0 { 0.0 }
+        else { self.agc_ns as f64 / self.sample_count as f64 / 1000.0 }
+    }
+}
+
 /// Recording diagnostics collector
 ///
 /// Collects metrics throughout a recording session and can emit warnings
@@ -142,6 +197,8 @@ pub struct RecordingDiagnostics {
     /// Whether warnings have been emitted (to avoid spam)
     quiet_warning_emitted: AtomicBool,
     clipping_warning_emitted: AtomicBool,
+    /// Pipeline stage timing metrics
+    timing: std::sync::Mutex<TimingMetrics>,
 }
 
 impl RecordingDiagnostics {
@@ -160,7 +217,27 @@ impl RecordingDiagnostics {
             raw_audio_buffer: std::sync::Mutex::new(Vec::new()),
             quiet_warning_emitted: AtomicBool::new(false),
             clipping_warning_emitted: AtomicBool::new(false),
+            timing: std::sync::Mutex::new(TimingMetrics::default()),
         }
+    }
+
+    /// Record timing for a pipeline stage
+    pub fn record_timing(&self, stage: PipelineStage, duration: Duration) {
+        if let Ok(mut timing) = self.timing.lock() {
+            let ns = duration.as_nanos() as u64;
+            match stage {
+                PipelineStage::Preprocessing => timing.preprocessing_ns += ns,
+                PipelineStage::Resampling => timing.resampling_ns += ns,
+                PipelineStage::Denoising => timing.denoising_ns += ns,
+                PipelineStage::Agc => timing.agc_ns += ns,
+            }
+            timing.sample_count += 1;
+        }
+    }
+
+    /// Get timing metrics
+    pub fn timing_metrics(&self) -> TimingMetrics {
+        self.timing.lock().map(|t| t.clone()).unwrap_or_default()
     }
 
     /// Record input samples (call before processing)
@@ -335,7 +412,7 @@ impl RecordingDiagnostics {
             agc_gain_db.map(|g| format!(", agc_gain={:.1}dB", g)).unwrap_or_default()
         );
 
-        // Verbose mode: additional details
+        // Verbose mode: additional details including timing
         if self.verbose {
             let ratio = if input.sample_count > 0 {
                 output.sample_count as f64 / input.sample_count as f64
@@ -343,10 +420,15 @@ impl RecordingDiagnostics {
                 0.0
             };
 
+            let timing = self.timing_metrics();
             crate::info!(
-                "[DIAGNOSTICS] Verbose: sample_ratio={:.4}, debug_mode={}",
+                "[DIAGNOSTICS] Verbose: sample_ratio={:.4}, debug_mode={}, timing(avg µs): preprocess={:.1}, resample={:.1}, denoise={:.1}, agc={:.1}",
                 ratio,
-                self.debug_enabled
+                self.debug_enabled,
+                timing.avg_preprocessing_us(),
+                timing.avg_resampling_us(),
+                timing.avg_denoising_us(),
+                timing.avg_agc_us()
             );
         }
     }

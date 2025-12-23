@@ -12,12 +12,13 @@ use rubato::{Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolat
 use super::{AudioBuffer, AudioCaptureBackend, AudioCaptureError, CaptureState, StopReason, MAX_RESAMPLE_BUFFER_SAMPLES, TARGET_SAMPLE_RATE};
 use super::agc::AutomaticGainControl;
 use super::denoiser::{DtlnDenoiser, SharedDenoiser};
-use super::diagnostics::RecordingDiagnostics;
+use super::diagnostics::{RecordingDiagnostics, PipelineStage};
 use super::preprocessing::PreprocessingChain;
 use crate::audio_constants::{PREFERRED_BUFFER_SIZE, RESAMPLE_CHUNK_SIZE};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 /// Audio capture backend using cpal for platform-specific audio capture
 pub struct CpalBackend {
@@ -279,12 +280,15 @@ impl CallbackState {
 
         // Step 2: Apply voice-optimized preprocessing (highpass + pre-emphasis)
         // This runs at device sample rate for best filter accuracy
+        let preprocess_start = Instant::now();
         let preprocessed = match self.preprocessing.lock() {
             Ok(mut pp) => pp.process(&mono_samples),
             Err(_) => mono_samples, // Skip preprocessing if lock fails
         };
+        self.diagnostics.record_timing(PipelineStage::Preprocessing, preprocess_start.elapsed());
 
         // Step 3: Resample to target rate (if needed)
+        let resample_start = Instant::now();
         let samples_to_add = if let Some(ref resampler) = self.resampler {
             // Accumulate samples and resample when we have enough
             let mut resample_buf = match self.resample_buffer.lock() {
@@ -335,8 +339,10 @@ impl CallbackState {
             // No resampling needed
             preprocessed
         };
+        self.diagnostics.record_timing(PipelineStage::Resampling, resample_start.elapsed());
 
         // Apply noise suppression if available
+        let denoise_start = Instant::now();
         let denoised_samples = if let Some(ref denoiser) = self.denoiser {
             match denoiser.lock() {
                 Ok(mut d) => d.process(&samples_to_add),
@@ -345,12 +351,15 @@ impl CallbackState {
         } else {
             samples_to_add
         };
+        self.diagnostics.record_timing(PipelineStage::Denoising, denoise_start.elapsed());
 
         // Apply automatic gain control for consistent volume levels
+        let agc_start = Instant::now();
         let processed_samples = match self.agc.lock() {
             Ok(mut agc) => agc.process(&denoised_samples),
             Err(_) => denoised_samples, // Skip AGC if lock fails
         };
+        self.diagnostics.record_timing(PipelineStage::Agc, agc_start.elapsed());
 
         // Use lock-free ring buffer for reduced contention
         // Check if buffer is full before pushing
