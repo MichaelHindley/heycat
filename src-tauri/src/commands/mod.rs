@@ -280,7 +280,14 @@ pub fn stop_recording(
         .map(|lm| lm.is_enabled())
         .unwrap_or(false);
 
-    let result = stop_recording_impl(state.as_ref(), Some(audio_thread.as_ref()), return_to_listening);
+    // Get worktree-aware recordings directory
+    let worktree_context = app_handle
+        .try_state::<crate::worktree::WorktreeState>()
+        .and_then(|s| s.context.clone());
+    let recordings_dir = crate::paths::get_recordings_dir(worktree_context.as_ref())
+        .unwrap_or_else(|_| std::path::PathBuf::from(".").join("heycat").join("recordings"));
+
+    let result = stop_recording_impl(state.as_ref(), Some(audio_thread.as_ref()), return_to_listening, recordings_dir);
 
     // Emit event on success for frontend state sync
     if let Ok(ref metadata) = result {
@@ -332,8 +339,14 @@ pub fn clear_last_recording_buffer(state: State<'_, ProductionState>) -> Result<
 
 /// List all recordings from the app data directory
 #[tauri::command]
-pub fn list_recordings() -> Result<Vec<RecordingInfo>, String> {
-    list_recordings_impl()
+pub fn list_recordings(app_handle: AppHandle) -> Result<Vec<RecordingInfo>, String> {
+    // Get worktree-aware recordings directory
+    let worktree_context = app_handle
+        .try_state::<crate::worktree::WorktreeState>()
+        .and_then(|s| s.context.clone());
+    let recordings_dir = crate::paths::get_recordings_dir(worktree_context.as_ref())
+        .unwrap_or_else(|_| std::path::PathBuf::from(".").join("heycat").join("recordings"));
+    list_recordings_impl(recordings_dir)
 }
 
 /// Delete a recording file

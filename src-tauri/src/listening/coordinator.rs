@@ -7,6 +7,7 @@ use crate::audio::{encode_wav, AudioBuffer, SystemFileWriter, TARGET_SAMPLE_RATE
 use crate::audio_constants::{DETECTION_INTERVAL_MS, MIN_DETECTION_SAMPLES};
 use crate::events::{ListeningEventEmitter, RecordingEventEmitter, RecordingStoppedPayload};
 use crate::recording::{RecordingManager, RecordingMetadata, RecordingState};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -25,20 +26,44 @@ pub struct RecordingDetectors {
     detection_thread: Option<JoinHandle<()>>,
     /// Flag to stop the detection thread
     should_stop: Arc<AtomicBool>,
+    /// Directory for saving recordings (supports worktree isolation)
+    recordings_dir: PathBuf,
 }
 
 impl RecordingDetectors {
     /// Create a new recording detectors coordinator with default configuration
+    /// Uses the main repo recordings path (no worktree isolation)
     pub fn new() -> Self {
-        Self::with_config(SilenceConfig::default())
+        Self::with_recordings_dir(
+            crate::paths::get_recordings_dir(None)
+                .unwrap_or_else(|_| PathBuf::from(".").join("heycat").join("recordings")),
+        )
+    }
+
+    /// Create a new recording detectors coordinator with a specific recordings directory
+    pub fn with_recordings_dir(recordings_dir: PathBuf) -> Self {
+        Self::with_config_and_recordings_dir(SilenceConfig::default(), recordings_dir)
     }
 
     /// Create a new recording detectors coordinator with custom configuration
     pub fn with_config(silence_config: SilenceConfig) -> Self {
+        Self::with_config_and_recordings_dir(
+            silence_config,
+            crate::paths::get_recordings_dir(None)
+                .unwrap_or_else(|_| PathBuf::from(".").join("heycat").join("recordings")),
+        )
+    }
+
+    /// Create a new recording detectors coordinator with custom configuration and recordings directory
+    pub fn with_config_and_recordings_dir(
+        silence_config: SilenceConfig,
+        recordings_dir: PathBuf,
+    ) -> Self {
         Self {
             silence_config,
             detection_thread: None,
             should_stop: Arc::new(AtomicBool::new(false)),
+            recordings_dir,
         }
     }
 
@@ -104,6 +129,7 @@ impl RecordingDetectors {
         silence_detector.reset();
 
         let should_stop = self.should_stop.clone();
+        let recordings_dir = self.recordings_dir.clone();
 
         // Spawn detection thread
         let thread_handle = thread::spawn(move || {
@@ -117,6 +143,7 @@ impl RecordingDetectors {
                 return_to_listening,
                 listening_pipeline,
                 transcription_callback,
+                recordings_dir,
             );
         });
 
@@ -164,6 +191,7 @@ fn detection_loop<E: ListeningEventEmitter + RecordingEventEmitter + 'static>(
     return_to_listening: bool,
     listening_pipeline: Option<Arc<Mutex<ListeningPipeline>>>,
     transcription_callback: Option<Box<dyn Fn(String) + Send + 'static>>,
+    recordings_dir: PathBuf,
 ) {
     crate::debug!("[coordinator] Detection loop starting");
 
@@ -252,7 +280,7 @@ fn detection_loop<E: ListeningEventEmitter + RecordingEventEmitter + 'static>(
                                             Ok(samples) => {
                                                 let count = samples.len();
                                                 let duration = count as f64 / sample_rate as f64;
-                                                let writer = SystemFileWriter;
+                                                let writer = SystemFileWriter::new(recordings_dir.clone());
                                                 match encode_wav(&samples, sample_rate, &writer) {
                                                     Ok(path) => {
                                                         crate::info!("[coordinator] WAV saved to: {}", path);

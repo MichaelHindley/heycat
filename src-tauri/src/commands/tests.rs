@@ -8,6 +8,7 @@ use super::logic::{
 };
 use crate::audio::TARGET_SAMPLE_RATE;
 use crate::recording::{RecordingManager, RecordingState};
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 // =============================================================================
@@ -16,6 +17,11 @@ use std::sync::Mutex;
 
 fn create_test_state() -> Mutex<RecordingManager> {
     Mutex::new(RecordingManager::new())
+}
+
+/// Create a temporary recordings directory for tests
+fn test_recordings_dir() -> PathBuf {
+    std::env::temp_dir().join("heycat-test-recordings")
 }
 
 // =============================================================================
@@ -100,7 +106,7 @@ fn test_start_recording_creates_audio_buffer() {
 #[test]
 fn test_stop_recording_returns_error_when_not_recording() {
     let state = create_test_state();
-    let result = stop_recording_impl(&state, None, false);
+    let result = stop_recording_impl(&state, None, false, test_recordings_dir());
 
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("No recording in progress"));
@@ -110,7 +116,7 @@ fn test_stop_recording_returns_error_when_not_recording() {
 fn test_stop_recording_transitions_to_idle() {
     let state = create_test_state();
     start_recording_impl(&state, None, true, None, None).unwrap();
-    stop_recording_impl(&state, None, false).unwrap();
+    stop_recording_impl(&state, None, false, test_recordings_dir()).unwrap();
 
     let manager = state.lock().unwrap();
     assert_eq!(manager.get_state(), RecordingState::Idle);
@@ -120,7 +126,7 @@ fn test_stop_recording_transitions_to_idle() {
 fn test_stop_recording_transitions_to_listening_when_enabled() {
     let state = create_test_state();
     start_recording_impl(&state, None, true, None, None).unwrap();
-    stop_recording_impl(&state, None, true).unwrap();
+    stop_recording_impl(&state, None, true, test_recordings_dir()).unwrap();
 
     let manager = state.lock().unwrap();
     assert_eq!(manager.get_state(), RecordingState::Listening);
@@ -131,7 +137,7 @@ fn test_stop_recording_returns_metadata_with_zero_samples() {
     let state = create_test_state();
     start_recording_impl(&state, None, true, None, None).unwrap();
 
-    let result = stop_recording_impl(&state, None, false);
+    let result = stop_recording_impl(&state, None, false, test_recordings_dir());
 
     assert!(result.is_ok());
     let metadata = result.unwrap();
@@ -154,7 +160,7 @@ fn test_stop_recording_returns_metadata_with_samples() {
         guard.extend_from_slice(&vec![0.5f32; 16000]); // 1 second at 16kHz
     }
 
-    let result = stop_recording_impl(&state, None, false);
+    let result = stop_recording_impl(&state, None, false, test_recordings_dir());
 
     // Result should be Ok - the actual file is created in the system recordings dir
     // We don't clean it up here to avoid parallel test conflicts
@@ -178,7 +184,7 @@ fn test_stop_recording_returns_correct_duration() {
         guard.extend_from_slice(&vec![0.5f32; 32000]); // 2 seconds at 16kHz
     }
 
-    let result = stop_recording_impl(&state, None, false);
+    let result = stop_recording_impl(&state, None, false, test_recordings_dir());
     assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
     let metadata = result.unwrap();
 
@@ -202,7 +208,7 @@ fn test_full_start_stop_cycle() {
     );
 
     // Stop
-    assert!(stop_recording_impl(&state, None, false).is_ok());
+    assert!(stop_recording_impl(&state, None, false, test_recordings_dir()).is_ok());
     assert_eq!(
         get_recording_state_impl(&state).unwrap().state,
         RecordingState::Idle
@@ -215,7 +221,7 @@ fn test_multiple_start_stop_cycles() {
 
     for _ in 0..3 {
         assert!(start_recording_impl(&state, None, true, None, None).is_ok());
-        assert!(stop_recording_impl(&state, None, false).is_ok());
+        assert!(stop_recording_impl(&state, None, false, test_recordings_dir()).is_ok());
     }
 
     assert_eq!(
@@ -250,7 +256,7 @@ fn test_get_last_recording_buffer_available_after_stop() {
         guard.extend_from_slice(&[0.5f32, -0.5f32, 0.25f32]);
     }
 
-    stop_recording_impl(&state, None, false).unwrap();
+    stop_recording_impl(&state, None, false, test_recordings_dir()).unwrap();
 
     let result = get_last_recording_buffer_impl(&state);
     assert!(result.is_ok());
@@ -276,7 +282,7 @@ fn test_get_last_recording_buffer_correct_duration() {
         guard.extend_from_slice(&vec![0.5f32; 16000]);
     }
 
-    stop_recording_impl(&state, None, false).unwrap();
+    stop_recording_impl(&state, None, false, test_recordings_dir()).unwrap();
 
     let audio_data = get_last_recording_buffer_impl(&state).unwrap();
     assert!((audio_data.duration_secs - 1.0).abs() < 0.001);
@@ -294,7 +300,7 @@ fn test_get_last_recording_buffer_persists_in_idle() {
         guard.push(0.5);
     }
 
-    stop_recording_impl(&state, None, false).unwrap();
+    stop_recording_impl(&state, None, false, test_recordings_dir()).unwrap();
 
     // Confirm state is Idle
     let state_info = get_recording_state_impl(&state).unwrap();
@@ -317,7 +323,7 @@ fn test_get_last_recording_buffer_updates_on_new_recording() {
         let mut guard = buffer.lock().unwrap();
         guard.push(0.1);
     }
-    stop_recording_impl(&state, None, false).unwrap();
+    stop_recording_impl(&state, None, false, test_recordings_dir()).unwrap();
 
     // Second recording with different data
     start_recording_impl(&state, None, true, None, None).unwrap();
@@ -327,7 +333,7 @@ fn test_get_last_recording_buffer_updates_on_new_recording() {
         let mut guard = buffer.lock().unwrap();
         guard.extend_from_slice(&[0.9, 0.8, 0.7]);
     }
-    stop_recording_impl(&state, None, false).unwrap();
+    stop_recording_impl(&state, None, false, test_recordings_dir()).unwrap();
 
     // Should have the second recording's data
     let audio_data = get_last_recording_buffer_impl(&state).unwrap();
@@ -358,7 +364,7 @@ fn test_clear_last_recording_buffer_clears_data() {
         guard.push(0.5);
     }
 
-    stop_recording_impl(&state, None, false).unwrap();
+    stop_recording_impl(&state, None, false, test_recordings_dir()).unwrap();
 
     // Buffer should be available
     assert!(get_last_recording_buffer_impl(&state).is_ok());
@@ -377,14 +383,14 @@ fn test_clear_last_recording_buffer_allows_new_recording() {
 
     // Record and stop
     start_recording_impl(&state, None, true, None, None).unwrap();
-    stop_recording_impl(&state, None, false).unwrap();
+    stop_recording_impl(&state, None, false, test_recordings_dir()).unwrap();
 
     // Clear
     clear_last_recording_buffer_impl(&state).unwrap();
 
     // Should be able to record again
     assert!(start_recording_impl(&state, None, true, None, None).is_ok());
-    assert!(stop_recording_impl(&state, None, false).is_ok());
+    assert!(stop_recording_impl(&state, None, false, test_recordings_dir()).is_ok());
 }
 
 // =============================================================================
@@ -400,13 +406,13 @@ fn test_clear_last_recording_buffer_allows_new_recording() {
 fn test_list_recordings_returns_ok() {
     // This test verifies list_recordings_impl doesn't panic or error
     // even if the directory doesn't exist yet
-    let result = list_recordings_impl();
+    let result = list_recordings_impl(test_recordings_dir());
     assert!(result.is_ok());
 }
 
 #[test]
 fn test_list_recordings_returns_vec() {
-    let result = list_recordings_impl();
+    let result = list_recordings_impl(test_recordings_dir());
     assert!(result.is_ok());
     // Should return a Vec (empty or with recordings)
     let recordings = result.unwrap();
@@ -450,10 +456,10 @@ fn test_list_recordings_after_stop_recording() {
         guard.extend_from_slice(&vec![0.5f32; 44100]); // 1 second
     }
 
-    let metadata = stop_recording_impl(&state, None, false).unwrap();
+    let metadata = stop_recording_impl(&state, None, false, test_recordings_dir()).unwrap();
 
     // Now list should include at least this recording
-    let result = list_recordings_impl();
+    let result = list_recordings_impl(test_recordings_dir());
     assert!(result.is_ok());
     let recordings = result.unwrap();
 
@@ -600,11 +606,11 @@ fn test_start_recording_device_param_does_not_affect_state() {
 
     // Start with a device name
     start_recording_impl(&state, None, true, Some("Device1".to_string()), None).unwrap();
-    stop_recording_impl(&state, None, false).unwrap();
+    stop_recording_impl(&state, None, false, test_recordings_dir()).unwrap();
 
     // Start with different device name
     start_recording_impl(&state, None, true, Some("Device2".to_string()), None).unwrap();
-    stop_recording_impl(&state, None, false).unwrap();
+    stop_recording_impl(&state, None, false, test_recordings_dir()).unwrap();
 
     // Start with no device name
     start_recording_impl(&state, None, true, None, None).unwrap();

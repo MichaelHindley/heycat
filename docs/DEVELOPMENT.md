@@ -112,3 +112,27 @@ bun run tauri dev   # Uses default hotkey
 cd worktrees/heycat-feature-audio
 bun run tauri dev   # Uses unique hotkey (CmdOrControl+Shift+N)
 ```
+
+### Sync agile state to main
+
+When working in a worktree, moving issues between stages (e.g., `2-todo` → `3-in-progress`) commits to your feature branch. To keep the kanban board consistent across all worktrees, sync your agile changes to main:
+
+```bash
+# From your worktree, sync agile/ to main and commit
+bun scripts/sync-agile.ts
+
+# Preview what would change
+bun scripts/sync-agile.ts --dry-run
+
+# Custom commit message
+bun scripts/sync-agile.ts -m "Move feature-xyz to done"
+
+# Stage only, don't commit
+bun scripts/sync-agile.ts --no-commit
+```
+
+This copies the `agile/` folder from your worktree to the main repo and commits locally. Push manually when ready:
+
+```bash
+git -C /path/to/main-repo push
+```

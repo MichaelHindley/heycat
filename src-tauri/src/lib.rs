@@ -161,7 +161,10 @@ pub fn run() {
             app.manage(listening_pipeline.clone());
 
             // Create and manage recording detectors (for silence/cancel detection during recording)
-            let recording_detectors = Arc::new(Mutex::new(listening::RecordingDetectors::new()));
+            // Use worktree-aware recordings directory for data isolation
+            let recordings_dir = paths::get_recordings_dir(worktree_context.as_ref())
+                .unwrap_or_else(|_| std::path::PathBuf::from(".").join("heycat").join("recordings"));
+            let recording_detectors = Arc::new(Mutex::new(listening::RecordingDetectors::with_recordings_dir(recordings_dir.clone())));
             app.manage(recording_detectors.clone());
 
             // Create event emitter, audio thread, and hotkey integration
@@ -195,7 +198,7 @@ pub fn run() {
 
             // Create and manage VoiceCommandsState
             debug!("Creating VoiceCommandsState...");
-            let (command_registry, command_matcher, action_dispatcher) = match voice_commands::VoiceCommandsState::new() {
+            let (command_registry, command_matcher, action_dispatcher) = match voice_commands::VoiceCommandsState::new_with_context(worktree_context.as_ref()) {
                 Ok(voice_state) => {
                     // Share the same registry between UI and matcher
                     let registry = voice_state.registry.clone();
@@ -247,7 +250,7 @@ pub fn run() {
             // Create shared dictionary store (used by both transcription and CRUD commands)
             debug!("Loading dictionary entries...");
             let dictionary_store = {
-                let mut store = match dictionary::DictionaryStore::with_default_path() {
+                let mut store = match dictionary::DictionaryStore::with_default_path_context(worktree_context.as_ref()) {
                     Ok(store) => store,
                     Err(e) => {
                         warn!("Failed to initialize dictionary store: {}, using empty dictionary", e);
@@ -317,6 +320,7 @@ pub fn run() {
                 .with_listening_state(listening_state)
                 .with_listening_pipeline(listening_pipeline.clone())
                 .with_recording_detectors(recording_detectors.clone())
+                .with_recordings_dir(recordings_dir)
                 .with_shortcut_backend(escape_backend)
                 .with_transcription_callback(transcription_callback)
                 .with_silence_detection_enabled(false); // Disable for push-to-talk

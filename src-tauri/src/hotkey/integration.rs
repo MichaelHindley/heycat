@@ -332,6 +332,8 @@ pub struct HotkeyIntegration<R: RecordingEventEmitter, T: TranscriptionEventEmit
     // === App Integration ===
     /// Optional app handle for clipboard access
     app_handle: Option<AppHandle>,
+    /// Directory for saving recordings (supports worktree isolation)
+    recordings_dir: std::path::PathBuf,
 
     // === Escape Key Runtime State ===
     /// Whether Escape key is currently registered (to track cleanup)
@@ -363,6 +365,8 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             listening_pipeline: None,
             // App integration
             app_handle: None,
+            recordings_dir: crate::paths::get_recordings_dir(None)
+                .unwrap_or_else(|_| std::path::PathBuf::from(".").join("heycat").join("recordings")),
             // Escape key runtime state
             escape_registered: Arc::new(AtomicBool::new(false)),
             double_tap_detector: None,
@@ -372,6 +376,12 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
     /// Add app handle for clipboard access (builder pattern)
     pub fn with_app_handle(mut self, handle: AppHandle) -> Self {
         self.app_handle = Some(handle);
+        self
+    }
+
+    /// Add recordings directory for worktree-aware recording storage (builder pattern)
+    pub fn with_recordings_dir(mut self, recordings_dir: std::path::PathBuf) -> Self {
+        self.recordings_dir = recordings_dir;
         self
     }
 
@@ -745,6 +755,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
             listening_pipeline: None,
             // App integration
             app_handle: None,
+            recordings_dir: std::env::temp_dir().join("heycat-test-recordings"),
             // Escape key runtime state
             escape_registered: Arc::new(AtomicBool::new(false)),
             double_tap_detector: None,
@@ -856,7 +867,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + ListeningEventEmit
                     .unwrap_or(false);
 
                 // Use unified command implementation
-                match stop_recording_impl(state, self.audio_thread.as_deref(), return_to_listening) {
+                match stop_recording_impl(state, self.audio_thread.as_deref(), return_to_listening, self.recordings_dir.clone()) {
                     Ok(metadata) => {
                         crate::info!(
                             "Recording stopped: {} samples, {:.2}s duration",

@@ -124,6 +124,7 @@ pub fn start_recording_impl(
 /// * `state` - The recording manager state
 /// * `audio_thread` - Optional audio thread handle for stopping capture
 /// * `return_to_listening` - If true, return to Listening state instead of Idle
+/// * `recordings_dir` - Directory for saving recordings (supports worktree isolation)
 ///
 /// # Returns
 /// Recording metadata including duration, file path, and sample count
@@ -138,6 +139,7 @@ pub fn stop_recording_impl(
     state: &Mutex<RecordingManager>,
     audio_thread: Option<&AudioThreadHandle>,
     return_to_listening: bool,
+    recordings_dir: PathBuf,
 ) -> Result<RecordingMetadata, String> {
     crate::debug!("stop_recording_impl called");
 
@@ -205,7 +207,7 @@ pub fn stop_recording_impl(
 
     // Encode WAV if we have samples
     let file_path = if !samples.is_empty() {
-        let writer = SystemFileWriter;
+        let writer = SystemFileWriter::new(recordings_dir);
         let path = encode_wav(&samples, sample_rate, &writer)
             .map_err(|e| {
                 crate::error!("WAV encoding failed: {:?}", e);
@@ -318,7 +320,10 @@ fn get_recordings_dir() -> PathBuf {
 
 /// Implementation of list_recordings
 ///
-/// Lists all recordings from the app data directory with their metadata.
+/// Lists all recordings from the specified directory with their metadata.
+///
+/// # Arguments
+/// * `recordings_dir` - Directory containing recording files (supports worktree isolation)
 ///
 /// # Returns
 /// A list of RecordingInfo sorted by creation time (newest first).
@@ -327,8 +332,7 @@ fn get_recordings_dir() -> PathBuf {
 /// # Errors
 /// Only returns an error if there's a critical system failure.
 /// Individual file errors are logged and the file is skipped.
-pub fn list_recordings_impl() -> Result<Vec<RecordingInfo>, String> {
-    let recordings_dir = get_recordings_dir();
+pub fn list_recordings_impl(recordings_dir: PathBuf) -> Result<Vec<RecordingInfo>, String> {
 
     // Return empty list if directory doesn't exist (not an error)
     if !recordings_dir.exists() {

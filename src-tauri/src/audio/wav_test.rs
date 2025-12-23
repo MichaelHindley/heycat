@@ -287,7 +287,7 @@ fn test_encode_wav_directory_creation_failure() {
 
 #[test]
 fn test_system_file_writer_output_dir_uses_app_data() {
-    let writer = SystemFileWriter;
+    let writer = SystemFileWriter::new(std::env::temp_dir().join("heycat-test-recordings"));
     let output_dir = writer.output_dir();
 
     // Should end with heycat/recordings
@@ -298,7 +298,7 @@ fn test_system_file_writer_output_dir_uses_app_data() {
 
 #[test]
 fn test_system_file_writer_filename_format() {
-    let writer = SystemFileWriter;
+    let writer = SystemFileWriter::new(std::env::temp_dir().join("heycat-test-recordings"));
     let filename = writer.generate_filename();
 
     // Should match pattern: recording-YYYY-MM-DD-HHMMSS.wav
@@ -315,7 +315,7 @@ fn test_system_file_writer_filename_format() {
 
 #[test]
 fn test_system_file_writer_path_exists() {
-    let writer = SystemFileWriter;
+    let writer = SystemFileWriter::new(std::env::temp_dir().join("heycat-test-recordings"));
 
     // Root should exist
     assert!(writer.path_exists(Path::new("/")));
@@ -326,7 +326,7 @@ fn test_system_file_writer_path_exists() {
 
 #[test]
 fn test_system_file_writer_create_dir_all() {
-    let writer = SystemFileWriter;
+    let writer = SystemFileWriter::new(std::env::temp_dir().join("heycat-test-recordings"));
     let temp_dir = std::env::temp_dir().join("heycat-test-create-dir");
 
     // Clean up from previous runs
