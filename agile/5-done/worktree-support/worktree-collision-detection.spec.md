@@ -1,9 +1,9 @@
 ---
-status: in-progress
+status: completed
 created: 2025-12-23
-completed: null
+completed: 2025-12-23
 dependencies: ["worktree-detection", "worktree-paths"]
-review_round: 1
+review_round: 2
 review_history:
   - round: 1
     date: 2025-12-23
@@ -83,11 +83,11 @@ Implement collision detection at app startup to identify situations where worktr
 
 | Criterion | Status | Evidence |
 |-----------|--------|----------|
-| Detect if another instance is using the same data directory (lock file check) | PASS | lib.rs:85-101 calls `check_collision()` at startup |
+| Detect if another instance is using the same data directory (lock file check) | PASS | lib.rs:85 calls `check_collision()` at startup |
 | Detect if worktree-specific paths already exist from a different worktree with same hash | DEFERRED | Not implemented - only lock file collision is checked. The spec notes this is "unlikely but possible" |
-| Display user-friendly error dialog explaining the collision | PASS | lib.rs:97-101 returns error string from setup() which Tauri displays to user |
-| Provide specific resolution steps | PASS | Error message includes "Please close it before starting a new instance" |
-| Log collision details to console for debugging | PASS | lib.rs:90-95 logs error with PID and data_dir, plus resolution warning |
+| Display user-friendly error dialog explaining the collision | PASS | lib.rs:98 returns error string from setup() which Tauri displays to user |
+| Provide specific resolution steps | PASS | lib.rs:92-96 uses `format_collision_error()` which provides structured resolution steps |
+| Log collision details to console for debugging | PASS | lib.rs:93-95 logs title, message, and resolution steps via error!/warn! macros |
 | Allow app to continue in read-only mode if user acknowledges warning (optional) | DEFERRED | Not implemented (marked optional in spec) |
 
 ### Test Coverage Audit
@@ -96,7 +96,7 @@ Implement collision detection at app startup to identify situations where worktr
 |-----------|--------|----------|
 | No error when data directories are unused | PASS | collision_test.rs:29 `test_no_collision_when_lock_file_absent` |
 | Error shown when lock file exists from another running instance | PASS | collision_test.rs:42 `test_detects_running_instance_collision` |
-| Error includes the path to the conflicting resource | PASS | collision_test.rs:206 `test_format_collision_error_for_running_instance` - verifies paths in output |
+| Error includes the path to the conflicting resource | PASS | collision_test.rs:206 `test_format_collision_error_for_running_instance` |
 | Resolution steps are actionable and accurate | PASS | collision_test.rs:206-219 verifies resolution steps exist and contain PID |
 | App can be force-started with acknowledgment (if implemented) | DEFERRED | Not implemented (optional per spec) |
 
@@ -109,25 +109,20 @@ Implement collision detection at app startup to identify situations where worktr
 - Comprehensive test coverage with 15 behavior-focused tests
 - Good error handling with specific error types (CollisionError)
 - Stale lock detection and automatic cleanup
+- `format_collision_error` now properly used in production (lib.rs:92, lib.rs:102)
+- `#[allow(dead_code)]` annotations appropriately placed on internal/test-only helpers
 
 **Concerns:**
-- `format_collision_error` function is exported and tested but never called from production code (TEST-ONLY usage). This is dead code in production. The function provides structured error formatting with resolution steps, but lib.rs constructs error messages inline instead.
-- Multiple `#[allow(dead_code)]` annotations on public functions that ARE used in production (check_collision, create_lock, remove_lock, cleanup_stale_lock). These annotations are unnecessary and misleading - the functions are genuinely used in lib.rs.
+- None identified
 
 ### Automated Check Results
 
 ```
-Build warnings:
+Build warnings (unrelated to this spec):
 warning: unused import: `load_embedded_models`
 warning: method `get` is never used (dead_code)
 
-Command registration check:
-check_parakeet_model_status
-download_model
-(These are unrelated to this spec)
-
-Deferrals in codebase (unrelated to this spec):
-src-tauri/src/parakeet/utils.rs:24 - TODO for parakeet-rs upstream issue
+Deferrals in worktree module: None found
 ```
 
 ### Data Flow
@@ -143,23 +138,19 @@ worktree::check_collision(context)  lib.rs:85
      |
      ├── NoCollision → create_lock() and continue
      |
-     ├── InstanceRunning → return Err() → app fails with message
+     ├── InstanceRunning → format_collision_error() → log → return Err()
      |
-     └── StaleLock → cleanup_stale_lock() → create_lock() and continue
+     └── StaleLock → format_collision_error() → log → cleanup_stale_lock() → continue
 
 [App Shutdown]
      |
      v
-window close event  lib.rs:425-435
+window close event  lib.rs:421-458
      |
      v
-worktree::remove_lock(context)
+worktree::remove_lock(context)  lib.rs:431
 ```
 
 ### Verdict
 
-**NEEDS_WORK** - `format_collision_error` is dead code in production (TEST-ONLY). Either:
-1. Remove `format_collision_error` function and its tests since it's not used, OR
-2. Use `format_collision_error` in lib.rs when constructing the error message to provide structured error formatting
-
-The inline error message in lib.rs:97-101 duplicates the logic that `format_collision_error` provides. Choose one approach - either use the helper function or remove it.
+**APPROVED** - All previous concerns have been addressed. The `format_collision_error` function is now properly used in production code at lib.rs:92 and lib.rs:102 for both InstanceRunning and StaleLock cases. The `#[allow(dead_code)]` annotations are appropriately placed on internal constants and test-only helper functions (the `_at` variants).
