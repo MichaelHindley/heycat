@@ -16,7 +16,44 @@
  *   bun scripts/tauri-wrapper.ts --help     # Passes through to tauri --help
  */
 
+import { existsSync, readFileSync } from "fs";
+import { homedir } from "os";
+import { resolve } from "path";
 import { getDevPort, getWorktreeIdentifier } from "./dev-port";
+
+/**
+ * Get the heycat application support directory path.
+ */
+function getAppSupportDir(): string {
+  const home = homedir();
+  if (process.platform === "darwin") {
+    return resolve(home, "Library/Application Support/com.heycat.app");
+  }
+  return resolve(home, ".local/share/com.heycat.app");
+}
+
+/**
+ * Get the recording hotkey from the settings file.
+ * Returns null if not configured or file doesn't exist.
+ */
+function getRecordingHotkey(worktreeIdentifier: string | null): string | null {
+  const settingsFileName = worktreeIdentifier
+    ? `settings-${worktreeIdentifier}.json`
+    : "settings.json";
+  const settingsPath = resolve(getAppSupportDir(), settingsFileName);
+
+  if (!existsSync(settingsPath)) {
+    return null;
+  }
+
+  try {
+    const content = readFileSync(settingsPath, "utf-8");
+    const settings = JSON.parse(content);
+    return settings["hotkey.recordingShortcut"] || null;
+  } catch {
+    return null;
+  }
+}
 
 const args = process.argv.slice(2);
 const identifier = getWorktreeIdentifier();
@@ -47,11 +84,13 @@ if (isDevCommand) {
     tauriArgs.push("--config", configOverride);
   }
 
-  // Log port info for visibility
+  // Log port and hotkey info for visibility
   if (identifier) {
     console.log(`[tauri-wrapper] Worktree: ${identifier}`);
   }
   console.log(`[tauri-wrapper] Dev server port: ${port}`);
+  const hotkey = getRecordingHotkey(identifier);
+  console.log(`[tauri-wrapper] Recording hotkey: ${hotkey || "(not configured)"}`);
 }
 
 // Set environment variables for Vite and Rust
