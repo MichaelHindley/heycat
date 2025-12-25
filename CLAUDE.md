@@ -27,7 +27,7 @@ You may never use npm or npx, always use bun or bunx.
 **File:** docs/ARCHITECTURE.md
 
 ### Agile Workflow
-**ALWAYS invoke the `devloop:agile` skill** for issue and spec management, code reviews, and workflow tasks.
+**ALWAYS invoke the `devloop:agile` skill** for issue and spec management, code reviews, and workflow tasks like writing code.
 
 **IMPORTANT:** The `agile` command is NOT a system CLI. Do NOT run `agile ...` directly in bash - it will fail with "command not found".
 
