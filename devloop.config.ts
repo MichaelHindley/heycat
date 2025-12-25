@@ -8,6 +8,7 @@ export default {
   },
 
   agile: {
+    backend: 'clickup',
     review: {
       // Path to custom review instructions (replaces defaults)
       // The golden path instruction is always appended
