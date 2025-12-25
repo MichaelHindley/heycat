@@ -98,9 +98,22 @@ pub fn run() {
             }
             app.manage(worktree_state);
 
-            // Set dynamic window title based on worktree context
+            // Set dynamic window title based on worktree context (dev builds only)
             if let Some(window) = app.get_webview_window("main") {
                 let title = match &worktree_context {
+                    Some(ctx) if cfg!(debug_assertions) => {
+                        // In dev builds with worktree, include recording hotkey if configured
+                        let recording_shortcut = app
+                            .store(&settings_file)
+                            .ok()
+                            .and_then(|store| store.get("hotkey.recordingShortcut"))
+                            .and_then(|v| v.as_str().map(|s| s.to_string()));
+
+                        match recording_shortcut {
+                            Some(shortcut) => format!("heycat - {} ({})", ctx.identifier, shortcut),
+                            None => format!("heycat - {}", ctx.identifier),
+                        }
+                    }
                     Some(ctx) => format!("heycat - {}", ctx.identifier),
                     None => "heycat".to_string(),
                 };
