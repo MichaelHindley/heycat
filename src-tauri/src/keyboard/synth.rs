@@ -14,6 +14,56 @@ mod macos {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    /// Simulate Enter/Return keypress on macOS.
+    ///
+    /// Uses Session tap location for reliable cross-app event delivery.
+    /// Important: this function only checks shutdown *before* starting. Once it begins
+    /// posting events, it will always post the matching key-up event.
+    pub fn simulate_enter_keypress() -> Result<(), String> {
+        // Don't start new synthesis during shutdown.
+        if crate::shutdown::is_shutting_down() {
+            return Ok(());
+        }
+
+        // Serialize synthesis so key sequences can't interleave across tasks.
+        let _guard = lock_synth();
+
+        // Re-check after acquiring lock to avoid starting after shutdown is signaled.
+        if crate::shutdown::is_shutting_down() {
+            return Ok(());
+        }
+
+        // Small delay to ensure previous events are processed
+        std::thread::sleep(Duration::from_millis(50));
+
+        // Return/Enter key = keycode 36
+        let key_return: CGKeyCode = 36;
+
+        let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+            .map_err(|_| "Failed to create event source")?;
+
+        // Create BOTH events before posting any, so we never post key-down without also
+        // being able to post a key-up.
+        let event_down = CGEvent::new_keyboard_event(source.clone(), key_return, true)
+            .map_err(|_| "Failed to create key down event")?;
+        let event_up = CGEvent::new_keyboard_event(source, key_return, false)
+            .map_err(|_| "Failed to create key up event")?;
+
+        // Explicitly clear all modifiers - Enter should have no modifiers
+        event_down.set_flags(CGEventFlags::empty());
+        event_up.set_flags(CGEventFlags::empty());
+
+        // Post to Session (not HID) for reliable cross-app event delivery
+        event_down.post(CGEventTapLocation::Session);
+
+        // Delay for event processing - 20ms recommended by rdev for macOS to register keystroke
+        std::thread::sleep(Duration::from_millis(20));
+
+        event_up.post(CGEventTapLocation::Session);
+
+        Ok(())
+    }
+
     /// Simulate Cmd+V paste keystroke on macOS.
     ///
     /// Important: this function only checks shutdown *before* starting. Once it begins
@@ -120,7 +170,7 @@ mod macos {
 }
 
 #[cfg(target_os = "macos")]
-pub use macos::{simulate_cmd_v_paste, type_unicode_text};
+pub use macos::{simulate_cmd_v_paste, simulate_enter_keypress, type_unicode_text};
 
 #[cfg(not(target_os = "macos"))]
 pub fn simulate_cmd_v_paste() -> Result<(), String> {

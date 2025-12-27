@@ -1,7 +1,3 @@
----
-discovery_phase: complete
----
-
 # Feature: Add Spacetime Database
 
 **Created:** 2025-12-21

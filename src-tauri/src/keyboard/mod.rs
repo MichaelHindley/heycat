@@ -29,42 +29,13 @@ impl KeyboardSimulator {
 
     /// Simulate an Enter/Return keypress
     ///
-    /// On macOS, uses Core Graphics API to ensure no modifier keys are included.
-    /// This is necessary because the paste simulation uses Core Graphics with Command modifier,
-    /// and mixing APIs can cause residual modifier state issues.
+    /// On macOS, delegates to synth module which uses Session tap location for reliable
+    /// cross-app event delivery. Includes shutdown checks and mutex serialization.
     ///
-    /// Includes a small delay to ensure previous typing is complete before sending the key.
     /// Returns Ok(()) on success, Err with message on failure.
     #[cfg(target_os = "macos")]
     pub fn simulate_enter_keypress(&mut self) -> Result<(), String> {
-        use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, CGKeyCode};
-        use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
-
-        // Small delay to ensure previous events are processed
-        std::thread::sleep(std::time::Duration::from_millis(50));
-
-        let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
-            .map_err(|_| "Failed to create event source")?;
-
-        // Return/Enter key = keycode 36
-        let key_return: CGKeyCode = 36;
-
-        // Key down with NO modifiers
-        let event_down = CGEvent::new_keyboard_event(source.clone(), key_return, true)
-            .map_err(|_| "Failed to create key down event")?;
-        event_down.set_flags(CGEventFlags::empty()); // Explicitly clear all modifiers
-        event_down.post(CGEventTapLocation::HID);
-
-        // Small delay for event processing
-        std::thread::sleep(std::time::Duration::from_millis(10));
-
-        // Key up with NO modifiers
-        let event_up = CGEvent::new_keyboard_event(source, key_return, false)
-            .map_err(|_| "Failed to create key up event")?;
-        event_up.set_flags(CGEventFlags::empty()); // Explicitly clear all modifiers
-        event_up.post(CGEventTapLocation::HID);
-
-        Ok(())
+        synth::simulate_enter_keypress()
     }
 
     #[cfg(not(target_os = "macos"))]

@@ -18,7 +18,7 @@
 
 import { existsSync } from "fs";
 import { resolve } from "path";
-import { detectWorktreeContext, type WorktreeInfo } from "./sync-agile";
+import { detectWorktreeContext, type WorktreeInfo } from "./lib/worktree";
 
 // ANSI color codes for terminal output
 const colors = {
@@ -119,7 +119,6 @@ ${colors.bold}Examples:${colors.reset}
 
 ${colors.bold}Note:${colors.reset}
   This script must be run from a worktree, not the main repository.
-  After completion, run 'bun scripts/sync-agile.ts' if agile folder needs syncing.
 `);
 }
 
@@ -590,8 +589,6 @@ ${colors.bold}To resolve:${colors.reset}
   log(`
 ${colors.green}${colors.bold}Complete!${colors.reset}
    Commit: ${colors.cyan}${commitHash}${colors.reset} ${commitMessage}
-
-${colors.dim}Tip: Run 'bun scripts/sync-agile.ts' if agile folder needs syncing${colors.reset}
 `);
 }
 
