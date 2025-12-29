@@ -303,14 +303,6 @@ impl ContextResolver {
 
         result
     }
-
-    /// Get the currently matched context ID, if any
-    pub fn get_current_context_id(&self) -> Option<Uuid> {
-        self.monitor
-            .lock()
-            .ok()
-            .and_then(|monitor| monitor.get_current_context())
-    }
 }
 
 #[cfg(test)]

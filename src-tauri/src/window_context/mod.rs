@@ -10,5 +10,5 @@ pub use detector::{get_active_window, get_running_applications};
 #[allow(unused_imports)]
 pub use monitor::{MonitorConfig, WindowMonitor};
 pub use resolver::ContextResolver;
-pub use store::{WindowContextStore, WindowContextStoreError};
+pub use store::WindowContextStoreError;
 pub use types::{ActiveWindowInfo, OverrideMode, RunningApplication, WindowContext, WindowMatcher};

@@ -7,7 +7,7 @@ pub mod dictionary;
 pub mod logic;
 pub mod window_context;
 
-pub use logic::{PaginatedRecordingsResponse, RecordingContextData, RecordingInfo, RecordingStateInfo};
+pub use logic::{PaginatedRecordingsResponse, RecordingContextData, RecordingStateInfo};
 use logic::{
     clear_last_recording_buffer_impl, delete_recording_impl,
     get_last_recording_buffer_impl,
@@ -25,7 +25,7 @@ use crate::events::{
 };
 use crate::audio::{AudioDeviceError, AudioInputDevice, AudioThreadHandle, StopReason, encode_wav, SystemFileWriter};
 use crate::parakeet::SharedTranscriptionModel;
-use crate::recording::{AudioData, RecordingManager, RecordingMetadata, RecordingState};
+use crate::recording::{AudioData, RecordingManager, RecordingMetadata};
 use crate::spacetimedb::SpacetimeClient;
 use crate::window_context::get_active_window;
 use std::sync::{Arc, Mutex};

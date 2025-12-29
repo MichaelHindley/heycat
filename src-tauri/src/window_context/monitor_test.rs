@@ -13,15 +13,6 @@ fn monitor_config_default_has_200ms_interval() {
 }
 
 #[test]
-fn monitor_with_custom_config() {
-    let config = MonitorConfig {
-        poll_interval_ms: 500,
-    };
-    let monitor = WindowMonitor::with_config(config);
-    assert!(!monitor.is_running());
-}
-
-#[test]
 fn get_current_context_returns_none_before_start() {
     let monitor = WindowMonitor::new();
     assert!(monitor.get_current_context().is_none());

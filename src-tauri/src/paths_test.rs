@@ -38,33 +38,6 @@ fn test_get_data_dir_with_worktree_returns_worktree_specific_path() {
 }
 
 #[test]
-fn test_get_config_dir_without_worktree_returns_standard_path() {
-    let result = get_config_dir(None);
-    assert!(result.is_ok());
-    let path = result.unwrap();
-    let path_str = path.to_string_lossy();
-    assert!(
-        path_str.ends_with("heycat") || path_str.ends_with("heycat/") || path_str.ends_with("heycat\\"),
-        "Expected path to end with 'heycat', got: {}",
-        path_str
-    );
-}
-
-#[test]
-fn test_get_config_dir_with_worktree_returns_worktree_specific_path() {
-    let ctx = create_test_worktree_context("my-worktree");
-    let result = get_config_dir(Some(&ctx));
-    assert!(result.is_ok());
-    let path = result.unwrap();
-    let path_str = path.to_string_lossy();
-    assert!(
-        path_str.ends_with("heycat-my-worktree"),
-        "Expected path to end with 'heycat-my-worktree', got: {}",
-        path_str
-    );
-}
-
-#[test]
 fn test_get_models_dir_without_worktree_returns_standard_path() {
     let result = get_models_dir(None);
     assert!(result.is_ok());

@@ -38,12 +38,8 @@ pub enum ActionErrorCode {
     PermissionDenied,
     /// General execution error
     ExecutionError,
-    /// Failed to create event source
-    EventSourceError,
     /// Async task panicked
     TaskPanic,
-    /// Character encoding error
-    EncodingError,
     /// Keyboard event creation error
     EventError,
     /// Invalid application name
@@ -66,9 +62,7 @@ impl std::fmt::Display for ActionErrorCode {
             ActionErrorCode::NotFound => "NOT_FOUND",
             ActionErrorCode::PermissionDenied => "PERMISSION_DENIED",
             ActionErrorCode::ExecutionError => "EXECUTION_ERROR",
-            ActionErrorCode::EventSourceError => "EVENT_SOURCE_ERROR",
             ActionErrorCode::TaskPanic => "TASK_PANIC",
-            ActionErrorCode::EncodingError => "ENCODING_ERROR",
             ActionErrorCode::EventError => "EVENT_ERROR",
             ActionErrorCode::InvalidAppName => "INVALID_APP_NAME",
             ActionErrorCode::OpenFailed => "OPEN_FAILED",

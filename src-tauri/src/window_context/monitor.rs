@@ -84,16 +84,6 @@ impl WindowMonitor {
         }
     }
 
-    /// Create a new window monitor with custom configuration
-    pub fn with_config(config: MonitorConfig) -> Self {
-        Self {
-            running: Arc::new(AtomicBool::new(false)),
-            current_context: Arc::new(Mutex::new(None)),
-            thread_handle: None,
-            config,
-        }
-    }
-
     /// Start the background monitoring thread
     ///
     /// # Arguments

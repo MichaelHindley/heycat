@@ -364,7 +364,7 @@ function ContextItem({
         <div className="flex items-center justify-between">
           <span className="text-text-secondary">Delete "{context.name}"?</span>
           <div className="flex gap-2">
-            <Button size="sm" variant="destructive" onClick={onConfirmDelete} aria-label="Confirm delete">
+            <Button size="sm" variant="danger" onClick={onConfirmDelete} aria-label="Confirm delete">
               Confirm
             </Button>
             <Button size="sm" variant="ghost" onClick={onCancelDelete} aria-label="Cancel delete">
@@ -631,7 +631,7 @@ export function WindowContexts(_props: WindowContextsProps) {
     setEditValues((prev) => {
       // Clear bundleId when appName is manually typed
       if (field === "appName") {
-        return { ...prev, [field]: value, bundleId: undefined };
+        return { ...prev, appName: value as string, bundleId: undefined };
       }
       return { ...prev, [field]: value };
     });

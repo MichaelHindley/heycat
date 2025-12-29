@@ -76,16 +76,10 @@ fn dictionary_entry_complete_crud_workflow() {
     let entries = client
         .list_dictionary_entries()
         .expect("list should succeed");
-    assert!(
-        entries.iter().any(|e| e.id == id),
-        "created entry should appear in list"
-    );
-
-    // === GET by ID ===
-    let fetched = client
-        .get_dictionary_entry(&id)
-        .expect("get should succeed")
-        .expect("entry should exist");
+    let fetched = entries
+        .iter()
+        .find(|e| e.id == id)
+        .expect("created entry should appear in list");
     assert_eq!(fetched.trigger, trigger);
     assert_eq!(fetched.expansion, expansion);
 
@@ -107,9 +101,12 @@ fn dictionary_entry_complete_crud_workflow() {
     assert_eq!(updated.suffix, None);
 
     // === VERIFY UPDATE ===
-    let fetched_after_update = client
-        .get_dictionary_entry(&id)
-        .expect("get should succeed")
+    let entries_after_update = client
+        .list_dictionary_entries()
+        .expect("list should succeed");
+    let fetched_after_update = entries_after_update
+        .iter()
+        .find(|e| e.id == id)
         .expect("entry should still exist");
     assert_eq!(fetched_after_update.expansion, new_expansion);
 
@@ -119,11 +116,11 @@ fn dictionary_entry_complete_crud_workflow() {
         .expect("delete should succeed");
 
     // === VERIFY DELETED ===
-    let fetched_after_delete = client
-        .get_dictionary_entry(&id)
-        .expect("get should succeed");
+    let entries_after_delete = client
+        .list_dictionary_entries()
+        .expect("list should succeed");
     assert!(
-        fetched_after_delete.is_none(),
+        !entries_after_delete.iter().any(|e| e.id == id),
         "entry should be deleted"
     );
 }
@@ -137,12 +134,6 @@ fn dictionary_entry_not_found_errors() {
     };
 
     let nonexistent_id = Uuid::new_v4().to_string();
-
-    // GET non-existent returns None
-    let result = client
-        .get_dictionary_entry(&nonexistent_id)
-        .expect("get should succeed");
-    assert!(result.is_none(), "non-existent entry should return None");
 
     // UPDATE non-existent fails
     let update_result = client.update_dictionary_entry(
@@ -343,16 +334,10 @@ fn voice_command_complete_crud_workflow() {
     let commands = client
         .list_voice_commands()
         .expect("list should succeed");
-    assert!(
-        commands.iter().any(|c| c.id == id),
-        "created command should appear in list"
-    );
-
-    // === GET by ID ===
-    let fetched = client
-        .get_voice_command(id)
-        .expect("get should succeed")
-        .expect("command should exist");
+    let fetched = commands
+        .iter()
+        .find(|c| c.id == id)
+        .expect("created command should appear in list");
     assert_eq!(fetched.trigger, trigger);
     assert!(matches!(fetched.action_type, ActionType::OpenApp));
     assert_eq!(fetched.parameters.get("app"), Some(&"Safari".to_string()));
@@ -369,9 +354,12 @@ fn voice_command_complete_crud_workflow() {
         .expect("update should succeed");
 
     // === VERIFY UPDATE ===
-    let fetched_after_update = client
-        .get_voice_command(id)
-        .expect("get should succeed")
+    let commands_after_update = client
+        .list_voice_commands()
+        .expect("list should succeed");
+    let fetched_after_update = commands_after_update
+        .iter()
+        .find(|c| c.id == id)
         .expect("command should still exist");
     assert_eq!(fetched_after_update.trigger, format!("updated command {}", test_suffix));
     assert!(matches!(fetched_after_update.action_type, ActionType::TypeText));
@@ -383,11 +371,11 @@ fn voice_command_complete_crud_workflow() {
         .expect("delete should succeed");
 
     // === VERIFY DELETED ===
-    let fetched_after_delete = client
-        .get_voice_command(id)
-        .expect("get should succeed");
+    let commands_after_delete = client
+        .list_voice_commands()
+        .expect("list should succeed");
     assert!(
-        fetched_after_delete.is_none(),
+        !commands_after_delete.iter().any(|c| c.id == id),
         "command should be deleted"
     );
 }
@@ -401,12 +389,6 @@ fn voice_command_not_found_errors() {
     };
 
     let nonexistent_id = Uuid::new_v4();
-
-    // GET non-existent returns None
-    let result = client
-        .get_voice_command(nonexistent_id)
-        .expect("get should succeed");
-    assert!(result.is_none(), "non-existent command should return None");
 
     // UPDATE non-existent fails
     let update_result = client.update_voice_command(&CommandDefinition {
@@ -468,16 +450,10 @@ fn recording_complete_crud_workflow() {
     let recordings = client
         .list_recordings()
         .expect("list should succeed");
-    assert!(
-        recordings.iter().any(|r| r.id == id),
-        "created recording should appear in list"
-    );
-
-    // === GET by ID ===
-    let fetched = client
-        .get_recording(&id)
-        .expect("get should succeed")
-        .expect("recording should exist");
+    let fetched = recordings
+        .iter()
+        .find(|r| r.id == id)
+        .expect("created recording should appear in list");
     assert_eq!(fetched.file_path, file_path);
 
     // === GET by PATH ===
@@ -487,17 +463,17 @@ fn recording_complete_crud_workflow() {
         .expect("recording should exist");
     assert_eq!(fetched_by_path.id, id);
 
-    // === DELETE ===
+    // === DELETE by PATH ===
     client
-        .delete_recording(&id)
+        .delete_recording_by_path(&file_path)
         .expect("delete should succeed");
 
     // === VERIFY DELETED ===
-    let fetched_after_delete = client
-        .get_recording(&id)
-        .expect("get should succeed");
+    let recordings_after_delete = client
+        .list_recordings()
+        .expect("list should succeed");
     assert!(
-        fetched_after_delete.is_none(),
+        !recordings_after_delete.iter().any(|r| r.id == id),
         "recording should be deleted"
     );
 }
@@ -525,11 +501,11 @@ fn recording_delete_by_path() {
         .expect("delete by path should succeed");
 
     // Verify deleted
-    let fetched = client
-        .get_recording(&id)
-        .expect("get should succeed");
+    let recordings = client
+        .list_recordings()
+        .expect("list should succeed");
     assert!(
-        fetched.is_none(),
+        !recordings.iter().any(|r| r.id == id),
         "recording should be deleted via path"
     );
 }
@@ -550,12 +526,13 @@ fn transcription_complete_crud_workflow() {
     let id = Uuid::new_v4().to_string();
     let recording_id = Uuid::new_v4().to_string();
     let text = format!("Test transcription text {}", test_suffix);
+    let file_path = format!("/tmp/test_for_transcription_{}.wav", test_suffix);
 
     // First create a recording (transcriptions reference recordings)
     client
         .add_recording(
             recording_id.clone(),
-            format!("/tmp/test_for_transcription_{}.wav", test_suffix),
+            file_path.clone(),
             2.0,
             32000,
             None,
@@ -602,22 +579,8 @@ fn transcription_complete_crud_workflow() {
         "transcription should be found by recording_id"
     );
 
-    // === DELETE ===
+    // Cleanup: delete the recording (and its transcriptions cascade)
     client
-        .delete_transcription(&id)
-        .expect("delete should succeed");
-
-    // === VERIFY DELETED ===
-    let fetched_after_delete = client
-        .get_transcriptions_by_recording(&recording_id)
-        .expect("get should succeed");
-    assert!(
-        !fetched_after_delete.iter().any(|t| t.id == id),
-        "transcription should be deleted"
-    );
-
-    // Cleanup: delete the recording too
-    client
-        .delete_recording(&recording_id)
+        .delete_recording_by_path(&file_path)
         .expect("recording cleanup should succeed");
 }

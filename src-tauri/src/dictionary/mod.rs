@@ -8,5 +8,4 @@ mod store;
 
 #[allow(unused_imports)]
 pub use expander::{DictionaryExpander, ExpansionResult};
-#[allow(unused_imports)]
-pub use store::{DictionaryEntry, DictionaryError, DictionaryStore};
+pub use store::{DictionaryEntry, DictionaryError};

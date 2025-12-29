@@ -147,7 +147,6 @@ impl SidecarHandle {
         // Try graceful shutdown first (SIGTERM on Unix)
         #[cfg(unix)]
         {
-            use std::os::unix::process::CommandExt;
             let pid = self.child.id();
             unsafe {
                 libc::kill(pid as i32, libc::SIGTERM);

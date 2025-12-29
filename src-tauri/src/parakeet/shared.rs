@@ -110,10 +110,8 @@ impl Drop for TranscribingGuard {
 ///
 /// ## Mutual Exclusion
 ///
-/// The `transcription_lock` ensures that batch transcription (`transcribe_file`)
-/// and streaming transcription (`transcribe_samples`) cannot run concurrently.
-/// This prevents latency spikes and unpredictable behavior when both modes
-/// try to use the model simultaneously.
+/// The `transcription_lock` ensures that transcription operations cannot run
+/// concurrently. This prevents latency spikes and unpredictable behavior.
 ///
 /// Usage:
 /// ```ignore
@@ -129,9 +127,8 @@ pub struct SharedTranscriptionModel {
     model: Arc<Mutex<Option<ParakeetTDT>>>,
     /// Current transcription state
     state: Arc<Mutex<TranscriptionState>>,
-    /// Transcription lock: ensures mutual exclusion between batch and streaming
-    /// transcription. Only one transcription operation can proceed at a time.
-    /// This prevents race conditions between `transcribe_file()` and `transcribe_samples()`.
+    /// Transcription lock: ensures mutual exclusion for transcription operations.
+    /// Only one transcription operation can proceed at a time.
     transcription_lock: Arc<Mutex<()>>,
 }
 
@@ -153,8 +150,7 @@ impl SharedTranscriptionModel {
 
     /// Acquire exclusive access for transcription operations.
     ///
-    /// This must be called before any transcription to ensure mutual exclusion
-    /// between batch (`transcribe_file`) and streaming (`transcribe_samples`) modes.
+    /// This must be called before any transcription to ensure mutual exclusion.
     /// The returned guard holds the lock until dropped.
     fn acquire_transcription_lock(&self) -> TranscriptionResult<MutexGuard<'_, ()>> {
         self.transcription_lock
@@ -281,55 +277,6 @@ impl SharedTranscriptionModel {
 
         result
     }
-
-    /// Transcribe audio samples directly (in-memory)
-    ///
-    /// This is the primary method for streaming transcription (wake word detection).
-    ///
-    /// # Arguments
-    /// * `samples` - Audio samples as f32 values
-    /// * `sample_rate` - Sample rate in Hz (typically 16000)
-    /// * `channels` - Number of audio channels (typically 1 for mono)
-    ///
-    /// ## Mutual Exclusion
-    ///
-    /// Acquires `transcription_lock` before transcription to prevent concurrent
-    /// execution with `transcribe_file()`. The lock is held for the duration
-    /// of the transcription and released when the method returns.
-    ///
-    /// Note: We don't set state to Transcribing for streaming use cases
-    /// to avoid state conflicts with batch transcription. The state machine
-    /// is primarily for the batch transcription flow.
-    pub fn transcribe_samples(
-        &self,
-        samples: Vec<f32>,
-        sample_rate: u32,
-        channels: u16,
-    ) -> TranscriptionResult<String> {
-        if samples.is_empty() {
-            return Err(TranscriptionError::InvalidAudio(
-                "Empty audio samples".to_string(),
-            ));
-        }
-
-        // Acquire exclusive transcription access - blocks if batch transcription is active
-        let _transcription_permit = self.acquire_transcription_lock()?;
-
-        let mut guard = self
-            .model
-            .lock()
-            .map_err(|_| TranscriptionError::LockPoisoned)?;
-
-        let tdt = guard.as_mut().ok_or(TranscriptionError::ModelNotLoaded)?;
-
-        match tdt.transcribe_samples(samples, sample_rate, channels, None) {
-            Ok(transcribe_result) => {
-                let fixed_text = fix_parakeet_text(&transcribe_result.tokens);
-                Ok(fixed_text)
-            }
-            Err(e) => Err(TranscriptionError::TranscriptionFailed(e.to_string())),
-        }
-    }
 }
 
 impl TranscriptionService for SharedTranscriptionModel {
@@ -379,22 +326,6 @@ mod tests {
     fn test_transcribe_file_returns_error_for_empty_path() {
         let model = SharedTranscriptionModel::new();
         let result = model.transcribe_file("");
-        assert!(result.is_err());
-        assert!(matches!(result, Err(TranscriptionError::InvalidAudio(_))));
-    }
-
-    #[test]
-    fn test_transcribe_samples_returns_error_when_model_not_loaded() {
-        let model = SharedTranscriptionModel::new();
-        let result = model.transcribe_samples(vec![0.1, 0.2, 0.3], 16000, 1);
-        assert!(result.is_err());
-        assert!(matches!(result, Err(TranscriptionError::ModelNotLoaded)));
-    }
-
-    #[test]
-    fn test_transcribe_samples_returns_error_for_empty_samples() {
-        let model = SharedTranscriptionModel::new();
-        let result = model.transcribe_samples(vec![], 16000, 1);
         assert!(result.is_err());
         assert!(matches!(result, Err(TranscriptionError::InvalidAudio(_))));
     }
@@ -540,8 +471,8 @@ mod tests {
     fn test_transcription_lock_released_on_error_paths() {
         let model = SharedTranscriptionModel::new();
 
-        // Error should release lock
-        let _ = model.transcribe_samples(vec![], 16000, 1);
+        // Error should release lock - use transcribe_file which should fail for invalid path
+        let _ = model.transcribe_file("");
 
         // Lock should be acquirable again
         let guard = model.acquire_transcription_lock();

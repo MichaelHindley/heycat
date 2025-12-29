@@ -44,12 +44,6 @@ use module_bindings::{
 pub enum ClientError {
     #[error("Failed to connect to SpacetimeDB: {0}")]
     ConnectionFailed(String),
-
-    #[error("Subscription failed: {0}")]
-    SubscriptionFailed(String),
-
-    #[error("Client not initialized")]
-    NotInitialized,
 }
 
 /// SpacetimeDB client connection state
@@ -61,8 +55,6 @@ pub enum ConnectionState {
     Connecting,
     /// Connected and subscriptions active
     Connected,
-    /// Connection failed
-    Failed(String),
 }
 
 /// Manages the SpacetimeDB SDK client connection
@@ -103,19 +95,9 @@ impl SpacetimeClient {
         }
     }
 
-    /// Get the WebSocket URL for connecting
-    pub fn websocket_url(&self) -> String {
-        self.config.websocket_url()
-    }
-
     /// Check if currently connected
     pub fn is_connected(&self) -> bool {
         matches!(self.state, ConnectionState::Connected)
-    }
-
-    /// Get the current connection state
-    pub fn state(&self) -> &ConnectionState {
-        &self.state
     }
 
     /// Connect to the SpacetimeDB sidecar and set up subscriptions
@@ -349,21 +331,6 @@ impl SpacetimeClient {
             .iter()
             .map(|e| convert_sdb_entry(&e))
             .collect())
-    }
-
-    /// Get a dictionary entry by ID
-    pub fn get_dictionary_entry(&self, id: &str) -> Result<Option<DictionaryEntry>, DictionaryError> {
-        let conn = self
-            .connection
-            .as_ref()
-            .ok_or_else(|| DictionaryError::LoadError("Not connected to SpacetimeDB".to_string()))?;
-
-        Ok(conn
-            .db
-            .dictionary_entry()
-            .id()
-            .find(&id.to_string())
-            .map(|e| convert_sdb_entry(&e)))
     }
 
     /// Add a new dictionary entry via SpacetimeDB reducer
@@ -680,12 +647,17 @@ fn string_to_override_mode(s: &str) -> OverrideMode {
 
 use crate::audio::StopReason;
 use module_bindings::{
-    add_recording, delete_recording, delete_recording_by_path,
+    add_recording, delete_recording_by_path,
     Recording as SdbRecording,
 };
 
 /// Recording metadata stored in SpacetimeDB
+///
+/// Note: Some fields may appear unused but are part of the SpacetimeDB schema
+/// and are populated when records are synced. #[allow(dead_code)] is used
+/// to suppress warnings for fields that aren't read in the current codebase.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct RecordingRecord {
     pub id: String,
     pub file_path: String,
@@ -735,21 +707,6 @@ impl SpacetimeClient {
             .iter()
             .map(|e| convert_sdb_recording(&e))
             .collect())
-    }
-
-    /// Get a recording by ID
-    pub fn get_recording(&self, id: &str) -> Result<Option<RecordingRecord>, RecordingStoreError> {
-        let conn = self
-            .connection
-            .as_ref()
-            .ok_or(RecordingStoreError::NotConnected)?;
-
-        Ok(conn
-            .db
-            .recording()
-            .id()
-            .find(&id.to_string())
-            .map(|e| convert_sdb_recording(&e)))
     }
 
     /// Get a recording by file path
@@ -812,25 +769,6 @@ impl SpacetimeClient {
         })
     }
 
-    /// Delete a recording by ID via SpacetimeDB reducer
-    pub fn delete_recording(&self, id: &str) -> Result<(), RecordingStoreError> {
-        let conn = self
-            .connection
-            .as_ref()
-            .ok_or(RecordingStoreError::NotConnected)?;
-
-        // Check if entry exists in cache
-        if conn.db.recording().id().find(&id.to_string()).is_none() {
-            return Err(RecordingStoreError::NotFound(id.to_string()));
-        }
-
-        conn.reducers
-            .delete_recording(id.to_string())
-            .map_err(|e| RecordingStoreError::PersistenceError(e.to_string()))?;
-
-        Ok(())
-    }
-
     /// Delete a recording by file path via SpacetimeDB reducer
     pub fn delete_recording_by_path(&self, file_path: &str) -> Result<(), RecordingStoreError> {
         let conn = self
@@ -885,7 +823,7 @@ fn convert_sdb_recording(sdb_recording: &SdbRecording) -> RecordingRecord {
 // ============================================================
 
 use module_bindings::{
-    add_transcription, delete_transcription,
+    add_transcription,
     Transcription as SdbTranscription,
 };
 
@@ -905,6 +843,7 @@ pub struct TranscriptionRecord {
 #[derive(Debug, Clone)]
 pub enum TranscriptionStoreError {
     NotConnected,
+    #[allow(dead_code)]
     NotFound(String),
     PersistenceError(String),
 }
@@ -990,24 +929,6 @@ impl SpacetimeClient {
         })
     }
 
-    /// Delete a transcription by ID via SpacetimeDB reducer
-    pub fn delete_transcription(&self, id: &str) -> Result<(), TranscriptionStoreError> {
-        let conn = self
-            .connection
-            .as_ref()
-            .ok_or(TranscriptionStoreError::NotConnected)?;
-
-        // Check if entry exists in cache
-        if conn.db.transcription().id().find(&id.to_string()).is_none() {
-            return Err(TranscriptionStoreError::NotFound(id.to_string()));
-        }
-
-        conn.reducers
-            .delete_transcription(id.to_string())
-            .map_err(|e| TranscriptionStoreError::PersistenceError(e.to_string()))?;
-
-        Ok(())
-    }
 }
 
 /// Convert from SpacetimeDB Transcription to TranscriptionRecord
@@ -1047,21 +968,6 @@ impl SpacetimeClient {
             .iter()
             .map(|e| convert_sdb_voice_command(&e))
             .collect()
-    }
-
-    /// Get a voice command by ID
-    pub fn get_voice_command(&self, id: Uuid) -> Result<Option<CommandDefinition>, RegistryError> {
-        let conn = self
-            .connection
-            .as_ref()
-            .ok_or_else(|| RegistryError::LoadError("Not connected to SpacetimeDB".to_string()))?;
-
-        conn.db
-            .voice_command()
-            .id()
-            .find(&id.to_string())
-            .map(|e| convert_sdb_voice_command(&e))
-            .transpose()
     }
 
     /// Add a new voice command via SpacetimeDB reducer
@@ -1191,9 +1097,6 @@ mod tests {
 
         let state = ConnectionState::Connected;
         assert!(matches!(state, ConnectionState::Connected));
-
-        let state = ConnectionState::Failed("test error".to_string());
-        assert!(matches!(state, ConnectionState::Failed(_)));
     }
 
     #[test]

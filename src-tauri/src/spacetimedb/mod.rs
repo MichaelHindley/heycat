@@ -43,10 +43,7 @@ pub mod client;
 mod sidecar;
 mod subscriptions;
 
-pub use client::{
-    ClientError, ConnectionState, RecordingRecord, RecordingStoreError, SpacetimeClient,
-    TranscriptionRecord, TranscriptionStoreError,
-};
+pub use client::SpacetimeClient;
 pub use sidecar::{SidecarHandle, SidecarManager};
 
 // Subscription types used by the SDK client callbacks

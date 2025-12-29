@@ -37,45 +37,12 @@ pub const VAD_CHUNK_SIZE_16KHZ: usize = 512;
 #[allow(dead_code)]
 pub const VAD_CHUNK_SIZE_8KHZ: usize = 256;
 
-/// Minimum samples to process for a partial VAD chunk.
-///
-/// When the remaining audio buffer doesn't fill a complete VAD chunk,
-/// we still process it if it contains at least this many samples.
-/// Set to half a chunk (256 samples at 16kHz = 16ms) to avoid
-/// missing speech at buffer boundaries while filtering noise.
-pub const MIN_PARTIAL_VAD_CHUNK: usize = VAD_CHUNK_SIZE_16KHZ / 2;
-
-// =============================================================================
-// VAD THRESHOLDS
-// =============================================================================
-
-/// VAD speech threshold for wake word detection (0.0 - 1.0).
-///
-/// Lower threshold = more sensitive to speech. Set to 0.3 for better
-/// sensitivity to varied pronunciations and volumes. The cost of false
-/// positives here is only an extra transcription attempt.
-pub const VAD_THRESHOLD_WAKE_WORD: f32 = 0.3;
-
-/// VAD speech threshold for balanced general use (0.0 - 1.0).
-///
-/// A middle ground between sensitivity and precision. Suitable for
-/// general-purpose VAD where neither extreme sensitivity nor precision
-/// is critical.
-pub const VAD_THRESHOLD_BALANCED: f32 = 0.4;
-
 /// VAD speech threshold for silence/end-of-speech detection (0.0 - 1.0).
 ///
 /// Higher threshold = more confident speech is present. Used by the
 /// silence detector to avoid cutting off speech prematurely during
 /// pauses or soft speech.
 pub const VAD_THRESHOLD_SILENCE: f32 = 0.5;
-
-/// VAD speech threshold for wake word detector (aggressive filtering).
-///
-/// Set higher (0.6) to aggressively filter ambient noise. May miss
-/// very quiet speech but significantly reduces false positives during
-/// continuous listening.
-pub const VAD_THRESHOLD_AGGRESSIVE: f32 = 0.6;
 
 // =============================================================================
 // SILENCE DETECTION
@@ -210,23 +177,6 @@ mod tests {
             VAD_CHUNK_SIZE_8KHZ,
             (8000 * OPTIMAL_CHUNK_DURATION_MS / 1000) as usize
         );
-    }
-
-    #[test]
-    fn test_min_partial_vad_chunk_is_half_of_full_chunk() {
-        // MIN_PARTIAL_VAD_CHUNK should be exactly half of VAD_CHUNK_SIZE_16KHZ
-        assert_eq!(MIN_PARTIAL_VAD_CHUNK, VAD_CHUNK_SIZE_16KHZ / 2);
-        assert_eq!(MIN_PARTIAL_VAD_CHUNK, 256);
-    }
-
-    #[test]
-    fn test_threshold_ordering() {
-        // Wake word threshold should be lowest (most sensitive)
-        assert!(VAD_THRESHOLD_WAKE_WORD < VAD_THRESHOLD_BALANCED);
-        // Balanced should be in the middle
-        assert!(VAD_THRESHOLD_BALANCED < VAD_THRESHOLD_SILENCE);
-        // Silence threshold should be below aggressive
-        assert!(VAD_THRESHOLD_SILENCE < VAD_THRESHOLD_AGGRESSIVE);
     }
 
     #[test]

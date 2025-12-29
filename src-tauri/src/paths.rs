@@ -23,8 +23,6 @@ const APP_DIR_NAME: &str = "heycat";
 pub enum PathError {
     /// Data directory not found (platform issue)
     DataDirNotFound,
-    /// Config directory not found (platform issue)
-    ConfigDirNotFound,
     /// Failed to create directory (used by ensure_dir_exists helper)
     #[allow(dead_code)]
     DirectoryCreationFailed(String),
@@ -34,7 +32,6 @@ impl std::fmt::Display for PathError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             PathError::DataDirNotFound => write!(f, "Data directory not found"),
-            PathError::ConfigDirNotFound => write!(f, "Config directory not found"),
             PathError::DirectoryCreationFailed(msg) => {
                 write!(f, "Failed to create directory: {}", msg)
             }
@@ -62,16 +59,6 @@ fn get_app_dir_name(worktree_context: Option<&WorktreeContext>) -> String {
 pub fn get_data_dir(worktree_context: Option<&WorktreeContext>) -> Result<PathBuf, PathError> {
     let data_dir = dirs::data_dir().ok_or(PathError::DataDirNotFound)?;
     Ok(data_dir.join(get_app_dir_name(worktree_context)))
-}
-
-/// Get the base config directory path.
-///
-/// Returns:
-/// - Main repo: `~/.config/heycat/`
-/// - Worktree: `~/.config/heycat-{identifier}/`
-pub fn get_config_dir(worktree_context: Option<&WorktreeContext>) -> Result<PathBuf, PathError> {
-    let config_dir = dirs::config_dir().ok_or(PathError::ConfigDirNotFound)?;
-    Ok(config_dir.join(get_app_dir_name(worktree_context)))
 }
 
 /// Get the models directory path.

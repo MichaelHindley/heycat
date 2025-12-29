@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi } from "vitest";
 import { Combobox, type ComboboxOption } from "./Combobox";
@@ -50,7 +50,7 @@ describe("Combobox", () => {
 
   it("filters options based on typed text", async () => {
     const user = userEvent.setup();
-    const { rerender } = render(
+    render(
       <Combobox
         value="Sla"
         onChange={() => {}}

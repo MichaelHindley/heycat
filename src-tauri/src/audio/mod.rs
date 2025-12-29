@@ -1,7 +1,7 @@
 // Audio capture module for microphone recording
 
 use ringbuf::{
-    traits::{Consumer, Observer, Producer, Split},
+    traits::{Consumer, Observer, Split},
     HeapRb,
 };
 use std::sync::{Arc, Mutex};
@@ -37,7 +37,7 @@ mod wav_test;
 /// Thread-safe buffer for storing audio samples using lock-free ring buffer
 ///
 /// Uses a SPSC ring buffer for low-contention audio capture:
-/// - Producer (audio callback) writes via `push_samples()` - lock-free
+/// - Producer (audio callback) writes to producer half - lock-free
 /// - Consumer (detection loop) reads via `drain_samples()` - lock-free
 /// - Accumulated samples are stored for WAV encoding
 pub struct AudioBuffer {
@@ -63,17 +63,6 @@ impl AudioBuffer {
             producer: Arc::new(Mutex::new(producer)),
             consumer: Arc::new(Mutex::new(consumer)),
             accumulated: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
-    /// Push samples to the buffer (used by audio callback)
-    ///
-    /// Returns the number of samples actually written.
-    /// If buffer is full, returns 0.
-    pub fn push_samples(&self, samples: &[f32]) -> usize {
-        match self.producer.lock() {
-            Ok(mut prod) => prod.push_slice(samples),
-            Err(_) => 0,
         }
     }
 

@@ -123,7 +123,6 @@ pub fn get_models_dir_with_context(
 ) -> Result<PathBuf, ModelError> {
     paths::get_models_dir(worktree_context).map_err(|e| match e {
         paths::PathError::DataDirNotFound => ModelError::DataDirNotFound,
-        paths::PathError::ConfigDirNotFound => ModelError::DataDirNotFound,
         paths::PathError::DirectoryCreationFailed(msg) => ModelError::DirectoryCreationFailed(msg),
     })
 }
