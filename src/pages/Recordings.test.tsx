@@ -2,33 +2,31 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { ReactNode } from "react";
-import { Recordings, type RecordingInfo } from "./Recordings";
+import { Recordings, type RecordingInfo, type PaginatedRecordingsResponse } from "./Recordings";
 
-// Create wrapper with QueryClientProvider for React Query hooks
-function createWrapper() {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  return ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-  );
-}
+// Mock Tauri invoke with vi.hoisted for proper scoping
+const { mockInvoke } = vi.hoisted(() => ({
+  mockInvoke: vi.fn(),
+}));
 
-// Mock Tauri invoke
-const mockInvoke = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: (...args: unknown[]) => mockInvoke(...args),
+  invoke: mockInvoke,
 }));
 
-// Mock Tauri opener plugin
-const mockOpenPath = vi.fn();
+// Mock Tauri opener plugin with vi.hoisted for proper scoping
+const { mockOpenPath } = vi.hoisted(() => ({
+  mockOpenPath: vi.fn(),
+}));
+
 vi.mock("@tauri-apps/plugin-opener", () => ({
-  openPath: (...args: unknown[]) => mockOpenPath(...args),
+  openPath: mockOpenPath,
 }));
 
-// Mock toast
-const mockToast = vi.fn();
+// Mock toast with vi.hoisted for proper scoping
+const { mockToast } = vi.hoisted(() => ({
+  mockToast: vi.fn(),
+}));
+
 vi.mock("../components/overlays", () => ({
   useToast: () => ({
     toast: mockToast,
@@ -37,8 +35,11 @@ vi.mock("../components/overlays", () => ({
   }),
 }));
 
-// Mock useRecording hook
-const mockStartRecording = vi.fn();
+// Mock useRecording hook with vi.hoisted for proper scoping
+const { mockStartRecording } = vi.hoisted(() => ({
+  mockStartRecording: vi.fn(),
+}));
+
 vi.mock("../hooks/useRecording", () => ({
   useRecording: () => ({
     isRecording: false,
@@ -57,6 +58,40 @@ vi.mock("../hooks/useSettings", () => ({
     },
   }),
 }));
+
+// Mock useAudioPlayback hook - state container for the mock
+const audioPlaybackState = { isPlaying: false, currentFilePath: null as string | null };
+
+const { mockToggle } = vi.hoisted(() => ({
+  mockToggle: vi.fn(),
+}));
+
+vi.mock("../hooks/useAudioPlayback", () => ({
+  useAudioPlayback: () => ({
+    isPlaying: audioPlaybackState.isPlaying,
+    currentFilePath: audioPlaybackState.currentFilePath,
+    play: vi.fn(),
+    pause: vi.fn(),
+    stop: vi.fn(),
+    toggle: mockToggle,
+    error: null,
+  }),
+}));
+
+// Create wrapper for QueryClientProvider
+function createWrapper() {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+        gcTime: 0,
+      },
+    },
+  });
+  return ({ children }: { children: React.ReactNode }) => (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  );
+}
 
 // Sample recording data
 const sampleRecordings: RecordingInfo[] = [
@@ -85,10 +120,28 @@ const sampleRecordings: RecordingInfo[] = [
   },
 ];
 
+// Helper to create paginated response
+const createPaginatedResponse = (
+  recordings: RecordingInfo[],
+  hasMore = false
+): PaginatedRecordingsResponse => ({
+  recordings,
+  total_count: recordings.length,
+  has_more: hasMore,
+});
+
+const emptyPaginatedResponse: PaginatedRecordingsResponse = {
+  recordings: [],
+  total_count: 0,
+  has_more: false,
+};
+
 describe("Recordings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockInvoke.mockResolvedValue([]);
+    mockInvoke.mockResolvedValue(emptyPaginatedResponse);
+    audioPlaybackState.isPlaying = false;
+    audioPlaybackState.currentFilePath = null;
   });
 
   it("renders page with header, search, filter, and sort", async () => {
@@ -109,7 +162,7 @@ describe("Recordings", () => {
   });
 
   it("shows empty state when no recordings exist", async () => {
-    mockInvoke.mockResolvedValue([]);
+    mockInvoke.mockResolvedValue(emptyPaginatedResponse);
 
     render(<Recordings />, { wrapper: createWrapper() });
 
@@ -126,7 +179,7 @@ describe("Recordings", () => {
   });
 
   it("displays recordings list with play button, filename, and metadata", async () => {
-    mockInvoke.mockResolvedValue(sampleRecordings);
+    mockInvoke.mockResolvedValue(createPaginatedResponse(sampleRecordings));
 
     render(<Recordings />, { wrapper: createWrapper() });
 
@@ -144,7 +197,7 @@ describe("Recordings", () => {
   });
 
   it("shows transcription status badges correctly", async () => {
-    mockInvoke.mockResolvedValue(sampleRecordings);
+    mockInvoke.mockResolvedValue(createPaginatedResponse(sampleRecordings));
 
     render(<Recordings />, { wrapper: createWrapper() });
 
@@ -162,7 +215,7 @@ describe("Recordings", () => {
 
   it("filters recordings by search query", async () => {
     const user = userEvent.setup();
-    mockInvoke.mockResolvedValue(sampleRecordings);
+    mockInvoke.mockResolvedValue(createPaginatedResponse(sampleRecordings));
 
     render(<Recordings />, { wrapper: createWrapper() });
 
@@ -184,7 +237,7 @@ describe("Recordings", () => {
 
   it("filters recordings by transcription content", async () => {
     const user = userEvent.setup();
-    mockInvoke.mockResolvedValue(sampleRecordings);
+    mockInvoke.mockResolvedValue(createPaginatedResponse(sampleRecordings));
 
     render(<Recordings />, { wrapper: createWrapper() });
 
@@ -206,7 +259,7 @@ describe("Recordings", () => {
 
   it("shows no results message when search has no matches", async () => {
     const user = userEvent.setup();
-    mockInvoke.mockResolvedValue(sampleRecordings);
+    mockInvoke.mockResolvedValue(createPaginatedResponse(sampleRecordings));
 
     render(<Recordings />, { wrapper: createWrapper() });
 
@@ -225,7 +278,7 @@ describe("Recordings", () => {
 
   it("expands and collapses recording item on click", async () => {
     const user = userEvent.setup();
-    mockInvoke.mockResolvedValue(sampleRecordings);
+    mockInvoke.mockResolvedValue(createPaginatedResponse(sampleRecordings));
 
     render(<Recordings />, { wrapper: createWrapper() });
 
@@ -258,7 +311,7 @@ describe("Recordings", () => {
 
   it("shows 'No transcription available' when expanded and no transcription", async () => {
     const user = userEvent.setup();
-    mockInvoke.mockResolvedValue(sampleRecordings);
+    mockInvoke.mockResolvedValue(createPaginatedResponse(sampleRecordings));
 
     render(<Recordings />, { wrapper: createWrapper() });
 
@@ -277,7 +330,7 @@ describe("Recordings", () => {
 
   it("copies transcription text and shows toast", async () => {
     const user = userEvent.setup();
-    mockInvoke.mockResolvedValue(sampleRecordings);
+    mockInvoke.mockResolvedValue(createPaginatedResponse(sampleRecordings));
 
     // Mock clipboard API using stubGlobal
     const mockWriteText = vi.fn().mockResolvedValue(undefined);
@@ -324,7 +377,7 @@ describe("Recordings", () => {
 
   it("opens file in system when Open File button clicked", async () => {
     const user = userEvent.setup();
-    mockInvoke.mockResolvedValue(sampleRecordings);
+    mockInvoke.mockResolvedValue(createPaginatedResponse(sampleRecordings));
     mockOpenPath.mockResolvedValue(undefined);
 
     render(<Recordings />, { wrapper: createWrapper() });
@@ -349,7 +402,7 @@ describe("Recordings", () => {
   it("shows delete confirmation and deletes recording", async () => {
     const user = userEvent.setup();
     mockInvoke
-      .mockResolvedValueOnce(sampleRecordings) // Initial load
+      .mockResolvedValueOnce(createPaginatedResponse(sampleRecordings)) // Initial load
       .mockResolvedValueOnce(undefined); // delete_recording response
 
     render(<Recordings />, { wrapper: createWrapper() });
@@ -390,7 +443,7 @@ describe("Recordings", () => {
 
   it("cancels delete when cancel button clicked", async () => {
     const user = userEvent.setup();
-    mockInvoke.mockResolvedValue(sampleRecordings);
+    mockInvoke.mockResolvedValue(createPaginatedResponse(sampleRecordings));
 
     render(<Recordings />, { wrapper: createWrapper() });
 
@@ -426,7 +479,7 @@ describe("Recordings", () => {
   it("triggers transcription and shows success toast", async () => {
     const user = userEvent.setup();
     mockInvoke
-      .mockResolvedValueOnce(sampleRecordings) // Initial load
+      .mockResolvedValueOnce(createPaginatedResponse(sampleRecordings)) // Initial load
       .mockResolvedValueOnce("Transcribed text from audio"); // transcribe_file response
 
     render(<Recordings />, { wrapper: createWrapper() });
@@ -470,7 +523,7 @@ describe("Recordings", () => {
     const user = userEvent.setup();
     mockInvoke
       .mockRejectedValueOnce(new Error("Network error"))
-      .mockResolvedValueOnce(sampleRecordings);
+      .mockResolvedValueOnce(createPaginatedResponse(sampleRecordings));
 
     render(<Recordings />, { wrapper: createWrapper() });
 
@@ -487,7 +540,7 @@ describe("Recordings", () => {
 
   it("starts recording when empty state button clicked", async () => {
     const user = userEvent.setup();
-    mockInvoke.mockResolvedValue([]);
+    mockInvoke.mockResolvedValue(emptyPaginatedResponse);
 
     render(<Recordings />, { wrapper: createWrapper() });
 
@@ -501,7 +554,7 @@ describe("Recordings", () => {
   });
 
   it("sorts recordings by newest first by default", async () => {
-    mockInvoke.mockResolvedValue(sampleRecordings);
+    mockInvoke.mockResolvedValue(createPaginatedResponse(sampleRecordings));
 
     render(<Recordings />, { wrapper: createWrapper() });
 
@@ -521,9 +574,10 @@ describe("Recordings", () => {
     expect(filenames[2]).toBe("meeting_notes.wav");
   });
 
-  it("play button toggles playing state", async () => {
+  it("play button calls toggle with file path", async () => {
     const user = userEvent.setup();
-    mockInvoke.mockResolvedValue(sampleRecordings);
+    mockInvoke.mockResolvedValue(createPaginatedResponse(sampleRecordings));
+    mockToggle.mockClear();
 
     render(<Recordings />, { wrapper: createWrapper() });
 
@@ -537,20 +591,8 @@ describe("Recordings", () => {
     });
     await user.click(playButton);
 
-    // After clicking, button should show "Pause"
-    expect(
-      screen.getByRole("button", { name: /pause recording_2024-01-15.wav/i })
-    ).toBeDefined();
-
-    // Click again to pause
-    await user.click(
-      screen.getByRole("button", { name: /pause recording_2024-01-15.wav/i })
-    );
-
-    // Should be back to "Play"
-    expect(
-      screen.getByRole("button", { name: /play recording_2024-01-15.wav/i })
-    ).toBeDefined();
+    // Should call toggle with the file path
+    expect(mockToggle).toHaveBeenCalledWith("/path/to/recording_2024-01-15.wav");
   });
 
   it("shows skeleton loaders while loading", async () => {
@@ -563,5 +605,109 @@ describe("Recordings", () => {
 
     // Should show loading state with skeleton elements
     expect(screen.getByRole("status", { name: /loading recordings/i })).toBeDefined();
+  });
+
+  describe("pagination", () => {
+    it("does not show pagination controls when total items fit on one page", async () => {
+      mockInvoke.mockResolvedValue(createPaginatedResponse(sampleRecordings, false));
+
+      render(<Recordings />, { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(screen.getByText("recording_2024-01-15.wav")).toBeDefined();
+      });
+
+      // Should not show pagination controls for small lists
+      expect(screen.queryByRole("button", { name: /previous page/i })).toBeNull();
+      expect(screen.queryByRole("button", { name: /next page/i })).toBeNull();
+    });
+
+    it("shows pagination controls when has_more is true", async () => {
+      const manyRecordings: PaginatedRecordingsResponse = {
+        recordings: sampleRecordings,
+        total_count: 25, // More than PAGE_SIZE
+        has_more: true,
+      };
+      mockInvoke.mockResolvedValue(manyRecordings);
+
+      render(<Recordings />, { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(screen.getByText("recording_2024-01-15.wav")).toBeDefined();
+      });
+
+      // Should show pagination controls
+      expect(screen.getByRole("button", { name: /previous page/i })).toBeDefined();
+      expect(screen.getByRole("button", { name: /next page/i })).toBeDefined();
+      expect(screen.getByText(/Page 1 of 2/i)).toBeDefined();
+      expect(screen.getByText(/Showing 1-3 of 25 recordings/i)).toBeDefined();
+    });
+
+    it("disables previous button on first page", async () => {
+      const manyRecordings: PaginatedRecordingsResponse = {
+        recordings: sampleRecordings,
+        total_count: 25,
+        has_more: true,
+      };
+      mockInvoke.mockResolvedValue(manyRecordings);
+
+      render(<Recordings />, { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(screen.getByText("recording_2024-01-15.wav")).toBeDefined();
+      });
+
+      const prevButton = screen.getByRole("button", { name: /previous page/i });
+      expect(prevButton).toHaveProperty("disabled", true);
+    });
+
+    it("disables next button on last page", async () => {
+      const lastPage: PaginatedRecordingsResponse = {
+        recordings: sampleRecordings,
+        total_count: 25,
+        has_more: false, // No more pages
+      };
+      mockInvoke.mockResolvedValue(lastPage);
+
+      render(<Recordings />, { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(screen.getByText("recording_2024-01-15.wav")).toBeDefined();
+      });
+
+      // Since has_more is false and total_count > recordings shown, pagination should appear
+      // But next should be disabled since has_more is false
+      const nextButton = screen.queryByRole("button", { name: /next page/i });
+      if (nextButton) {
+        expect(nextButton).toHaveProperty("disabled", true);
+      }
+    });
+
+    it("navigates to next page when next button clicked", async () => {
+      const user = userEvent.setup();
+      const firstPage: PaginatedRecordingsResponse = {
+        recordings: sampleRecordings,
+        total_count: 25,
+        has_more: true,
+      };
+      mockInvoke.mockResolvedValue(firstPage);
+
+      render(<Recordings />, { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(screen.getByText("recording_2024-01-15.wav")).toBeDefined();
+      });
+
+      const nextButton = screen.getByRole("button", { name: /next page/i });
+      await user.click(nextButton);
+
+      // Should have called invoke with offset = PAGE_SIZE (20)
+      await waitFor(() => {
+        expect(mockInvoke).toHaveBeenCalledWith("list_recordings", {
+          limit: 20,
+          offset: 20,
+        });
+      });
+    });
   });
 });

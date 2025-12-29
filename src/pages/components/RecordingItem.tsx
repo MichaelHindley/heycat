@@ -9,6 +9,15 @@ export interface RecordingInfo {
   file_size_bytes: number;
   error?: string;
   transcription?: string;
+  active_window_app_name?: string;
+  active_window_bundle_id?: string;
+  active_window_title?: string;
+}
+
+export interface PaginatedRecordingsResponse {
+  recordings: RecordingInfo[];
+  total_count: number;
+  has_more: boolean;
 }
 
 export interface RecordingItemProps {
@@ -68,6 +77,7 @@ export function RecordingItem({
 }: RecordingItemProps) {
   const hasTranscription = Boolean(recording.transcription);
   const hasError = Boolean(recording.error);
+  const hasWindowContext = Boolean(recording.active_window_app_name);
 
   return (
     <Card
@@ -165,6 +175,21 @@ export function RecordingItem({
                 </p>
               )}
             </div>
+
+            {/* Window Context Section */}
+            {hasWindowContext && (
+              <div>
+                <h4 className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2">
+                  Recorded From
+                </h4>
+                <div className="text-sm text-text-primary">
+                  <span className="font-medium">{recording.active_window_app_name}</span>
+                  {recording.active_window_title && (
+                    <span className="text-text-secondary"> — {recording.active_window_title}</span>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Action Buttons */}
             <div className="flex items-center gap-2">

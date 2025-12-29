@@ -31,6 +31,7 @@ pub type SpacetimeClientState = Arc<Mutex<SpacetimeClient>>;
 ///
 /// This function is called after successful transcription to persist the result.
 /// It looks up the recording by file_path and stores the transcription linked to it.
+/// If the recording doesn't exist (e.g., hotkey flow bypasses storage), it creates one first.
 fn store_transcription_in_spacetimedb(
     app_handle: &AppHandle,
     file_path: &str,
@@ -44,37 +45,43 @@ fn store_transcription_in_spacetimedb(
     if let Some(client_state) = spacetimedb_client {
         if let Ok(client_guard) = client_state.lock() {
             // Look up recording by file_path to get recording_id
-            match client_guard.get_recording_by_path(file_path) {
+            let recording_id = match client_guard.get_recording_by_path(file_path) {
                 Ok(Some(recording)) => {
-                    let transcription_id = uuid::Uuid::new_v4().to_string();
-                    // Get model version from the transcription model if available
-                    let model_version = "whisper-tiny-quantized".to_string();
-
-                    if let Err(e) = client_guard.add_transcription(
-                        transcription_id,
-                        recording.id.clone(),
-                        text.to_string(),
-                        None, // language - could be detected in future
-                        model_version,
-                        duration_ms,
-                    ) {
-                        crate::warn!("Failed to store transcription in SpacetimeDB: {}", e);
-                    } else {
-                        crate::debug!(
-                            "Transcription stored in SpacetimeDB for recording {}",
-                            recording.id
-                        );
-                    }
+                    crate::debug!("Found existing recording in SpacetimeDB: {}", recording.id);
+                    recording.id
                 }
                 Ok(None) => {
-                    crate::debug!(
-                        "Recording not found in SpacetimeDB for path: {}",
+                    // Recording should exist - both normal and hotkey flows store recordings now
+                    crate::warn!(
+                        "Recording not found in SpacetimeDB for transcription: {}",
                         file_path
                     );
+                    return;
                 }
                 Err(e) => {
                     crate::debug!("Failed to look up recording in SpacetimeDB: {}", e);
+                    return;
                 }
+            };
+
+            // Store the transcription
+            let transcription_id = uuid::Uuid::new_v4().to_string();
+            let model_version = "whisper-tiny-quantized".to_string();
+
+            if let Err(e) = client_guard.add_transcription(
+                transcription_id,
+                recording_id.clone(),
+                text.to_string(),
+                None, // language - could be detected in future
+                model_version,
+                duration_ms,
+            ) {
+                crate::warn!("Failed to store transcription in SpacetimeDB: {}", e);
+            } else {
+                crate::debug!(
+                    "Transcription stored in SpacetimeDB for recording {}",
+                    recording_id
+                );
             }
         }
     }

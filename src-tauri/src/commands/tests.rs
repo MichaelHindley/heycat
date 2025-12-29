@@ -3,11 +3,12 @@
 
 use super::logic::{
     clear_last_recording_buffer_impl, get_last_recording_buffer_impl, get_recording_state_impl,
-    list_recordings_impl, start_recording_impl, stop_recording_impl, RecordingInfo,
-    RecordingStateInfo,
+    list_recordings_impl, start_recording_impl, stop_recording_impl, PaginatedRecordingsResponse,
+    RecordingInfo, RecordingStateInfo,
 };
 use crate::audio::TARGET_SAMPLE_RATE;
 use crate::recording::{RecordingManager, RecordingState};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -355,22 +356,46 @@ fn test_clear_last_recording_buffer_allows_new_recording() {
 fn test_list_recordings_returns_ok() {
     // This test verifies list_recordings_impl doesn't panic or error
     // even if the directory doesn't exist yet
-    let result = list_recordings_impl(test_recordings_dir());
+    let result = list_recordings_impl(test_recordings_dir(), None, None, HashMap::new());
     assert!(result.is_ok());
 }
 
 #[test]
-fn test_list_recordings_returns_vec() {
-    let result = list_recordings_impl(test_recordings_dir());
+fn test_list_recordings_returns_paginated_response() {
+    let result = list_recordings_impl(test_recordings_dir(), None, None, HashMap::new());
     assert!(result.is_ok());
-    // Should return a Vec (empty or with recordings)
-    let recordings = result.unwrap();
+    // Should return a paginated response
+    let response = result.unwrap();
     // All items should have non-empty filenames
-    for recording in &recordings {
+    for recording in &response.recordings {
         assert!(!recording.filename.is_empty());
         assert!(!recording.file_path.is_empty());
         assert!(recording.filename.ends_with(".wav"));
     }
+    // total_count should match recordings length when no pagination
+    assert_eq!(response.total_count, response.recordings.len());
+    // has_more should be false when fetching all
+    assert!(!response.has_more);
+}
+
+#[test]
+fn test_list_recordings_with_pagination() {
+    // Create a temporary test directory with some test files
+    let temp_dir = std::env::temp_dir().join("heycat-pagination-test");
+    let _ = std::fs::remove_dir_all(&temp_dir); // Clean up any previous test
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    // We can't easily create valid WAV files in tests, so we test with empty directory
+    // and verify pagination logic works correctly with 0 items
+    let result = list_recordings_impl(temp_dir.clone(), Some(10), Some(0), HashMap::new());
+    assert!(result.is_ok());
+    let response = result.unwrap();
+    assert_eq!(response.total_count, 0);
+    assert_eq!(response.recordings.len(), 0);
+    assert!(!response.has_more);
+
+    // Clean up
+    let _ = std::fs::remove_dir_all(&temp_dir);
 }
 
 #[test]
@@ -382,6 +407,10 @@ fn test_recording_info_struct_serializes() {
         created_at: "2025-01-01T00:00:00Z".to_string(),
         file_size_bytes: 1024,
         error: None,
+        transcription: None,
+        active_window_app_name: None,
+        active_window_bundle_id: None,
+        active_window_title: None,
     };
     let json = serde_json::to_string(&info);
     assert!(json.is_ok());
@@ -389,6 +418,27 @@ fn test_recording_info_struct_serializes() {
     assert!(json_str.contains("test.wav"));
     assert!(json_str.contains("1.5"));
     assert!(json_str.contains("1024"));
+}
+
+#[test]
+fn test_recording_info_with_transcription_serializes() {
+    let info = RecordingInfo {
+        filename: "test.wav".to_string(),
+        file_path: "/path/to/test.wav".to_string(),
+        duration_secs: 1.5,
+        created_at: "2025-01-01T00:00:00Z".to_string(),
+        file_size_bytes: 1024,
+        error: None,
+        transcription: Some("Hello, this is a test transcription.".to_string()),
+        active_window_app_name: None,
+        active_window_bundle_id: None,
+        active_window_title: None,
+    };
+    let json = serde_json::to_string(&info);
+    assert!(json.is_ok());
+    let json_str = json.unwrap();
+    assert!(json_str.contains("test.wav"));
+    assert!(json_str.contains("Hello, this is a test transcription."));
 }
 
 // Note: test_list_recordings_after_stop_recording was removed.
@@ -408,6 +458,10 @@ fn test_recording_info_with_error_serializes() {
         created_at: String::new(),
         file_size_bytes: 0,
         error: Some("Corrupt audio file".to_string()),
+        transcription: None,
+        active_window_app_name: None,
+        active_window_bundle_id: None,
+        active_window_title: None,
     };
     let json = serde_json::to_string(&info);
     assert!(json.is_ok());
@@ -425,10 +479,40 @@ fn test_recording_info_without_error_omits_field() {
         created_at: "2025-01-01T00:00:00Z".to_string(),
         file_size_bytes: 1024,
         error: None,
+        transcription: None,
+        active_window_app_name: None,
+        active_window_bundle_id: None,
+        active_window_title: None,
     };
     let json = serde_json::to_string(&info).unwrap();
     // Error field should be omitted when None due to skip_serializing_if
     assert!(!json.contains("error"));
+    // Transcription field should also be omitted when None
+    assert!(!json.contains("transcription"));
+    // Window context fields should also be omitted when None
+    assert!(!json.contains("active_window"));
+}
+
+#[test]
+fn test_recording_info_with_window_context_serializes() {
+    let info = RecordingInfo {
+        filename: "test.wav".to_string(),
+        file_path: "/path/to/test.wav".to_string(),
+        duration_secs: 1.5,
+        created_at: "2025-01-01T00:00:00Z".to_string(),
+        file_size_bytes: 1024,
+        error: None,
+        transcription: None,
+        active_window_app_name: Some("Visual Studio Code".to_string()),
+        active_window_bundle_id: Some("com.microsoft.VSCode".to_string()),
+        active_window_title: Some("main.rs — heycat".to_string()),
+    };
+    let json = serde_json::to_string(&info);
+    assert!(json.is_ok());
+    let json_str = json.unwrap();
+    assert!(json_str.contains("Visual Studio Code"));
+    assert!(json_str.contains("com.microsoft.VSCode"));
+    assert!(json_str.contains("main.rs"));
 }
 
 // =============================================================================

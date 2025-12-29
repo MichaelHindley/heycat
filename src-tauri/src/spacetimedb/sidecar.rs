@@ -25,6 +25,12 @@ pub const DEFAULT_DATABASE_NAME: &str = "heycat";
 /// Default port for SpacetimeDB standalone server
 pub const DEFAULT_PORT: u16 = 3055;
 
+/// Port offset for worktree instances (worktrees use 3056-3064)
+const WORKTREE_PORT_OFFSET: u16 = 1;
+
+/// Number of ports in the worktree port range
+const WORKTREE_PORT_RANGE: u16 = 9;
+
 /// Default host for SpacetimeDB standalone server (localhost only)
 pub const DEFAULT_HOST: &str = "127.0.0.1";
 
@@ -53,6 +59,24 @@ pub enum SidecarError {
     WasmModuleNotFound(PathBuf),
 }
 
+/// Calculate the SpacetimeDB port based on worktree identifier.
+///
+/// Uses the same hash algorithm as `scripts/dev-port.ts` for consistency:
+/// - Main repo: port 3055 (default)
+/// - Worktrees: ports 3056-3064 (based on identifier hash)
+fn calculate_port(worktree_id: Option<&str>) -> u16 {
+    match worktree_id {
+        None => DEFAULT_PORT,
+        Some(id) => {
+            // Same hash algorithm as TypeScript: hash = (hash * 31 + charCode) >>> 0
+            let hash: u32 = id.chars().fold(0u32, |acc, c| {
+                acc.wrapping_mul(31).wrapping_add(c as u32)
+            });
+            DEFAULT_PORT + WORKTREE_PORT_OFFSET + (hash % WORKTREE_PORT_RANGE as u32) as u16
+        }
+    }
+}
+
 /// Configuration for the SpacetimeDB sidecar
 #[derive(Debug, Clone)]
 pub struct SidecarConfig {
@@ -75,16 +99,17 @@ pub struct SidecarConfig {
 }
 
 impl SidecarConfig {
-    /// Create a new sidecar configuration with worktree-aware data directory
+    /// Create a new sidecar configuration with worktree-aware data directory and port
     pub fn new(worktree_id: Option<&str>) -> Self {
         let data_dir = get_spacetimedb_data_dir(worktree_id);
         let binary_path = get_spacetimedb_binary_path();
         let wasm_module_path = get_wasm_module_path();
+        let port = calculate_port(worktree_id);
 
         Self {
             binary_path,
             host: DEFAULT_HOST.to_string(),
-            port: DEFAULT_PORT,
+            port,
             data_dir,
             health_check_attempts: 30,
             health_check_delay: Duration::from_millis(100),
@@ -307,13 +332,26 @@ impl SidecarManager {
                 format!("Cannot determine project path from {:?}", self.config.wasm_module_path)
             ))?;
 
+        // Build the publish command arguments
+        let mut args = vec![
+            "publish".to_string(),
+            "--server".to_string(), server_url.clone(),
+            self.config.database_name.clone(),
+            "--project-path".to_string(), wasm_dir.to_string_lossy().to_string(),
+        ];
+
+        // Allow schema migrations with --delete-data if explicitly opted in via environment variable.
+        // This clears existing data but allows adding new columns to tables.
+        // Set SPACETIMEDB_DELETE_DATA=1 to enable.
+        // Uses 'on-conflict' to only delete data when schema changes require it (safer than 'always').
+        if std::env::var("SPACETIMEDB_DELETE_DATA").is_ok() {
+            crate::warn!("SPACETIMEDB_DELETE_DATA is set - existing data will be cleared on schema changes");
+            args.push("--delete-data=on-conflict".to_string());
+            args.push("-y".to_string()); // Non-interactive mode to auto-confirm
+        }
+
         let output = Command::new(&self.config.binary_path)
-            .args([
-                "publish",
-                "--server", &server_url,
-                &self.config.database_name,
-                "--project-path", &wasm_dir.to_string_lossy(),
-            ])
+            .args(&args)
             .output()
             .map_err(|e| SidecarError::ModulePublishFailed(e.to_string()))?;
 
@@ -480,6 +518,41 @@ mod tests {
     fn test_sidecar_config_worktree_isolation() {
         let config = SidecarConfig::new(Some("feature-branch"));
         assert!(config.data_dir.to_string_lossy().contains("feature-branch"));
+    }
+
+    #[test]
+    fn test_calculate_port_main_repo() {
+        assert_eq!(calculate_port(None), DEFAULT_PORT);
+    }
+
+    #[test]
+    fn test_calculate_port_worktree_different_from_default() {
+        let port = calculate_port(Some("heycat-epictetus"));
+        assert_ne!(port, DEFAULT_PORT, "Worktree should use different port");
+        assert!(
+            port >= DEFAULT_PORT + WORKTREE_PORT_OFFSET,
+            "Worktree port should be >= {}",
+            DEFAULT_PORT + WORKTREE_PORT_OFFSET
+        );
+        assert!(
+            port < DEFAULT_PORT + WORKTREE_PORT_OFFSET + WORKTREE_PORT_RANGE,
+            "Worktree port should be < {}",
+            DEFAULT_PORT + WORKTREE_PORT_OFFSET + WORKTREE_PORT_RANGE
+        );
+    }
+
+    #[test]
+    fn test_calculate_port_deterministic() {
+        // Same worktree ID should always produce the same port
+        let port1 = calculate_port(Some("feature-branch"));
+        let port2 = calculate_port(Some("feature-branch"));
+        assert_eq!(port1, port2);
+    }
+
+    #[test]
+    fn test_worktree_uses_calculated_port() {
+        let config = SidecarConfig::new(Some("test-worktree"));
+        assert_ne!(config.port, DEFAULT_PORT, "Worktree config should not use default port");
     }
 
     #[test]

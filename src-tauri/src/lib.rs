@@ -46,6 +46,7 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::new().build())
+        .plugin(tauri_plugin_fs::init())
         .plugin(
             tauri_plugin_log::Builder::new()
                 .targets([
@@ -422,6 +423,7 @@ pub fn run() {
                 .with_shortcut_backend(escape_backend)
                 .with_transcription_callback(transcription_callback)
                 .with_hotkey_emitter(hotkey_emitter)
+                .with_spacetimedb_client(spacetimedb_client.clone())
                 .with_silence_detection_enabled(false); // Disable for push-to-talk
 
             // Wire up voice command integration using grouped config if available

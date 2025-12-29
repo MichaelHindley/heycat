@@ -12,6 +12,9 @@ pub(super) struct AddRecordingArgs {
     pub duration_secs: f64,
     pub sample_count: u64,
     pub stop_reason: Option<String>,
+    pub active_window_app_name: Option<String>,
+    pub active_window_bundle_id: Option<String>,
+    pub active_window_title: Option<String>,
 }
 
 impl From<AddRecordingArgs> for super::Reducer {
@@ -22,6 +25,9 @@ impl From<AddRecordingArgs> for super::Reducer {
             duration_secs: args.duration_secs,
             sample_count: args.sample_count,
             stop_reason: args.stop_reason,
+            active_window_app_name: args.active_window_app_name,
+            active_window_bundle_id: args.active_window_bundle_id,
+            active_window_title: args.active_window_title,
         }
     }
 }
@@ -49,6 +55,9 @@ pub trait add_recording {
         duration_secs: f64,
         sample_count: u64,
         stop_reason: Option<String>,
+        active_window_app_name: Option<String>,
+        active_window_bundle_id: Option<String>,
+        active_window_title: Option<String>,
     ) -> __sdk::Result<()>;
     /// Register a callback to run whenever we are notified of an invocation of the reducer `add_recording`.
     ///
@@ -59,8 +68,17 @@ pub trait add_recording {
     /// to cancel the callback.
     fn on_add_recording(
         &self,
-        callback: impl FnMut(&super::ReducerEventContext, &String, &String, &f64, &u64, &Option<String>)
-            + Send
+        callback: impl FnMut(
+                &super::ReducerEventContext,
+                &String,
+                &String,
+                &f64,
+                &u64,
+                &Option<String>,
+                &Option<String>,
+                &Option<String>,
+                &Option<String>,
+            ) + Send
             + 'static,
     ) -> AddRecordingCallbackId;
     /// Cancel a callback previously registered by [`Self::on_add_recording`],
@@ -76,6 +94,9 @@ impl add_recording for super::RemoteReducers {
         duration_secs: f64,
         sample_count: u64,
         stop_reason: Option<String>,
+        active_window_app_name: Option<String>,
+        active_window_bundle_id: Option<String>,
+        active_window_title: Option<String>,
     ) -> __sdk::Result<()> {
         self.imp.call_reducer(
             "add_recording",
@@ -85,13 +106,25 @@ impl add_recording for super::RemoteReducers {
                 duration_secs,
                 sample_count,
                 stop_reason,
+                active_window_app_name,
+                active_window_bundle_id,
+                active_window_title,
             },
         )
     }
     fn on_add_recording(
         &self,
-        mut callback: impl FnMut(&super::ReducerEventContext, &String, &String, &f64, &u64, &Option<String>)
-            + Send
+        mut callback: impl FnMut(
+                &super::ReducerEventContext,
+                &String,
+                &String,
+                &f64,
+                &u64,
+                &Option<String>,
+                &Option<String>,
+                &Option<String>,
+                &Option<String>,
+            ) + Send
             + 'static,
     ) -> AddRecordingCallbackId {
         AddRecordingCallbackId(self.imp.on_reducer(
@@ -108,6 +141,9 @@ impl add_recording for super::RemoteReducers {
                                     duration_secs,
                                     sample_count,
                                     stop_reason,
+                                    active_window_app_name,
+                                    active_window_bundle_id,
+                                    active_window_title,
                                 },
                             ..
                         },
@@ -116,7 +152,17 @@ impl add_recording for super::RemoteReducers {
                 else {
                     unreachable!()
                 };
-                callback(ctx, id, file_path, duration_secs, sample_count, stop_reason)
+                callback(
+                    ctx,
+                    id,
+                    file_path,
+                    duration_secs,
+                    sample_count,
+                    stop_reason,
+                    active_window_app_name,
+                    active_window_bundle_id,
+                    active_window_title,
+                )
             }),
         ))
     }

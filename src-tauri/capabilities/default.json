@@ -33,6 +33,14 @@
     "core:window:allow-set-position",
     "core:window:allow-set-ignore-cursor-events",
     "core:webview:allow-create-webview-window",
-    "store:default"
+    "store:default",
+    "fs:default",
+    {
+      "identifier": "fs:allow-read-file",
+      "allow": [
+        { "path": "$DATA/heycat/**" },
+        { "path": "$DATA/heycat-*/**" }
+      ]
+    }
   ]
 }

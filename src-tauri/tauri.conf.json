@@ -19,8 +19,12 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self'; connect-src 'self' https://huggingface.co",
-      "freezePrototype": true
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' asset: https://asset.localhost; connect-src 'self' https://huggingface.co",
+      "freezePrototype": true,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$DATA/heycat/**", "$DATA/heycat-*/**"]
+      }
     }
   },
   "bundle": {

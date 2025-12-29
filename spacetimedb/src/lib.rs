@@ -262,6 +262,12 @@ pub struct Recording {
     pub stop_reason: Option<String>,
     /// When the recording was created
     pub created_at: Timestamp,
+    /// App name of the active window when recording started
+    pub active_window_app_name: Option<String>,
+    /// Bundle ID of the active window when recording started
+    pub active_window_bundle_id: Option<String>,
+    /// Window title of the active window when recording started
+    pub active_window_title: Option<String>,
 }
 
 /// Add a new recording entry
@@ -273,6 +279,9 @@ pub fn add_recording(
     duration_secs: f64,
     sample_count: u64,
     stop_reason: Option<String>,
+    active_window_app_name: Option<String>,
+    active_window_bundle_id: Option<String>,
+    active_window_title: Option<String>,
 ) -> Result<(), String> {
     if ctx.db.recording().file_path().find(&file_path).is_some() {
         return Err(format!(
@@ -288,6 +297,9 @@ pub fn add_recording(
         sample_count,
         stop_reason,
         created_at: ctx.timestamp,
+        active_window_app_name,
+        active_window_bundle_id,
+        active_window_title,
     });
 
     Ok(())

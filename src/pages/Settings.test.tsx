@@ -1,19 +1,9 @@
+import React from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { ReactNode } from "react";
 import { Settings } from "./Settings";
-
-// Create wrapper with QueryClientProvider for React Query hooks
-function createWrapper() {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  return ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-  );
-}
 
 // Mock Tauri invoke
 const mockInvoke = vi.fn().mockImplementation((command: string) => {
@@ -104,6 +94,21 @@ vi.mock("../components/overlays", () => ({
     dismissAll: vi.fn(),
   }),
 }));
+
+// Create wrapper for QueryClientProvider
+function createWrapper() {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+        gcTime: 0,
+      },
+    },
+  });
+  return ({ children }: { children: React.ReactNode }) => (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  );
+}
 
 describe("Settings Page", () => {
   beforeEach(() => {

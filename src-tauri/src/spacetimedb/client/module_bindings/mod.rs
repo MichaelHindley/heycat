@@ -107,6 +107,9 @@ pub enum Reducer {
         duration_secs: f64,
         sample_count: u64,
         stop_reason: Option<String>,
+        active_window_app_name: Option<String>,
+        active_window_bundle_id: Option<String>,
+        active_window_title: Option<String>,
     },
     AddTranscription {
         id: String,

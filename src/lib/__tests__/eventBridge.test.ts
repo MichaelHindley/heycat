@@ -129,7 +129,7 @@ describe("eventBridge", () => {
         1234
       );
       expect(invalidateSpy).toHaveBeenCalledWith({
-        queryKey: queryKeys.tauri.listRecordings,
+        queryKey: ["tauri", "list_recordings"],
       });
     });
 

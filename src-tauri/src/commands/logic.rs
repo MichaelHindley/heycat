@@ -33,6 +33,18 @@ pub struct RecordingInfo {
     /// Error message if the recording has issues (missing file, corrupt metadata)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Transcription text (if available)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transcription: Option<String>,
+    /// App name of the active window when recording started
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_window_app_name: Option<String>,
+    /// Bundle ID of the active window when recording started
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_window_bundle_id: Option<String>,
+    /// Window title of the active window when recording started
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_window_title: Option<String>,
 }
 
 /// Information about the current recording state for frontend consumption
@@ -352,25 +364,63 @@ fn get_recordings_dir() -> PathBuf {
     get_recordings_dir_with_context(None)
 }
 
-/// Implementation of list_recordings
+/// Response for paginated list_recordings
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct PaginatedRecordingsResponse {
+    /// The recordings for the current page
+    pub recordings: Vec<RecordingInfo>,
+    /// Total number of recordings available
+    pub total_count: usize,
+    /// Whether there are more recordings after this page
+    pub has_more: bool,
+}
+
+use std::collections::HashMap;
+
+/// Context data for a recording from SpacetimeDB
+#[derive(Debug, Clone, Default)]
+pub struct RecordingContextData {
+    /// Transcription text
+    pub transcription: Option<String>,
+    /// App name of the active window when recording started
+    pub active_window_app_name: Option<String>,
+    /// Bundle ID of the active window when recording started
+    pub active_window_bundle_id: Option<String>,
+    /// Window title of the active window when recording started
+    pub active_window_title: Option<String>,
+}
+
+/// Implementation of list_recordings with pagination
 ///
-/// Lists all recordings from the specified directory with their metadata.
+/// Lists recordings from the specified directory with their metadata.
 ///
 /// # Arguments
 /// * `recordings_dir` - Directory containing recording files (supports worktree isolation)
+/// * `limit` - Maximum number of recordings to return (for pagination)
+/// * `offset` - Number of recordings to skip (for pagination)
+/// * `recording_context` - Map of file_path to context data (from SpacetimeDB)
 ///
 /// # Returns
-/// A list of RecordingInfo sorted by creation time (newest first).
+/// A paginated response with recordings sorted by creation time (newest first).
 /// Returns an empty list if the recordings directory doesn't exist or is empty.
 ///
 /// # Errors
 /// Only returns an error if there's a critical system failure.
 /// Individual file errors are logged and the file is skipped.
-pub fn list_recordings_impl(recordings_dir: PathBuf) -> Result<Vec<RecordingInfo>, String> {
+pub fn list_recordings_impl(
+    recordings_dir: PathBuf,
+    limit: Option<usize>,
+    offset: Option<usize>,
+    recording_context: HashMap<String, RecordingContextData>,
+) -> Result<PaginatedRecordingsResponse, String> {
 
     // Return empty list if directory doesn't exist (not an error)
     if !recordings_dir.exists() {
-        return Ok(Vec::new());
+        return Ok(PaginatedRecordingsResponse {
+            recordings: Vec::new(),
+            total_count: 0,
+            has_more: false,
+        });
     }
 
     let entries = std::fs::read_dir(&recordings_dir).map_err(|e| {
@@ -452,6 +502,9 @@ pub fn list_recordings_impl(recordings_dir: PathBuf) -> Result<Vec<RecordingInfo
             }
         };
 
+        // Look up context data by file path
+        let context = recording_context.get(&file_path_str);
+
         recordings.push(RecordingInfo {
             filename,
             file_path: file_path_str,
@@ -459,13 +512,34 @@ pub fn list_recordings_impl(recordings_dir: PathBuf) -> Result<Vec<RecordingInfo
             created_at,
             file_size_bytes,
             error: recording_error,
+            transcription: context.and_then(|c| c.transcription.clone()),
+            active_window_app_name: context.and_then(|c| c.active_window_app_name.clone()),
+            active_window_bundle_id: context.and_then(|c| c.active_window_bundle_id.clone()),
+            active_window_title: context.and_then(|c| c.active_window_title.clone()),
         });
     }
 
     // Sort by created_at descending (newest first)
     recordings.sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
-    Ok(recordings)
+    // Apply pagination
+    let total_count = recordings.len();
+    let offset = offset.unwrap_or(0);
+    let limit = limit.unwrap_or(usize::MAX);
+
+    let paginated_recordings: Vec<RecordingInfo> = recordings
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .collect();
+
+    let has_more = offset + paginated_recordings.len() < total_count;
+
+    Ok(PaginatedRecordingsResponse {
+        recordings: paginated_recordings,
+        total_count,
+        has_more,
+    })
 }
 
 /// Implementation of delete_recording

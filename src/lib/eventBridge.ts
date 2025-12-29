@@ -210,21 +210,21 @@ export async function setupEventBridge(
   // These events are emitted when SpacetimeDB subscription callbacks fire
   // ============================================================
 
-  // Recordings updated via SpacetimeDB - invalidate recordings list
+  // Recordings updated via SpacetimeDB - invalidate all paginated recordings lists
   unlistenFns.push(
     await listen<RecordingsUpdatedPayload>(eventNames.RECORDINGS_UPDATED, () => {
       queryClient.invalidateQueries({
-        queryKey: queryKeys.tauri.listRecordings,
+        queryKey: ["tauri", "list_recordings"],
       });
     })
   );
 
-  // Transcriptions updated via SpacetimeDB - invalidate recordings list
+  // Transcriptions updated via SpacetimeDB - invalidate all paginated recordings lists
   // (transcriptions are displayed as part of recordings)
   unlistenFns.push(
     await listen<TranscriptionsUpdatedPayload>(eventNames.TRANSCRIPTIONS_UPDATED, () => {
       queryClient.invalidateQueries({
-        queryKey: queryKeys.tauri.listRecordings,
+        queryKey: ["tauri", "list_recordings"],
       });
     })
   );
@@ -267,9 +267,9 @@ export async function setupEventBridge(
   unlistenFns.push(
     await listen<TranscriptionCompletedPayload>(eventNames.TRANSCRIPTION_COMPLETED, (event) => {
       store.transcriptionCompleted(event.payload.text, event.payload.duration_ms);
-      // Also invalidate recordings list since transcription produces a recording
+      // Also invalidate all paginated recordings lists since transcription produces a recording
       queryClient.invalidateQueries({
-        queryKey: queryKeys.tauri.listRecordings,
+        queryKey: ["tauri", "list_recordings"],
       });
     })
   );

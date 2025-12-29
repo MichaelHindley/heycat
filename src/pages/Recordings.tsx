@@ -1,10 +1,11 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "../lib/queryKeys";
 import { openPath } from "@tauri-apps/plugin-opener";
-import { Search } from "lucide-react";
+import { Search, ChevronLeft, ChevronRight } from "lucide-react";
 import {
+  Button,
   Card,
   CardContent,
   Input,
@@ -14,8 +15,11 @@ import {
 import { useToast } from "../components/overlays";
 import { useRecording } from "../hooks/useRecording";
 import { useSettings } from "../hooks/useSettings";
-import { RecordingItem, type RecordingInfo } from "./components/RecordingItem";
+import { useAudioPlayback } from "../hooks/useAudioPlayback";
+import { RecordingItem, type RecordingInfo, type PaginatedRecordingsResponse } from "./components/RecordingItem";
 import { RecordingsEmptyState } from "./components/RecordingsEmptyState";
+
+const PAGE_SIZE = 20;
 
 export type FilterOption = "all" | "transcribed" | "pending";
 export type SortOption = "newest" | "oldest" | "longest" | "shortest";
@@ -27,22 +31,53 @@ export interface RecordingsProps {
 export function Recordings(_props: RecordingsProps) {
   const { toast } = useToast();
   const { settings } = useSettings();
-  const { startRecording } = useRecording({
+  const { startRecording, isRecording } = useRecording({
     deviceName: settings.audio.selectedDevice,
   });
 
   const queryClient = useQueryClient();
 
+  // Audio playback hook
+  const { toggle: togglePlayback, stop: stopPlayback, isPlaying: isAudioPlaying, currentFilePath: playingFilePath, error: playbackError } = useAudioPlayback();
+
+  // Stop audio playback when a new recording starts
+  useEffect(() => {
+    if (isRecording && isAudioPlaying) {
+      stopPlayback();
+    }
+  }, [isRecording, isAudioPlaying, stopPlayback]);
+
+  // Display playback errors
+  useEffect(() => {
+    if (playbackError) {
+      console.error("Audio playback error:", playbackError);
+      toast({
+        type: "error",
+        title: "Playback Error",
+        description: playbackError,
+      });
+    }
+  }, [playbackError, toast]);
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(0);
+  const offset = currentPage * PAGE_SIZE;
+
   // Fetch recordings via React Query - auto-updates via event bridge
   const {
-    data: recordings = [],
+    data: paginatedResponse,
     isLoading: loading,
     error: queryError,
     refetch,
   } = useQuery({
-    queryKey: queryKeys.tauri.listRecordings,
-    queryFn: () => invoke<RecordingInfo[]>("list_recordings"),
+    queryKey: queryKeys.tauri.listRecordings(PAGE_SIZE, offset),
+    queryFn: () => invoke<PaginatedRecordingsResponse>("list_recordings", { limit: PAGE_SIZE, offset }),
   });
+
+  const recordings = paginatedResponse?.recordings ?? [];
+  const totalCount = paginatedResponse?.total_count ?? 0;
+  const hasMore = paginatedResponse?.has_more ?? false;
+  const totalPages = Math.ceil(totalCount / PAGE_SIZE);
 
   const error = queryError ? (queryError instanceof Error ? queryError.message : String(queryError)) : null;
 
@@ -59,9 +94,7 @@ export function Recordings(_props: RecordingsProps) {
   // Transcribing state
   const [transcribingPath, setTranscribingPath] = useState<string | null>(null);
 
-  // Playing state
-  const [playingPath, setPlayingPath] = useState<string | null>(null);
-
+  
   // Filter and sort recordings
   const filteredRecordings = useMemo(() => {
     let result = [...recordings];
@@ -107,17 +140,15 @@ export function Recordings(_props: RecordingsProps) {
   };
 
   const handlePlay = async (filePath: string) => {
-    // For now, just toggle play state - actual audio playback would require more integration
-    setPlayingPath((current) => (current === filePath ? null : filePath));
-    // Could integrate with an audio player here
+    await togglePlayback(filePath);
   };
 
   const handleTranscribe = async (filePath: string) => {
     setTranscribingPath(filePath);
     try {
       await invoke<string>("transcribe_file", { filePath });
-      // Invalidate to refetch with updated transcription
-      await queryClient.invalidateQueries({ queryKey: queryKeys.tauri.listRecordings });
+      // Invalidate all pages to refetch with updated transcription
+      await queryClient.invalidateQueries({ queryKey: ["tauri", "list_recordings"] });
       toast({
         type: "success",
         title: "Transcription complete",
@@ -169,8 +200,8 @@ export function Recordings(_props: RecordingsProps) {
     const recording = recordings.find((r) => r.file_path === filePath);
     try {
       await invoke("delete_recording", { filePath });
-      // Invalidate to refetch without the deleted recording
-      await queryClient.invalidateQueries({ queryKey: queryKeys.tauri.listRecordings });
+      // Invalidate all pages to refetch without the deleted recording
+      await queryClient.invalidateQueries({ queryKey: ["tauri", "list_recordings"] });
       setDeleteConfirmPath(null);
       if (expandedPath === filePath) {
         setExpandedPath(null);
@@ -308,7 +339,7 @@ export function Recordings(_props: RecordingsProps) {
       </div>
 
       {/* Recording List */}
-      {recordings.length === 0 ? (
+      {totalCount === 0 ? (
         <RecordingsEmptyState onStartRecording={handleStartRecording} />
       ) : filteredRecordings.length === 0 ? (
         <Card className="text-center py-8">
@@ -331,30 +362,66 @@ export function Recordings(_props: RecordingsProps) {
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-2" role="list" aria-label="Recordings list">
-          {filteredRecordings.map((recording) => (
-            <RecordingItem
-              key={recording.file_path}
-              recording={recording}
-              isExpanded={expandedPath === recording.file_path}
-              onToggleExpand={() => handleToggleExpand(recording.file_path)}
-              onPlay={() => handlePlay(recording.file_path)}
-              onTranscribe={() => handleTranscribe(recording.file_path)}
-              onCopyText={() => handleCopyText(recording)}
-              onOpenFile={() => handleOpenFile(recording.file_path)}
-              onDelete={() => setDeleteConfirmPath(recording.file_path)}
-              isPlaying={playingPath === recording.file_path}
-              isTranscribing={transcribingPath === recording.file_path}
-              isDeleting={deleteConfirmPath === recording.file_path}
-              onConfirmDelete={() => handleDelete(recording.file_path)}
-              onCancelDelete={() => setDeleteConfirmPath(null)}
-            />
-          ))}
-        </div>
+        <>
+          <div className="space-y-2" role="list" aria-label="Recordings list">
+            {filteredRecordings.map((recording) => (
+              <RecordingItem
+                key={recording.file_path}
+                recording={recording}
+                isExpanded={expandedPath === recording.file_path}
+                onToggleExpand={() => handleToggleExpand(recording.file_path)}
+                onPlay={() => handlePlay(recording.file_path)}
+                onTranscribe={() => handleTranscribe(recording.file_path)}
+                onCopyText={() => handleCopyText(recording)}
+                onOpenFile={() => handleOpenFile(recording.file_path)}
+                onDelete={() => setDeleteConfirmPath(recording.file_path)}
+                isPlaying={isAudioPlaying && playingFilePath === recording.file_path}
+                isTranscribing={transcribingPath === recording.file_path}
+                isDeleting={deleteConfirmPath === recording.file_path}
+                onConfirmDelete={() => handleDelete(recording.file_path)}
+                onCancelDelete={() => setDeleteConfirmPath(null)}
+              />
+            ))}
+          </div>
+
+          {/* Pagination Controls */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between pt-4">
+              <p className="text-sm text-text-secondary">
+                Showing {offset + 1}-{Math.min(offset + recordings.length, totalCount)} of {totalCount} recordings
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setCurrentPage((p) => Math.max(0, p - 1))}
+                  disabled={currentPage === 0}
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  Previous
+                </Button>
+                <span className="text-sm text-text-secondary px-2">
+                  Page {currentPage + 1} of {totalPages}
+                </span>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setCurrentPage((p) => p + 1)}
+                  disabled={!hasMore}
+                  aria-label="Next page"
+                >
+                  Next
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
 }
 
 // Re-export for use by other components
-export { type RecordingInfo, formatDuration, formatDate, formatFileSize } from "./components/RecordingItem";
+export { type RecordingInfo, type PaginatedRecordingsResponse, formatDuration, formatDate, formatFileSize } from "./components/RecordingItem";

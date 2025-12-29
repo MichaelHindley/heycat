@@ -13,6 +13,9 @@ pub struct Recording {
     pub sample_count: u64,
     pub stop_reason: Option<String>,
     pub created_at: __sdk::Timestamp,
+    pub active_window_app_name: Option<String>,
+    pub active_window_bundle_id: Option<String>,
+    pub active_window_title: Option<String>,
 }
 
 impl __sdk::InModule for Recording {

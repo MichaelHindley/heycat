@@ -693,6 +693,12 @@ pub struct RecordingRecord {
     pub sample_count: u64,
     pub stop_reason: Option<StopReason>,
     pub created_at: String, // ISO 8601 format
+    /// App name of the active window when recording started
+    pub active_window_app_name: Option<String>,
+    /// Bundle ID of the active window when recording started
+    pub active_window_bundle_id: Option<String>,
+    /// Window title of the active window when recording started
+    pub active_window_title: Option<String>,
 }
 
 /// Error type for recording operations
@@ -769,6 +775,9 @@ impl SpacetimeClient {
         duration_secs: f64,
         sample_count: u64,
         stop_reason: Option<StopReason>,
+        active_window_app_name: Option<String>,
+        active_window_bundle_id: Option<String>,
+        active_window_title: Option<String>,
     ) -> Result<RecordingRecord, RecordingStoreError> {
         let conn = self
             .connection
@@ -784,6 +793,9 @@ impl SpacetimeClient {
                 duration_secs,
                 sample_count,
                 stop_reason_str.clone(),
+                active_window_app_name.clone(),
+                active_window_bundle_id.clone(),
+                active_window_title.clone(),
             )
             .map_err(|e| RecordingStoreError::PersistenceError(e.to_string()))?;
 
@@ -794,6 +806,9 @@ impl SpacetimeClient {
             sample_count,
             stop_reason,
             created_at: chrono::Utc::now().to_rfc3339(),
+            active_window_app_name,
+            active_window_bundle_id,
+            active_window_title,
         })
     }
 
@@ -859,6 +874,9 @@ fn convert_sdb_recording(sdb_recording: &SdbRecording) -> RecordingRecord {
         sample_count: sdb_recording.sample_count,
         stop_reason,
         created_at: sdb_recording.created_at.to_string(),
+        active_window_app_name: sdb_recording.active_window_app_name.clone(),
+        active_window_bundle_id: sdb_recording.active_window_bundle_id.clone(),
+        active_window_title: sdb_recording.active_window_title.clone(),
     }
 }
 

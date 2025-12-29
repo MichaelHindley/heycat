@@ -22,6 +22,7 @@ use crate::voice_commands::executor::ActionDispatcher;
 use crate::voice_commands::matcher::{CommandMatcher, MatchResult};
 use crate::voice_commands::registry::CommandRegistry;
 use crate::parakeet::{SharedTranscriptionModel, TranscriptionService};
+use crate::spacetimedb::SpacetimeClient;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -330,6 +331,8 @@ pub struct HotkeyIntegration<R: RecordingEventEmitter, T: TranscriptionEventEmit
     app_handle: Option<AppHandle>,
     /// Directory for saving recordings (supports worktree isolation)
     recordings_dir: std::path::PathBuf,
+    /// Optional SpacetimeDB client for storing recordings with metadata
+    spacetimedb_client: Option<Arc<Mutex<SpacetimeClient>>>,
 
     // === Escape Key Runtime State ===
     /// Whether Escape key is currently registered (to track cleanup)
@@ -364,6 +367,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
             app_handle: None,
             recordings_dir: crate::paths::get_recordings_dir(None)
                 .unwrap_or_else(|_| std::path::PathBuf::from(".").join("heycat").join("recordings")),
+            spacetimedb_client: None,
             // Escape key runtime state
             escape_registered: Arc::new(AtomicBool::new(false)),
             double_tap_detector: None,
@@ -381,6 +385,12 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
     /// Add recordings directory for worktree-aware recording storage (builder pattern)
     pub fn with_recordings_dir(mut self, recordings_dir: std::path::PathBuf) -> Self {
         self.recordings_dir = recordings_dir;
+        self
+    }
+
+    /// Add SpacetimeDB client for storing recordings with metadata (builder pattern)
+    pub fn with_spacetimedb_client(mut self, client: Arc<Mutex<SpacetimeClient>>) -> Self {
+        self.spacetimedb_client = Some(client);
         self
     }
 
@@ -730,6 +740,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
             // App integration
             app_handle: None,
             recordings_dir: std::env::temp_dir().join("heycat-test-recordings"),
+            spacetimedb_client: None,
             // Escape key runtime state
             escape_registered: Arc::new(AtomicBool::new(false)),
             double_tap_detector: None,
@@ -837,6 +848,38 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
                             "Recording stopped: {} samples, {:.2}s duration",
                             metadata.sample_count, metadata.duration_secs
                         );
+
+                        // Store recording in SpacetimeDB with active window context
+                        if let Some(ref client) = self.spacetimedb_client {
+                            let (app_name, bundle_id, title) = match crate::window_context::get_active_window() {
+                                Ok(info) => (Some(info.app_name), info.bundle_id, info.window_title),
+                                Err(e) => {
+                                    crate::debug!("Could not get active window info: {}", e);
+                                    (None, None, None)
+                                }
+                            };
+
+                            if let Ok(client_guard) = client.lock() {
+                                if client_guard.is_connected() {
+                                    let recording_id = uuid::Uuid::new_v4().to_string();
+                                    if let Err(e) = client_guard.add_recording(
+                                        recording_id,
+                                        metadata.file_path.clone(),
+                                        metadata.duration_secs,
+                                        metadata.sample_count as u64,
+                                        metadata.stop_reason.clone(),
+                                        app_name,
+                                        bundle_id,
+                                        title,
+                                    ) {
+                                        crate::warn!("Failed to store recording in SpacetimeDB: {}", e);
+                                    } else {
+                                        crate::debug!("Recording stored in SpacetimeDB");
+                                    }
+                                }
+                            }
+                        }
+
                         // Clone file_path before metadata is moved
                         let file_path_for_transcription = metadata.file_path.clone();
                         self.recording_emitter

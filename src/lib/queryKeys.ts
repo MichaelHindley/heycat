@@ -11,8 +11,9 @@
  */
 export const queryKeys = {
   tauri: {
-    /** Query key for list_recordings command */
-    listRecordings: ["tauri", "list_recordings"] as const,
+    /** Query key factory for list_recordings command with pagination */
+    listRecordings: (limit?: number, offset?: number) =>
+      ["tauri", "list_recordings", { limit, offset }] as const,
 
     /** Query key for get_recording_state command */
     getRecordingState: ["tauri", "get_recording_state"] as const,
@@ -51,7 +52,7 @@ export type QueryKeys = typeof queryKeys;
 
 /** Type for extracting query key arrays */
 export type TauriQueryKey =
-  | typeof queryKeys.tauri.listRecordings
+  | ReturnType<typeof queryKeys.tauri.listRecordings>
   | typeof queryKeys.tauri.getRecordingState
   | typeof queryKeys.tauri.listAudioDevices
   | ReturnType<typeof queryKeys.tauri.checkModelStatus>;

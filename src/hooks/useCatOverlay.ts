@@ -13,7 +13,9 @@ export type OverlayMode = "hidden" | "recording";
 
 function getOverlayUrl(): string {
   if (import.meta.env.DEV) {
-    return "http://localhost:1420/overlay.html";
+    // Use dynamic port for worktree support (default 1420, worktrees use 1421-1429)
+    const port = import.meta.env.VITE_DEV_PORT || "1420";
+    return `http://localhost:${port}/overlay.html`;
   }
   return "/overlay.html";
 }

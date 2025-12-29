@@ -453,6 +453,9 @@ fn recording_complete_crud_workflow() {
             5.5,
             88200,
             Some(crate::audio::StopReason::SilenceAfterSpeech),
+            Some("Visual Studio Code".to_string()),
+            Some("com.microsoft.VSCode".to_string()),
+            Some("main.rs — heycat".to_string()),
         )
         .expect("add should succeed");
 
@@ -513,7 +516,7 @@ fn recording_delete_by_path() {
 
     // Create recording
     client
-        .add_recording(id.clone(), file_path.clone(), 3.0, 48000, None)
+        .add_recording(id.clone(), file_path.clone(), 3.0, 48000, None, None, None, None)
         .expect("add should succeed");
 
     // Delete by path
@@ -555,6 +558,9 @@ fn transcription_complete_crud_workflow() {
             format!("/tmp/test_for_transcription_{}.wav", test_suffix),
             2.0,
             32000,
+            None,
+            None,
+            None,
             None,
         )
         .expect("recording add should succeed");
