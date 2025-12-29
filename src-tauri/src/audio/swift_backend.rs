@@ -31,12 +31,16 @@ use std::sync::Arc;
 /// the Rust AudioBuffer when stop() is called.
 pub struct SwiftBackend {
     state: CaptureState,
-    /// Buffer to receive audio samples on stop
+    /// Buffer to receive audio samples on stop (kept for API compatibility but no longer used)
     buffer: Option<AudioBuffer>,
     /// Recording diagnostics
     diagnostics: Option<Arc<RecordingDiagnostics>>,
     /// Quality warnings from the last recording
     last_warnings: Vec<QualityWarning>,
+    /// Path to the captured WAV file from the last recording
+    last_capture_file_path: Option<String>,
+    /// Duration of the last recording in milliseconds
+    last_duration_ms: u64,
 }
 
 impl SwiftBackend {
@@ -47,6 +51,8 @@ impl SwiftBackend {
             buffer: None,
             diagnostics: None,
             last_warnings: Vec::new(),
+            last_capture_file_path: None,
+            last_duration_ms: 0,
         }
     }
 
@@ -63,6 +69,13 @@ impl SwiftBackend {
         None
     }
 
+    /// Take the capture file path from the last recording
+    ///
+    /// Returns the path to the temp WAV file and duration. The caller should
+    /// move/rename this file to the final location (instant, no I/O).
+    pub fn take_capture_file(&mut self) -> Option<(String, u64)> {
+        self.last_capture_file_path.take().map(|path| (path, self.last_duration_ms))
+    }
 }
 
 impl Default for SwiftBackend {
@@ -94,12 +107,13 @@ impl AudioCaptureBackend for SwiftBackend {
         self.diagnostics = Some(Arc::new(RecordingDiagnostics::new()));
         self.last_warnings.clear();
 
-        // Ensure engine is running (it may already be running for level monitoring)
+        // Engine should already be running (pre-initialized at app startup)
+        // This is a defensive fallback in case initialization failed or was skipped
         if !swift::audio_engine_is_running() {
-            crate::info!("Starting SharedAudioEngine...");
+            crate::warn!("Engine not pre-initialized, starting now (lazy initialization fallback)");
             match swift::audio_engine_start(device_name.as_deref()) {
                 AudioEngineResult::Ok => {
-                    crate::info!("SharedAudioEngine started successfully");
+                    crate::info!("SharedAudioEngine started successfully (lazy)");
                 }
                 AudioEngineResult::Failed(error) => {
                     crate::error!("Failed to start audio engine: {}", error);
@@ -114,12 +128,15 @@ impl AudioCaptureBackend for SwiftBackend {
                 }
             }
         } else if device_name.is_some() {
-            // Engine running, but device may need switching
+            // Engine already running (expected path), handle device switching if needed
             crate::info!("Engine already running, setting device...");
             if let AudioEngineResult::Failed(error) = swift::audio_engine_set_device(device_name.as_deref()) {
                 crate::warn!("Failed to set device: {}", error);
                 // Don't fail - continue with current device
             }
+        } else {
+            // Engine running with default device - ideal path after pre-initialization
+            crate::info!("Engine already running with default device");
         }
 
         // Start capture mode on the engine
@@ -155,38 +172,29 @@ impl AudioCaptureBackend for SwiftBackend {
             return Ok(());
         }
 
-        // Stop capture and get all samples from Swift
+        // Stop capture and get file path from Swift
         // Note: Engine stays running for continued level monitoring
+        // Note: We don't read the file here - caller will move it directly (instant, no I/O)
         let swift_result = swift::audio_engine_stop_capture();
-        let sample_count = swift_result.samples.len();
         let duration_ms = swift_result.duration_ms;
 
         crate::info!(
-            "[STOP] Captured {} samples ({:.2}s) from SharedAudioEngine",
-            sample_count,
-            duration_ms as f64 / 1000.0
+            "[STOP] Capture complete ({:.2}s), file ready at: {}",
+            duration_ms as f64 / 1000.0,
+            swift_result.file_path
         );
 
-        // Transfer samples to the AudioBuffer
-        if let Some(ref buffer) = self.buffer {
-            let pushed = buffer.push_samples(&swift_result.samples);
-            if pushed < sample_count {
-                crate::warn!(
-                    "Buffer only accepted {}/{} samples (buffer full?)",
-                    pushed,
-                    sample_count
-                );
-            }
-            crate::debug!("Pushed {} samples to buffer", pushed);
-
-            // Record diagnostics
-            if let Some(ref diagnostics) = self.diagnostics {
-                diagnostics.record_output(&swift_result.samples);
-                self.last_warnings = diagnostics.check_warnings();
-            }
+        // Store file path and duration for caller to retrieve via take_capture_file()
+        self.last_capture_file_path = if swift_result.file_path.is_empty() {
+            None
         } else {
-            crate::error!("No buffer available for sample transfer!");
-        }
+            Some(swift_result.file_path)
+        };
+        self.last_duration_ms = duration_ms;
+
+        // Diagnostics skipped - we no longer have samples in memory
+        // Warnings will be empty, which is fine for the optimized path
+        self.last_warnings.clear();
 
         self.state = CaptureState::Stopped;
         self.buffer = None;
@@ -215,6 +223,8 @@ mod tests {
         let backend = SwiftBackend::new();
         assert_eq!(backend.state, CaptureState::Idle);
         assert!(backend.buffer.is_none());
+        assert!(backend.last_capture_file_path.is_none());
+        assert_eq!(backend.last_duration_ms, 0);
     }
 
     #[test]
@@ -229,6 +239,13 @@ mod tests {
         let mut backend = SwiftBackend::new();
         // SwiftBackend doesn't support raw audio
         assert!(backend.take_raw_audio().is_none());
+    }
+
+    #[test]
+    fn test_take_capture_file_initially_none() {
+        let mut backend = SwiftBackend::new();
+        // Initially no capture file
+        assert!(backend.take_capture_file().is_none());
     }
 
     /// Test that start and stop work without panicking

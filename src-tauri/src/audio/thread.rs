@@ -22,6 +22,9 @@ pub struct StopResult {
     pub warnings: Vec<QualityWarning>,
     /// Raw audio data (if debug mode was enabled) with device sample rate
     pub raw_audio: Option<(Vec<f32>, u32)>,
+    /// Path to the captured WAV file with duration in ms
+    /// Caller should move/rename this to the final location (instant, no I/O)
+    pub capture_file: Option<(String, u64)>,
 }
 
 /// Commands sent to the audio thread
@@ -251,13 +254,14 @@ fn audio_thread_main(receiver: Receiver<AudioCommand>) {
                 }
                 stop_signal_rx = None;
 
-                // Get warnings and raw audio from backend (captured during stop)
+                // Get warnings, raw audio, and capture file from backend
                 let warnings = backend.take_warnings();
                 let raw_audio = backend.take_raw_audio();
+                let capture_file = backend.take_capture_file();
 
                 // Send stop result back
                 if let Some(tx) = response_tx {
-                    let _ = tx.send(StopResult { reason, warnings, raw_audio });
+                    let _ = tx.send(StopResult { reason, warnings, raw_audio, capture_file });
                 }
             }
             AudioCommand::Shutdown => {

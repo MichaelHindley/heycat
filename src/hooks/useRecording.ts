@@ -1,4 +1,4 @@
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 import { queryKeys } from "../lib/queryKeys";
 
@@ -59,13 +59,45 @@ export function useRecordingState(): UseRecordingStateResult {
 
 /**
  * Mutation hook for starting recording.
- * Event Bridge handles cache invalidation on recording_started event.
+ * Uses optimistic update for immediate UI response.
+ * Event Bridge handles cache invalidation on recording_started/recording_error events.
  */
 export function useStartRecording() {
+  const queryClient = useQueryClient();
+
   return useMutation({
     mutationFn: (deviceName?: string) =>
       invoke("start_recording", { deviceName }),
-    // No onSuccess invalidation - Event Bridge handles this via recording_started
+    onMutate: async () => {
+      // Cancel any outgoing refetches to prevent overwriting optimistic update
+      await queryClient.cancelQueries({
+        queryKey: queryKeys.tauri.getRecordingState,
+      });
+
+      // Snapshot previous value for potential rollback
+      const previousState = queryClient.getQueryData<RecordingStateResponse>(
+        queryKeys.tauri.getRecordingState
+      );
+
+      // Optimistically update to Recording state for immediate UI response
+      queryClient.setQueryData<RecordingStateResponse>(
+        queryKeys.tauri.getRecordingState,
+        { state: "Recording" }
+      );
+
+      // Return snapshot for rollback on error
+      return { previousState };
+    },
+    onError: (_error, _variables, context) => {
+      // Rollback to previous state on error
+      if (context?.previousState) {
+        queryClient.setQueryData(
+          queryKeys.tauri.getRecordingState,
+          context.previousState
+        );
+      }
+    },
+    // No onSuccess - Event Bridge handles confirmation via recording_started event
   });
 }
 

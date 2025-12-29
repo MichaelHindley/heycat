@@ -181,6 +181,28 @@ pub fn run() {
             let audio_monitor = Arc::new(audio::AudioMonitorHandle::spawn());
             app.manage(audio_monitor.clone());
 
+            // Pre-initialize the audio engine at startup so it's ready for recording
+            // The engine stays running continuously for level monitoring
+            // Use the saved device from settings so recording doesn't need to switch devices
+            let saved_device = {
+                let settings_file = worktree_context
+                    .as_ref()
+                    .map(|ctx| ctx.settings_file_name())
+                    .unwrap_or_else(|| worktree::DEFAULT_SETTINGS_FILE.to_string());
+                app.store(&settings_file)
+                    .ok()
+                    .and_then(|store| store.get("audio.selectedDevice"))
+                    .and_then(|v| v.as_str().map(|s| s.to_string()))
+            };
+            if let Some(ref device) = saved_device {
+                debug!("Pre-initializing audio engine with saved device: {}", device);
+            }
+            if let Err(e) = audio_monitor.init(saved_device) {
+                warn!("Failed to pre-initialize audio engine: {} (will initialize lazily)", e);
+            } else {
+                info!("Audio engine pre-initialized and running");
+            }
+
             // Create shared transcription model (single ~3GB Parakeet model)
             // This model is shared between all transcription consumers
             debug!("Creating SharedTranscriptionModel...");

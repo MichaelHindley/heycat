@@ -71,8 +71,9 @@ pub fn list_audio_devices() -> Vec<SwiftAudioDevice> {
 /// Result of stopping audio capture.
 #[derive(Debug)]
 pub struct AudioCaptureStopResult {
-    /// Captured audio samples at 16kHz mono
-    pub samples: Vec<f32>,
+    /// Path to the temp WAV file containing captured audio (16kHz mono)
+    /// Caller should move/rename this file to the final location
+    pub file_path: String,
     /// Recording duration in milliseconds
     pub duration_ms: u64,
 }
@@ -181,39 +182,24 @@ pub fn audio_engine_start_capture() -> AudioEngineResult {
     }
 }
 
-/// Stop audio capture and retrieve captured samples from temp file.
+/// Stop audio capture and return path to the temp WAV file.
 /// The Swift side writes audio to a temp WAV file to avoid dropped samples.
+/// The caller should move/rename this file to the final location (instant, no I/O).
 pub fn audio_engine_stop_capture() -> AudioCaptureStopResult {
     unsafe {
         let duration_ms = swift_audio_engine_get_duration_ms() as u64;
         let file_path = swift_audio_engine_stop_capture().to_string();
 
-        // Read samples from temp WAV file
-        let samples = if !file_path.is_empty() {
-            match read_wav_samples(&file_path) {
-                Ok(s) => {
-                    crate::debug!("Read {} samples from capture file", s.len());
-                    s
-                }
-                Err(e) => {
-                    crate::error!("Failed to read capture file {}: {}", file_path, e);
-                    Vec::new()
-                }
-            }
-        } else {
+        if file_path.is_empty() {
             crate::warn!("No capture file path returned from Swift");
-            Vec::new()
-        };
-
-        // Clean up temp file
-        if !file_path.is_empty() {
-            if let Err(e) = std::fs::remove_file(&file_path) {
-                crate::warn!("Failed to remove temp capture file: {}", e);
-            }
+        } else {
+            crate::debug!("Capture file ready: {}", file_path);
         }
 
+        // Don't read samples here - caller will move the file directly
+        // This saves ~500ms of file I/O on stop
         AudioCaptureStopResult {
-            samples,
+            file_path,
             duration_ms,
         }
     }
@@ -221,6 +207,8 @@ pub fn audio_engine_stop_capture() -> AudioCaptureStopResult {
 
 /// Read audio samples from a WAV file.
 /// Expects 16kHz mono float32 format (as written by Swift).
+/// Note: No longer used since we moved to file rename approach for efficiency.
+#[allow(dead_code)]
 fn read_wav_samples(path: &str) -> Result<Vec<f32>, String> {
     let reader = hound::WavReader::open(path)
         .map_err(|e| format!("Failed to open WAV file: {}", e))?;
@@ -309,12 +297,18 @@ mod tests {
                         // Capture a tiny bit
                         std::thread::sleep(std::time::Duration::from_millis(100));
 
-                        // Stop capture and get samples
+                        // Stop capture and get file path
                         let stop_result = audio_engine_stop_capture();
 
                         // Duration should be approximately 100ms
                         assert!(stop_result.duration_ms >= 50, "Duration should be at least 50ms");
                         assert!(stop_result.duration_ms <= 500, "Duration should be at most 500ms");
+
+                        // File path should be non-empty
+                        assert!(!stop_result.file_path.is_empty(), "File path should be non-empty");
+
+                        // Clean up temp file
+                        let _ = std::fs::remove_file(&stop_result.file_path);
                     }
                     AudioEngineResult::Failed(_) => {
                         // Expected in CI without audio device

@@ -101,21 +101,16 @@ private class SharedAudioEngineManager {
 
                 // Install tap with explicit format to avoid race condition with device changes
                 let bufferSize: AVAudioFrameCount = 1024
-                var converter: AVAudioConverter?
-                var converterInitialized = false
+
+                // Pre-initialize converter at engine start (not lazily on first buffer)
+                // This moves expensive initialization off the real-time audio thread
+                let converter: AVAudioConverter? =
+                    (inputFormat.sampleRate != targetSampleRate || inputFormat.channelCount != 1)
+                    ? AVAudioConverter(from: inputFormat, to: outputFormat)
+                    : nil
 
                 inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: inputFormat) { [weak self] buffer, _ in
                     guard let self = self else { return }
-
-                    // Lazily initialize converter on first buffer
-                    if !converterInitialized {
-                        let inputFormat = buffer.format
-                        if inputFormat.sampleRate != self.targetSampleRate || inputFormat.channelCount != 1 {
-                            converter = AVAudioConverter(from: inputFormat, to: outputFormat)
-                        }
-                        converterInitialized = true
-                    }
-
                     self.processAudioBuffer(buffer, converter: converter, outputFormat: outputFormat)
                 }
 
@@ -224,20 +219,16 @@ private class SharedAudioEngineManager {
 
             // Install tap with explicit format to avoid race condition with device changes
             let bufferSize: AVAudioFrameCount = 1024
-            var converter: AVAudioConverter?
-            var converterInitialized = false
+
+            // Pre-initialize converter at engine start (not lazily on first buffer)
+            // This moves expensive initialization off the real-time audio thread
+            let converter: AVAudioConverter? =
+                (inputFormat.sampleRate != targetSampleRate || inputFormat.channelCount != 1)
+                ? AVAudioConverter(from: inputFormat, to: outputFormat)
+                : nil
 
             inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: inputFormat) { [weak self] buffer, _ in
                 guard let self = self else { return }
-
-                if !converterInitialized {
-                    let bufferFormat = buffer.format
-                    if bufferFormat.sampleRate != self.targetSampleRate || bufferFormat.channelCount != 1 {
-                        converter = AVAudioConverter(from: bufferFormat, to: outputFormat)
-                    }
-                    converterInitialized = true
-                }
-
                 self.processAudioBuffer(buffer, converter: converter, outputFormat: outputFormat)
             }
 
@@ -266,6 +257,13 @@ private class SharedAudioEngineManager {
                 stateLock.unlock()
                 return false
             }
+
+            // Skip expensive device switch if already using this device
+            // This avoids 350ms of Thread.sleep() calls in switchDevice()
+            if deviceName == currentDeviceName {
+                return true
+            }
+
             return switchDevice(deviceName: deviceName)
         }
     }

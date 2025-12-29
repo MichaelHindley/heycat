@@ -1,9 +1,6 @@
 // Command implementation logic - testable functions separate from Tauri wrappers
 
-use crate::audio::{
-    encode_wav, parse_duration_from_file, AudioThreadHandle, QualityWarning,
-    SystemFileWriter, TARGET_SAMPLE_RATE,
-};
+use crate::audio::{parse_duration_from_file, AudioThreadHandle, QualityWarning, TARGET_SAMPLE_RATE};
 use crate::recording::{AudioData, RecordingManager, RecordingMetadata, RecordingState};
 
 /// Extended result from stop_recording_impl that includes diagnostics
@@ -194,71 +191,83 @@ pub fn stop_recording_impl_extended(
         None
     };
 
-    // Get the actual sample rate before transitioning
-    let sample_rate = manager.get_sample_rate().unwrap_or(TARGET_SAMPLE_RATE);
-    crate::debug!("Sample rate: {}Hz", sample_rate);
+    // Extract capture file, stop reason, warnings, and raw audio from result
+    let (capture_file, stop_reason, warnings, raw_audio) = match &stop_result {
+        Some(result) => (
+            result.capture_file.clone(),
+            result.reason.clone(),
+            result.warnings.clone(),
+            result.raw_audio.clone(),
+        ),
+        None => (None, None, Vec::new(), None),
+    };
 
-    // Transition to Processing
+    let _ = return_to_listening; // Suppress unused warning (kept for API compatibility)
+
+    // Transition to Processing (required state machine step)
     manager
         .transition_to(RecordingState::Processing)
         .map_err(|e| {
             crate::error!("Failed to transition to Processing: {:?}", e);
             "Failed to process recording."
         })?;
-    crate::debug!("Transitioned to Processing state");
 
-    // Get the audio buffer and encode
-    let buffer = manager
-        .get_audio_buffer()
-        .map_err(|_| "No recorded audio available.")?;
-
-    // CRITICAL: Drain ring buffer to accumulated before encoding
-    // The audio callback pushes to the lock-free ring buffer, but lock() only
-    // returns the accumulated Vec. Without draining, samples stay in ring buffer.
-    let drained = buffer.drain_samples();
-    crate::debug!("Drained {} samples from ring buffer before WAV encoding", drained.len());
-
-    // Clone samples and release lock before encoding - we can't hold the lock
-    // across the WAV encoding I/O operation (it would block other threads)
-    let samples = buffer
-        .lock()
-        .map_err(|_| "Unable to access recorded audio.")?
-        .clone();
-    let sample_count = samples.len();
-    crate::debug!("Got {} samples from buffer", sample_count);
-
-    // Encode WAV if we have samples
-    let file_path = if !samples.is_empty() {
-        let writer = SystemFileWriter::new(recordings_dir);
-        let path = encode_wav(&samples, sample_rate, &writer)
+    // Move temp file to final location (instant, no I/O - just a rename)
+    // Falls back to encoding from buffer if no capture file (for tests)
+    let (file_path, duration_secs, sample_count) = if let Some((temp_path, duration_ms)) = capture_file {
+        // Fast path: Rename temp file directly (no re-encoding)
+        // Transition to Idle immediately since file rename is instant
+        manager
+            .transition_to(RecordingState::Idle)
             .map_err(|e| {
-                crate::error!("WAV encoding failed: {:?}", e);
-                "Failed to save the recording. Please check disk space and try again."
+                crate::error!("Failed to transition to Idle: {:?}", e);
+                "Failed to complete recording."
             })?;
-        crate::debug!("WAV encoded to: {}", path);
-        path
-    } else {
-        crate::debug!("No samples to encode");
-        // No samples recorded - return placeholder
-        String::new()
-    };
 
-    // Calculate duration using actual sample rate
-    let duration_secs = sample_count as f64 / sample_rate as f64;
+        // Release the state lock immediately
+        drop(manager);
+        crate::debug!("State lock released");
 
-    // Transition to Idle (return_to_listening parameter is ignored, kept for API compatibility)
-    let _ = return_to_listening; // Suppress unused warning
-    manager
-        .transition_to(RecordingState::Idle)
-        .map_err(|e| {
-            crate::error!("Failed to transition to Idle: {:?}", e);
-            "Failed to complete recording."
+        // Ensure output directory exists
+        if !recordings_dir.exists() {
+            std::fs::create_dir_all(&recordings_dir).map_err(|e| {
+                crate::error!("Failed to create recordings dir: {}", e);
+                "Failed to save recording: cannot create recordings directory."
+            })?;
+        }
+
+        // Generate final filename
+        let now = chrono::Utc::now();
+        let filename = format!("recording-{}.wav", now.format("%Y-%m-%d-%H%M%S"));
+        let final_path = recordings_dir.join(&filename);
+        let final_path_str = final_path.to_string_lossy().to_string();
+
+        // Rename temp file to final location (instant - same filesystem)
+        crate::debug!("Moving capture file: {} -> {}", temp_path, final_path_str);
+        std::fs::rename(&temp_path, &final_path).map_err(|e| {
+            crate::error!("Failed to move capture file: {}", e);
+            // Try to clean up temp file on error
+            let _ = std::fs::remove_file(&temp_path);
+            "Failed to save the recording. Please check disk space and try again."
         })?;
+        crate::debug!("Capture file moved successfully");
 
-    // Extract stop reason, warnings, and raw audio from result
-    let (stop_reason, warnings, raw_audio) = match stop_result {
-        Some(result) => (result.reason, result.warnings, result.raw_audio),
-        None => (None, Vec::new(), None),
+        // Calculate sample count from duration (16kHz)
+        let sample_count = ((duration_ms as f64 / 1000.0) * TARGET_SAMPLE_RATE as f64) as usize;
+        let duration_secs = duration_ms as f64 / 1000.0;
+
+        (final_path_str, duration_secs, sample_count)
+    } else {
+        // No capture file - transition to Idle and return empty
+        crate::debug!("No capture file available");
+        manager
+            .transition_to(RecordingState::Idle)
+            .map_err(|e| {
+                crate::error!("Failed to transition to Idle: {:?}", e);
+                "Failed to complete recording."
+            })?;
+        drop(manager);
+        (String::new(), 0.0, 0)
     };
 
     crate::info!("Recording stopped: {} samples, {:.2}s, stop_reason={:?}, warnings={}",

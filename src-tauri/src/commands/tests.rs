@@ -136,51 +136,10 @@ fn test_stop_recording_returns_metadata_with_zero_samples() {
     assert!(metadata.file_path.is_empty()); // No file when no samples
 }
 
-#[test]
-fn test_stop_recording_returns_metadata_with_samples() {
-    let state = create_test_state();
-    start_recording_impl(&state, None, true, None).unwrap();
-
-    // Add samples to the buffer manually
-    // TARGET_SAMPLE_RATE is 16000, so 16000 samples = 1 second
-    {
-        let manager = state.lock().unwrap();
-        let buffer = manager.get_audio_buffer().unwrap();
-        let mut guard = buffer.lock().unwrap();
-        guard.extend_from_slice(&vec![0.5f32; 16000]); // 1 second at 16kHz
-    }
-
-    let result = stop_recording_impl(&state, None, false, test_recordings_dir());
-
-    // Result should be Ok - the actual file is created in the system recordings dir
-    // We don't clean it up here to avoid parallel test conflicts
-    assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
-    let metadata = result.unwrap();
-    assert_eq!(metadata.sample_count, 16000);
-    assert!((metadata.duration_secs - 1.0).abs() < 0.001);
-    assert!(metadata.file_path.contains(".wav"));
-}
-
-#[test]
-fn test_stop_recording_returns_correct_duration() {
-    let state = create_test_state();
-    start_recording_impl(&state, None, true, None).unwrap();
-
-    // Add 2 seconds of samples at 16kHz
-    {
-        let manager = state.lock().unwrap();
-        let buffer = manager.get_audio_buffer().unwrap();
-        let mut guard = buffer.lock().unwrap();
-        guard.extend_from_slice(&vec![0.5f32; 32000]); // 2 seconds at 16kHz
-    }
-
-    let result = stop_recording_impl(&state, None, false, test_recordings_dir());
-    assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
-    let metadata = result.unwrap();
-
-    assert_eq!(metadata.sample_count, 32000);
-    assert!((metadata.duration_secs - 2.0).abs() < 0.001);
-}
+// Note: Tests that pushed samples directly to the buffer were removed.
+// The new architecture gets audio data directly from Swift capture files,
+// not from the Rust buffer. Use integration tests with real audio capture
+// to test the full recording flow.
 
 // =============================================================================
 // Full Cycle Tests
@@ -432,33 +391,9 @@ fn test_recording_info_struct_serializes() {
     assert!(json_str.contains("1024"));
 }
 
-#[test]
-fn test_list_recordings_after_stop_recording() {
-    // After creating a recording via stop_recording_impl, list_recordings should find it
-    let state = create_test_state();
-    start_recording_impl(&state, None, true, None).unwrap();
-
-    // Add samples to create a valid recording
-    {
-        let manager = state.lock().unwrap();
-        let buffer = manager.get_audio_buffer().unwrap();
-        let mut guard = buffer.lock().unwrap();
-        guard.extend_from_slice(&vec![0.5f32; 44100]); // 1 second
-    }
-
-    let metadata = stop_recording_impl(&state, None, false, test_recordings_dir()).unwrap();
-
-    // Now list should include at least this recording
-    let result = list_recordings_impl(test_recordings_dir());
-    assert!(result.is_ok());
-    let recordings = result.unwrap();
-
-    // Find our recording by path
-    let found = recordings
-        .iter()
-        .any(|r| r.file_path == metadata.file_path);
-    assert!(found, "Created recording should be in list");
-}
+// Note: test_list_recordings_after_stop_recording was removed.
+// It relied on pushing samples to the buffer, which is no longer used.
+// The new architecture gets audio data directly from Swift capture files.
 
 // =============================================================================
 // Error Handling Tests
