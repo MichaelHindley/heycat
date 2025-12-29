@@ -1,7 +1,19 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactNode } from "react";
 import { Recordings, type RecordingInfo } from "./Recordings";
+
+// Create wrapper with QueryClientProvider for React Query hooks
+function createWrapper() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  );
+}
 
 // Mock Tauri invoke
 const mockInvoke = vi.fn();
@@ -80,7 +92,7 @@ describe("Recordings", () => {
   });
 
   it("renders page with header, search, filter, and sort", async () => {
-    render(<Recordings />);
+    render(<Recordings />, { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(
@@ -99,7 +111,7 @@ describe("Recordings", () => {
   it("shows empty state when no recordings exist", async () => {
     mockInvoke.mockResolvedValue([]);
 
-    render(<Recordings />);
+    render(<Recordings />, { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(screen.getByText("No recordings yet")).toBeDefined();
@@ -116,7 +128,7 @@ describe("Recordings", () => {
   it("displays recordings list with play button, filename, and metadata", async () => {
     mockInvoke.mockResolvedValue(sampleRecordings);
 
-    render(<Recordings />);
+    render(<Recordings />, { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(screen.getByText("recording_2024-01-15.wav")).toBeDefined();
@@ -134,7 +146,7 @@ describe("Recordings", () => {
   it("shows transcription status badges correctly", async () => {
     mockInvoke.mockResolvedValue(sampleRecordings);
 
-    render(<Recordings />);
+    render(<Recordings />, { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(screen.getByText("recording_2024-01-15.wav")).toBeDefined();
@@ -152,7 +164,7 @@ describe("Recordings", () => {
     const user = userEvent.setup();
     mockInvoke.mockResolvedValue(sampleRecordings);
 
-    render(<Recordings />);
+    render(<Recordings />, { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(screen.getByText("recording_2024-01-15.wav")).toBeDefined();
@@ -174,7 +186,7 @@ describe("Recordings", () => {
     const user = userEvent.setup();
     mockInvoke.mockResolvedValue(sampleRecordings);
 
-    render(<Recordings />);
+    render(<Recordings />, { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(screen.getByText("recording_2024-01-15.wav")).toBeDefined();
@@ -196,7 +208,7 @@ describe("Recordings", () => {
     const user = userEvent.setup();
     mockInvoke.mockResolvedValue(sampleRecordings);
 
-    render(<Recordings />);
+    render(<Recordings />, { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(screen.getByText("recording_2024-01-15.wav")).toBeDefined();
@@ -215,7 +227,7 @@ describe("Recordings", () => {
     const user = userEvent.setup();
     mockInvoke.mockResolvedValue(sampleRecordings);
 
-    render(<Recordings />);
+    render(<Recordings />, { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(screen.getByText("recording_2024-01-15.wav")).toBeDefined();
@@ -248,7 +260,7 @@ describe("Recordings", () => {
     const user = userEvent.setup();
     mockInvoke.mockResolvedValue(sampleRecordings);
 
-    render(<Recordings />);
+    render(<Recordings />, { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(screen.getByText("meeting_notes.wav")).toBeDefined();
@@ -278,7 +290,7 @@ describe("Recordings", () => {
       clipboard: mockClipboard,
     });
 
-    render(<Recordings />);
+    render(<Recordings />, { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(screen.getByText("recording_2024-01-15.wav")).toBeDefined();
@@ -315,7 +327,7 @@ describe("Recordings", () => {
     mockInvoke.mockResolvedValue(sampleRecordings);
     mockOpenPath.mockResolvedValue(undefined);
 
-    render(<Recordings />);
+    render(<Recordings />, { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(screen.getByText("recording_2024-01-15.wav")).toBeDefined();
@@ -340,7 +352,7 @@ describe("Recordings", () => {
       .mockResolvedValueOnce(sampleRecordings) // Initial load
       .mockResolvedValueOnce(undefined); // delete_recording response
 
-    render(<Recordings />);
+    render(<Recordings />, { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(screen.getByText("recording_2024-01-15.wav")).toBeDefined();
@@ -380,7 +392,7 @@ describe("Recordings", () => {
     const user = userEvent.setup();
     mockInvoke.mockResolvedValue(sampleRecordings);
 
-    render(<Recordings />);
+    render(<Recordings />, { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(screen.getByText("recording_2024-01-15.wav")).toBeDefined();
@@ -417,7 +429,7 @@ describe("Recordings", () => {
       .mockResolvedValueOnce(sampleRecordings) // Initial load
       .mockResolvedValueOnce("Transcribed text from audio"); // transcribe_file response
 
-    render(<Recordings />);
+    render(<Recordings />, { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(screen.getByText("meeting_notes.wav")).toBeDefined();
@@ -444,7 +456,7 @@ describe("Recordings", () => {
   it("displays error state when loading fails", async () => {
     mockInvoke.mockRejectedValue(new Error("Network error"));
 
-    render(<Recordings />);
+    render(<Recordings />, { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(screen.getByRole("alert")).toBeDefined();
@@ -460,7 +472,7 @@ describe("Recordings", () => {
       .mockRejectedValueOnce(new Error("Network error"))
       .mockResolvedValueOnce(sampleRecordings);
 
-    render(<Recordings />);
+    render(<Recordings />, { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(screen.getByText("Network error")).toBeDefined();
@@ -477,7 +489,7 @@ describe("Recordings", () => {
     const user = userEvent.setup();
     mockInvoke.mockResolvedValue([]);
 
-    render(<Recordings />);
+    render(<Recordings />, { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(screen.getByText("No recordings yet")).toBeDefined();
@@ -491,7 +503,7 @@ describe("Recordings", () => {
   it("sorts recordings by newest first by default", async () => {
     mockInvoke.mockResolvedValue(sampleRecordings);
 
-    render(<Recordings />);
+    render(<Recordings />, { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(screen.getByText("recording_2024-01-15.wav")).toBeDefined();
@@ -513,7 +525,7 @@ describe("Recordings", () => {
     const user = userEvent.setup();
     mockInvoke.mockResolvedValue(sampleRecordings);
 
-    render(<Recordings />);
+    render(<Recordings />, { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(screen.getByText("recording_2024-01-15.wav")).toBeDefined();
@@ -547,7 +559,7 @@ describe("Recordings", () => {
       () => new Promise(() => {}) // Never resolves
     );
 
-    render(<Recordings />);
+    render(<Recordings />, { wrapper: createWrapper() });
 
     // Should show loading state with skeleton elements
     expect(screen.getByRole("status", { name: /loading recordings/i })).toBeDefined();

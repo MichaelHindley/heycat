@@ -1,7 +1,19 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactNode } from "react";
 import { Dashboard } from "./Dashboard";
+
+// Create wrapper with QueryClientProvider for React Query hooks
+function createWrapper() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  );
+}
 
 // Mock Tauri invoke
 const mockInvoke = vi.fn();
@@ -55,7 +67,7 @@ describe("Dashboard", () => {
   });
 
   it("renders dashboard with all sections", async () => {
-    render(<Dashboard />);
+    render(<Dashboard />, { wrapper: createWrapper() });
 
     // Page header
     expect(screen.getByRole("heading", { name: "Dashboard" })).toBeDefined();
@@ -103,7 +115,7 @@ describe("Dashboard", () => {
       },
     ]);
 
-    render(<Dashboard />);
+    render(<Dashboard />, { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(screen.getByText("2 recordings")).toBeDefined();
@@ -113,7 +125,7 @@ describe("Dashboard", () => {
   it("shows empty state when no recordings exist", async () => {
     mockInvoke.mockResolvedValue([]);
 
-    render(<Dashboard />);
+    render(<Dashboard />, { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(
@@ -133,7 +145,7 @@ describe("Dashboard", () => {
       },
     ]);
 
-    render(<Dashboard />);
+    render(<Dashboard />, { wrapper: createWrapper() });
 
     await waitFor(() => {
       // Filename visible
@@ -149,7 +161,7 @@ describe("Dashboard", () => {
 
   it("start recording button triggers recording", async () => {
     const user = userEvent.setup();
-    render(<Dashboard />);
+    render(<Dashboard />, { wrapper: createWrapper() });
 
     await user.click(screen.getByRole("button", { name: "Start Recording" }));
     expect(mockStartRecording).toHaveBeenCalled();
@@ -157,7 +169,7 @@ describe("Dashboard", () => {
 
   it("download model button triggers download", async () => {
     const user = userEvent.setup();
-    render(<Dashboard />);
+    render(<Dashboard />, { wrapper: createWrapper() });
 
     await user.click(screen.getByRole("button", { name: "Download Model" }));
     expect(mockDownloadModel).toHaveBeenCalledWith("tdt");
@@ -167,7 +179,7 @@ describe("Dashboard", () => {
     const user = userEvent.setup();
     const handleNavigate = vi.fn();
 
-    render(<Dashboard onNavigate={handleNavigate} />);
+    render(<Dashboard onNavigate={handleNavigate} />, { wrapper: createWrapper() });
 
     // Click recordings card
     const recordingsCard = screen.getByText("Recordings").closest("[role=button]");
@@ -194,7 +206,7 @@ describe("Dashboard", () => {
       },
     ]);
 
-    render(<Dashboard onNavigate={handleNavigate} />);
+    render(<Dashboard onNavigate={handleNavigate} />, { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(screen.getByText("View all")).toBeDefined();

@@ -1,7 +1,19 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactNode } from "react";
 import { Settings } from "./Settings";
+
+// Create wrapper with QueryClientProvider for React Query hooks
+function createWrapper() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  );
+}
 
 // Mock Tauri invoke
 const mockInvoke = vi.fn().mockImplementation((command: string) => {
@@ -100,7 +112,7 @@ describe("Settings Page", () => {
 
   describe("Tab Navigation", () => {
     it("renders settings page with all tabs", () => {
-      render(<Settings />);
+      render(<Settings />, { wrapper: createWrapper() });
 
       expect(screen.getByRole("heading", { name: "Settings" })).toBeDefined();
       expect(screen.getByRole("tab", { name: "General" })).toBeDefined();
@@ -110,7 +122,7 @@ describe("Settings Page", () => {
     });
 
     it("shows General tab content by default", () => {
-      render(<Settings />);
+      render(<Settings />, { wrapper: createWrapper() });
 
       // General tab should be active
       const generalTab = screen.getByRole("tab", { name: "General" });
@@ -123,7 +135,7 @@ describe("Settings Page", () => {
 
     it("switches to Audio tab when clicked", async () => {
       const user = userEvent.setup();
-      render(<Settings />);
+      render(<Settings />, { wrapper: createWrapper() });
 
       await user.click(screen.getByRole("tab", { name: "Audio" }));
 
@@ -138,7 +150,7 @@ describe("Settings Page", () => {
 
     it("switches to Transcription tab when clicked", async () => {
       const user = userEvent.setup();
-      render(<Settings />);
+      render(<Settings />, { wrapper: createWrapper() });
 
       await user.click(screen.getByRole("tab", { name: "Transcription" }));
 
@@ -148,7 +160,7 @@ describe("Settings Page", () => {
 
     it("switches to About tab when clicked", async () => {
       const user = userEvent.setup();
-      render(<Settings />);
+      render(<Settings />, { wrapper: createWrapper() });
 
       await user.click(screen.getByRole("tab", { name: "About" }));
 
@@ -161,7 +173,7 @@ describe("Settings Page", () => {
     it("keeps tab state internal without triggering navigation", async () => {
       const user = userEvent.setup();
       const handleNavigate = vi.fn();
-      render(<Settings onNavigate={handleNavigate} />);
+      render(<Settings onNavigate={handleNavigate} />, { wrapper: createWrapper() });
 
       await user.click(screen.getByRole("tab", { name: "Audio" }));
 
@@ -175,7 +187,7 @@ describe("Settings Page", () => {
   describe("General Tab", () => {
     it("opens shortcut editor when Change button is clicked", async () => {
       const user = userEvent.setup();
-      render(<Settings />);
+      render(<Settings />, { wrapper: createWrapper() });
 
       await user.click(screen.getByRole("button", { name: "Change" }));
 
@@ -187,7 +199,7 @@ describe("Settings Page", () => {
   describe("Audio Tab", () => {
     it("displays audio device selection", async () => {
       const user = userEvent.setup();
-      render(<Settings />);
+      render(<Settings />, { wrapper: createWrapper() });
 
       await user.click(screen.getByRole("tab", { name: "Audio" }));
 
@@ -197,7 +209,7 @@ describe("Settings Page", () => {
 
     it("shows audio level meter", async () => {
       const user = userEvent.setup();
-      render(<Settings />);
+      render(<Settings />, { wrapper: createWrapper() });
 
       await user.click(screen.getByRole("tab", { name: "Audio" }));
 
@@ -207,7 +219,7 @@ describe("Settings Page", () => {
 
     it("refreshes devices when Refresh button is clicked", async () => {
       const user = userEvent.setup();
-      render(<Settings />);
+      render(<Settings />, { wrapper: createWrapper() });
 
       await user.click(screen.getByRole("tab", { name: "Audio" }));
       await user.click(screen.getByRole("button", { name: /Refresh/i }));
@@ -225,7 +237,7 @@ describe("Settings Page", () => {
   describe("Transcription Tab", () => {
     it("shows model status and download button when not installed", async () => {
       const user = userEvent.setup();
-      render(<Settings />);
+      render(<Settings />, { wrapper: createWrapper() });
 
       await user.click(screen.getByRole("tab", { name: "Transcription" }));
 
@@ -238,7 +250,7 @@ describe("Settings Page", () => {
 
     it("triggers model download when button is clicked", async () => {
       const user = userEvent.setup();
-      render(<Settings />);
+      render(<Settings />, { wrapper: createWrapper() });
 
       await user.click(screen.getByRole("tab", { name: "Transcription" }));
       await user.click(screen.getByRole("button", { name: /Download Model/i }));
@@ -256,7 +268,7 @@ describe("Settings Page", () => {
   describe("About Tab", () => {
     it("displays app information and links", async () => {
       const user = userEvent.setup();
-      render(<Settings />);
+      render(<Settings />, { wrapper: createWrapper() });
 
       await user.click(screen.getByRole("tab", { name: "About" }));
 

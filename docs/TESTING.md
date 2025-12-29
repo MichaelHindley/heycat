@@ -293,7 +293,7 @@ This threshold reflects our smoke-testing philosophy: cover the most valuable pa
 
 ### Running Coverage
 
-Remember to only ues the tcr skill to run commands.
+IMPORTANT: Remember to only use the tcr skill to run commands. This is not ceremeny, this enforces our development discipline and is not optional.
 
 ```bash
 # Frontend
