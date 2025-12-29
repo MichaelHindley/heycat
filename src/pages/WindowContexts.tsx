@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
-import { Plus, Search, Layers, Pencil, Trash2, Check, X, BookText } from "lucide-react";
+import { Plus, Search, Layers, Pencil, Trash2, Check, X, BookText, ChevronDown, ChevronUp, HelpCircle } from "lucide-react";
 import { Card, CardContent, Button, Input, FormField, Toggle, Combobox, MultiSelect } from "../components/ui";
 import type { ComboboxOption, MultiSelectOption } from "../components/ui";
 import { useToast } from "../components/overlays";
@@ -174,28 +174,22 @@ function AddContextForm({ onSubmit, runningApps, dictionaryEntries }: AddContext
             </FormField>
           </div>
           <div className="flex gap-3 items-center mt-3">
-            <FormField label="Command Mode" help="Merge: add to global commands. Replace: use only context commands." className="flex-1">
-              <select
-                value={commandMode}
-                onChange={(e) => setCommandMode(e.target.value as OverrideMode)}
-                className="w-full px-3 py-2 rounded-md border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-text-primary"
-                aria-label="Command mode"
-              >
-                <option value="merge">Merge</option>
-                <option value="replace">Replace</option>
-              </select>
-            </FormField>
-            <FormField label="Dictionary Mode" help="Merge: add to global dictionary. Replace: use only context dictionary." className="flex-1">
-              <select
-                value={dictionaryMode}
-                onChange={(e) => setDictionaryMode(e.target.value as OverrideMode)}
-                className="w-full px-3 py-2 rounded-md border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-text-primary"
-                aria-label="Dictionary mode"
-              >
-                <option value="merge">Merge</option>
-                <option value="replace">Replace</option>
-              </select>
-            </FormField>
+            <div className="flex items-center gap-2">
+              <Toggle
+                checked={commandMode === "replace"}
+                onCheckedChange={(checked) => setCommandMode(checked ? "replace" : "merge")}
+                aria-label="Commands context only mode"
+              />
+              <span className="text-sm text-text-secondary">Commands: Context Only</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Toggle
+                checked={dictionaryMode === "replace"}
+                onCheckedChange={(checked) => setDictionaryMode(checked ? "replace" : "merge")}
+                aria-label="Dictionary context only mode"
+              />
+              <span className="text-sm text-text-secondary">Dictionary: Context Only</span>
+            </div>
             <FormField label="Priority" help="Higher values match first." className="w-24">
               <Input
                 type="number"
@@ -312,26 +306,22 @@ function ContextItem({
           </FormField>
         </div>
         <div className="flex gap-3 items-center mt-3">
-          <FormField label="Command Mode" help="Merge: add to global commands. Replace: use only context commands." className="flex-1">
-            <select
-              value={editValues.commandMode}
-              onChange={(e) => onEditChange("commandMode", e.target.value)}
-              className="w-full px-3 py-2 rounded-md border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-text-primary"
-            >
-              <option value="merge">Merge</option>
-              <option value="replace">Replace</option>
-            </select>
-          </FormField>
-          <FormField label="Dictionary Mode" help="Merge: add to global dictionary. Replace: use only context dictionary." className="flex-1">
-            <select
-              value={editValues.dictionaryMode}
-              onChange={(e) => onEditChange("dictionaryMode", e.target.value)}
-              className="w-full px-3 py-2 rounded-md border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-text-primary"
-            >
-              <option value="merge">Merge</option>
-              <option value="replace">Replace</option>
-            </select>
-          </FormField>
+          <div className="flex items-center gap-2">
+            <Toggle
+              checked={editValues.commandMode === "replace"}
+              onCheckedChange={(checked) => onEditChange("commandMode", checked ? "replace" : "merge")}
+              aria-label="Commands context only mode"
+            />
+            <span className="text-sm text-text-secondary">Commands: Context Only</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Toggle
+              checked={editValues.dictionaryMode === "replace"}
+              onCheckedChange={(checked) => onEditChange("dictionaryMode", checked ? "replace" : "merge")}
+              aria-label="Dictionary context only mode"
+            />
+            <span className="text-sm text-text-secondary">Dictionary: Context Only</span>
+          </div>
           <FormField label="Priority" help="Higher values match first." className="w-24">
             <Input
               type="number"
@@ -398,24 +388,16 @@ function ContextItem({
             )}
           </span>
           <div className="flex gap-1">
-            <span
-              className={`text-xs px-2 py-0.5 rounded ${
-                context.commandMode === "replace"
-                  ? "bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300"
-                  : "bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400"
-              }`}
-            >
-              Cmd: {context.commandMode}
-            </span>
-            <span
-              className={`text-xs px-2 py-0.5 rounded ${
-                context.dictionaryMode === "replace"
-                  ? "bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300"
-                  : "bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400"
-              }`}
-            >
-              Dict: {context.dictionaryMode}
-            </span>
+            {context.commandMode === "replace" && (
+              <span className="text-xs px-2 py-0.5 rounded bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300">
+                Cmd: Context Only
+              </span>
+            )}
+            {context.dictionaryMode === "replace" && (
+              <span className="text-xs px-2 py-0.5 rounded bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300">
+                Dict: Context Only
+              </span>
+            )}
             {context.priority !== 0 && (
               <span className="text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300">
                 P{context.priority}
@@ -465,6 +447,49 @@ function EmptyState({ onAddFocus }: { onAddFocus: () => void }) {
           Add Context
         </Button>
       </CardContent>
+    </Card>
+  );
+}
+
+const DIAGRAM_COLLAPSED_KEY = "heycat-context-diagram-collapsed";
+
+function ModeExplanationDiagram() {
+  const [isCollapsed, setIsCollapsed] = useState(() => {
+    const stored = localStorage.getItem(DIAGRAM_COLLAPSED_KEY);
+    return stored === "true";
+  });
+
+  const toggleCollapsed = () => {
+    const newValue = !isCollapsed;
+    setIsCollapsed(newValue);
+    localStorage.setItem(DIAGRAM_COLLAPSED_KEY, String(newValue));
+  };
+
+  return (
+    <Card className="bg-neutral-50 dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800">
+      <button
+        onClick={toggleCollapsed}
+        className="w-full flex items-center justify-between p-3 text-left hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors rounded-t-lg"
+        aria-expanded={!isCollapsed}
+      >
+        <span className="flex items-center gap-2 text-sm font-medium text-text-secondary">
+          <HelpCircle className="h-4 w-4" />
+          What does "Context Only" do?
+        </span>
+        {isCollapsed ? (
+          <ChevronDown className="h-4 w-4 text-text-tertiary" />
+        ) : (
+          <ChevronUp className="h-4 w-4 text-text-tertiary" />
+        )}
+      </button>
+      {!isCollapsed && (
+        <CardContent className="pt-0 pb-3 px-3">
+          <p className="text-sm text-text-secondary">
+            By default, contexts inherit all global commands and dictionary entries.
+            Turn on <strong>"Context Only"</strong> to hide global items and use only what's assigned to this specific context.
+          </p>
+        </CardContent>
+      )}
     </Card>
   );
 }
@@ -793,6 +818,9 @@ export function WindowContexts(_props: WindowContextsProps) {
           Create app-specific configurations for commands and dictionary.
         </p>
       </header>
+
+      {/* Mode Explanation Diagram */}
+      <ModeExplanationDiagram />
 
       {/* Add Context Form */}
       <AddContextForm onSubmit={handleAddContext} runningApps={runningApps} dictionaryEntries={dictionaryEntries} />

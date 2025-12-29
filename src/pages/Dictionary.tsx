@@ -330,10 +330,11 @@ interface EntryItemProps {
   onDelete: (id: string) => void;
   isEditing: boolean;
   isDeleting: boolean;
-  editValues: { trigger: string; expansion: string; suffix: string; autoEnter: boolean; disableSuffix: boolean };
+  editValues: { trigger: string; expansion: string; suffix: string; autoEnter: boolean; disableSuffix: boolean; contextIds: string[] };
   editError: string | null;
   editSuffixError: string | null;
-  onEditChange: (field: "trigger" | "expansion" | "suffix" | "autoEnter" | "disableSuffix", value: string | boolean) => void;
+  contextOptions: MultiSelectOption[];
+  onEditChange: (field: "trigger" | "expansion" | "suffix" | "autoEnter" | "disableSuffix" | "contextIds", value: string | boolean | string[]) => void;
   onSaveEdit: () => void;
   onCancelEdit: () => void;
   onConfirmDelete: () => void;
@@ -350,6 +351,7 @@ function EntryItem({
   editValues,
   editError,
   editSuffixError,
+  contextOptions,
   onEditChange,
   onSaveEdit,
   onCancelEdit,
@@ -416,15 +418,32 @@ function EntryItem({
           </div>
         </div>
         {isSettingsOpen && (
-          <SettingsPanel
-            suffix={editValues.suffix}
-            autoEnter={editValues.autoEnter}
-            disableSuffix={editValues.disableSuffix}
-            onSuffixChange={(value) => onEditChange("suffix", value)}
-            onAutoEnterChange={(value) => onEditChange("autoEnter", value)}
-            onDisableSuffixChange={(value) => onEditChange("disableSuffix", value)}
-            suffixError={editSuffixError}
-          />
+          <>
+            <SettingsPanel
+              suffix={editValues.suffix}
+              autoEnter={editValues.autoEnter}
+              disableSuffix={editValues.disableSuffix}
+              onSuffixChange={(value) => onEditChange("suffix", value)}
+              onAutoEnterChange={(value) => onEditChange("autoEnter", value)}
+              onDisableSuffixChange={(value) => onEditChange("disableSuffix", value)}
+              suffixError={editSuffixError}
+            />
+            {contextOptions.length > 0 && (
+              <FormField
+                label="Window Contexts"
+                help="Assign this entry to specific app contexts. Leave empty for global availability."
+                className="mt-3"
+              >
+                <MultiSelect
+                  selected={editValues.contextIds}
+                  onChange={(ids) => onEditChange("contextIds", ids)}
+                  options={contextOptions}
+                  placeholder="Select contexts (optional)..."
+                  aria-label="Window contexts"
+                />
+              </FormField>
+            )}
+          </>
         )}
       </Card>
     );
@@ -542,6 +561,7 @@ export function Dictionary(_props: DictionaryProps) {
     suffix: "",
     autoEnter: false,
     disableSuffix: false,
+    contextIds: [] as string[],
   });
   const [editError, setEditError] = useState<string | null>(null);
   const [editSuffixError, setEditSuffixError] = useState<string | null>(null);
@@ -641,19 +661,22 @@ export function Dictionary(_props: DictionaryProps) {
 
   const handleStartEdit = useCallback((entry: DictionaryEntry) => {
     setEditingId(entry.id);
+    // Get current context assignments for this entry
+    const assignedContextIds = (contextsByEntryId.get(entry.id) ?? []).map(ctx => ctx.id);
     setEditValues({
       trigger: entry.trigger,
       expansion: entry.expansion,
       suffix: entry.suffix || "",
       autoEnter: entry.autoEnter || false,
       disableSuffix: entry.disableSuffix || false,
+      contextIds: assignedContextIds,
     });
     setEditError(null);
     setEditSuffixError(null);
-  }, []);
+  }, [contextsByEntryId]);
 
   const handleEditChange = useCallback(
-    (field: "trigger" | "expansion" | "suffix" | "autoEnter" | "disableSuffix", value: string | boolean) => {
+    (field: "trigger" | "expansion" | "suffix" | "autoEnter" | "disableSuffix" | "contextIds", value: string | boolean | string[]) => {
       setEditValues((prev) => ({ ...prev, [field]: value }));
       if (field === "trigger") {
         setEditError(null);
@@ -704,13 +727,61 @@ export function Dictionary(_props: DictionaryProps) {
         autoEnter: editValues.autoEnter || undefined,
         disableSuffix: editValues.disableSuffix || undefined,
       });
+
+      // Sync context assignments
+      const oldContextIds = (contextsByEntryId.get(editingId) ?? []).map(ctx => ctx.id);
+      const newContextIds = editValues.contextIds;
+
+      // Contexts to add entry to
+      const contextsToAdd = newContextIds.filter(id => !oldContextIds.includes(id));
+      // Contexts to remove entry from
+      const contextsToRemove = oldContextIds.filter(id => !newContextIds.includes(id));
+
+      for (const ctxId of contextsToAdd) {
+        const ctx = contextList.find((c) => c.id === ctxId);
+        if (ctx) {
+          await updateContext.mutateAsync({
+            id: ctx.id,
+            name: ctx.name,
+            appName: ctx.matcher?.appName,
+            titlePattern: ctx.matcher?.titlePattern,
+            bundleId: ctx.matcher?.bundleId,
+            commandMode: ctx.commandMode,
+            dictionaryMode: ctx.dictionaryMode,
+            commandIds: ctx.commandIds,
+            dictionaryEntryIds: [...ctx.dictionaryEntryIds, editingId],
+            priority: ctx.priority,
+            enabled: ctx.enabled,
+          });
+        }
+      }
+
+      for (const ctxId of contextsToRemove) {
+        const ctx = contextList.find((c) => c.id === ctxId);
+        if (ctx) {
+          await updateContext.mutateAsync({
+            id: ctx.id,
+            name: ctx.name,
+            appName: ctx.matcher?.appName,
+            titlePattern: ctx.matcher?.titlePattern,
+            bundleId: ctx.matcher?.bundleId,
+            commandMode: ctx.commandMode,
+            dictionaryMode: ctx.dictionaryMode,
+            commandIds: ctx.commandIds,
+            dictionaryEntryIds: ctx.dictionaryEntryIds.filter(id => id !== editingId),
+            priority: ctx.priority,
+            enabled: ctx.enabled,
+          });
+        }
+      }
+
       toast({
         type: "success",
         title: "Entry updated",
         description: `"${trimmedTrigger}" has been updated.`,
       });
       setEditingId(null);
-      setEditValues({ trigger: "", expansion: "", suffix: "", autoEnter: false, disableSuffix: false });
+      setEditValues({ trigger: "", expansion: "", suffix: "", autoEnter: false, disableSuffix: false, contextIds: [] });
       setEditError(null);
       setEditSuffixError(null);
     } catch (e) {
@@ -720,11 +791,11 @@ export function Dictionary(_props: DictionaryProps) {
         description: e instanceof Error ? e.message : String(e),
       });
     }
-  }, [editingId, editValues, entryList, updateEntry, toast]);
+  }, [editingId, editValues, entryList, updateEntry, toast, contextsByEntryId, contextList, updateContext]);
 
   const handleCancelEdit = useCallback(() => {
     setEditingId(null);
-    setEditValues({ trigger: "", expansion: "", suffix: "", autoEnter: false, disableSuffix: false });
+    setEditValues({ trigger: "", expansion: "", suffix: "", autoEnter: false, disableSuffix: false, contextIds: [] });
     setEditError(null);
     setEditSuffixError(null);
   }, []);
@@ -848,6 +919,7 @@ export function Dictionary(_props: DictionaryProps) {
               editValues={editValues}
               editError={editError}
               editSuffixError={editSuffixError}
+              contextOptions={contextOptions}
               onEditChange={handleEditChange}
               onSaveEdit={handleSaveEdit}
               onCancelEdit={handleCancelEdit}

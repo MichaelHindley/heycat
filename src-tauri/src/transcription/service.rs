@@ -400,66 +400,95 @@ where
             // Apply dictionary expansion using context-resolved entries when available
             let expansion_result = {
                 // Try context-aware dictionary expansion first
+                // IMPORTANT: We get dictionary entries first, then release the lock before
+                // calling the resolver. This avoids a deadlock since the resolver also
+                // needs to acquire the SpacetimeDB lock internally.
                 let context_entries = match (&context_resolver, &spacetime_client) {
                     (Some(resolver), Some(client)) => {
-                        match client.lock() {
+                        crate::debug!("[DictionaryExpansion] Context resolver available, attempting context-aware expansion");
+                        // Step 1: Get all dictionary entries (lock is released after this block)
+                        let all_entries = match client.lock() {
                             Ok(client_guard) => {
-                                // Get all dictionary entries from SpacetimeDB
                                 match client_guard.list_dictionary_entries() {
-                                    Ok(all_entries) => {
-                                        let entries = resolver.get_effective_dictionary(&all_entries);
-                                        if !entries.is_empty() {
-                                            crate::debug!(
-                                                "Using {} context-resolved dictionary entries for expansion",
-                                                entries.len()
-                                            );
-                                            Some(entries)
-                                        } else {
-                                            None
-                                        }
+                                    Ok(entries) => {
+                                        crate::debug!(
+                                            "[DictionaryExpansion] Retrieved {} total dictionary entries from SpacetimeDB",
+                                            entries.len()
+                                        );
+                                        Some(entries)
                                     }
                                     Err(e) => {
-                                        crate::warn!("Failed to get dictionary entries from SpacetimeDB: {}", e);
+                                        crate::warn!("[DictionaryExpansion] Failed to get dictionary entries from SpacetimeDB: {}", e);
                                         None
                                     }
                                 }
                             }
                             Err(_) => {
-                                crate::warn!("Failed to lock SpacetimeDB client for context resolution");
+                                crate::warn!("[DictionaryExpansion] Failed to lock SpacetimeDB client for context resolution");
                                 None
                             }
+                        };
+                        // Step 2: Now that lock is released, call resolver (which needs its own lock)
+                        match all_entries {
+                            Some(all_entries) => {
+                                let entries = resolver.get_effective_dictionary(&all_entries);
+                                if !entries.is_empty() {
+                                    crate::debug!(
+                                        "[DictionaryExpansion] Using {} context-resolved entries for expansion",
+                                        entries.len()
+                                    );
+                                    Some(entries)
+                                } else {
+                                    crate::debug!(
+                                        "[DictionaryExpansion] Context resolver returned empty, will fall back to global expander"
+                                    );
+                                    None
+                                }
+                            }
+                            None => None,
                         }
                     }
-                    _ => None,
+                    _ => {
+                        crate::debug!("[DictionaryExpansion] No context resolver available");
+                        None
+                    }
                 };
 
                 // Use context entries if available, otherwise fall back to global expander
                 if let Some(entries) = context_entries {
+                    crate::debug!("[DictionaryExpansion] Using context-resolved expander");
                     let context_expander = DictionaryExpander::new(&entries);
                     let result = context_expander.expand(&text);
                     if result.expanded_text != text {
                         crate::debug!(
-                            "Context-aware dictionary expansion applied: '{}' -> '{}'",
+                            "[DictionaryExpansion] Context-aware expansion applied: '{}' -> '{}'",
                             text,
                             result.expanded_text
                         );
+                    } else {
+                        crate::debug!("[DictionaryExpansion] No expansion matched in context entries");
                     }
                     result
                 } else {
                     // Fall back to global dictionary expander
+                    crate::debug!("[DictionaryExpansion] Falling back to global dictionary expander");
                     match dictionary_expander.read() {
                         Ok(guard) => {
                             if let Some(ref expander) = *guard {
+                                crate::debug!("[DictionaryExpansion] Global expander available, expanding text");
                                 let result = expander.expand(&text);
                                 if result.expanded_text != text {
                                     crate::debug!(
-                                        "Dictionary expansion applied: '{}' -> '{}'",
+                                        "[DictionaryExpansion] Global expansion applied: '{}' -> '{}'",
                                         text,
                                         result.expanded_text
                                     );
+                                } else {
+                                    crate::debug!("[DictionaryExpansion] No expansion matched in global entries");
                                 }
                                 result
                             } else {
+                                crate::debug!("[DictionaryExpansion] No global expander configured");
                                 ExpansionResult {
                                     expanded_text: text,
                                     should_press_enter: false,
@@ -467,7 +496,7 @@ where
                             }
                         }
                         Err(e) => {
-                            crate::warn!("Failed to acquire dictionary expander lock: {}", e);
+                            crate::warn!("[DictionaryExpansion] Failed to acquire dictionary expander lock: {}", e);
                             ExpansionResult {
                                 expanded_text: text,
                                 should_press_enter: false,

@@ -236,14 +236,16 @@ impl SidecarManager {
         );
 
         // Spawn the SpacetimeDB standalone server
-        // Command: spacetime start --listen-addr 127.0.0.1:3055
+        // Command: spacetime start --listen-addr 127.0.0.1:3055 --data-dir <path>
+        let data_dir_str = self.config.data_dir.to_string_lossy();
         let child = Command::new(&self.config.binary_path)
             .args([
                 "start",
                 "--listen-addr",
                 &self.config.listen_addr(),
+                "--data-dir",
+                &data_dir_str,
             ])
-            .current_dir(&self.config.data_dir)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

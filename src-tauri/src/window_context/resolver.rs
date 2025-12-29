@@ -42,6 +42,11 @@ impl ContextResolver {
         &self,
         all_commands: &[CommandDefinition],
     ) -> Vec<CommandDefinition> {
+        crate::debug!(
+            "[ContextResolver] get_effective_commands called with {} commands",
+            all_commands.len()
+        );
+
         // Get current context from monitor
         let context_id = match self.monitor.lock() {
             Ok(monitor) => monitor.get_current_context(),
@@ -51,10 +56,41 @@ impl ContextResolver {
             }
         };
 
-        // No active context - return all global commands
+        // No active context - return only truly global commands (not assigned to any context)
         let context_id = match context_id {
-            Some(id) => id,
-            None => return all_commands.to_vec(),
+            Some(id) => {
+                crate::debug!("[ContextResolver] Active context ID for commands: {}", id);
+                id
+            }
+            None => {
+                // Get all contexts to find which commands are assigned somewhere
+                let assigned_command_ids: std::collections::HashSet<Uuid> = match self.client.lock() {
+                    Ok(client) => {
+                        match client.list_window_contexts() {
+                            Ok(contexts) => contexts
+                                .iter()
+                                .flat_map(|ctx| ctx.command_ids.iter().cloned())
+                                .collect(),
+                            Err(_) => std::collections::HashSet::new(),
+                        }
+                    }
+                    Err(_) => std::collections::HashSet::new(),
+                };
+
+                // Return only commands not assigned to any context
+                let global_commands: Vec<CommandDefinition> = all_commands
+                    .iter()
+                    .filter(|c| !assigned_command_ids.contains(&c.id))
+                    .cloned()
+                    .collect();
+
+                crate::debug!(
+                    "[ContextResolver] No active context, returning {} global commands (filtered from {})",
+                    global_commands.len(),
+                    all_commands.len()
+                );
+                return global_commands;
+            }
         };
 
         // Get the context from SpacetimeDB
@@ -131,6 +167,11 @@ impl ContextResolver {
         &self,
         all_entries: &[DictionaryEntry],
     ) -> Vec<DictionaryEntry> {
+        crate::debug!(
+            "[ContextResolver] get_effective_dictionary called with {} entries",
+            all_entries.len()
+        );
+
         // Get current context from monitor
         let context_id = match self.monitor.lock() {
             Ok(monitor) => monitor.get_current_context(),
@@ -142,10 +183,41 @@ impl ContextResolver {
             }
         };
 
-        // No active context - return all global entries
+        // No active context - return only truly global entries (not assigned to any context)
         let context_id = match context_id {
-            Some(id) => id,
-            None => return all_entries.to_vec(),
+            Some(id) => {
+                crate::debug!("[ContextResolver] Active context ID: {}", id);
+                id
+            }
+            None => {
+                // Get all contexts to find which entries are assigned somewhere
+                let assigned_entry_ids: std::collections::HashSet<String> = match self.client.lock() {
+                    Ok(client) => {
+                        match client.list_window_contexts() {
+                            Ok(contexts) => contexts
+                                .iter()
+                                .flat_map(|ctx| ctx.dictionary_entry_ids.iter().cloned())
+                                .collect(),
+                            Err(_) => std::collections::HashSet::new(),
+                        }
+                    }
+                    Err(_) => std::collections::HashSet::new(),
+                };
+
+                // Return only entries not assigned to any context
+                let global_entries: Vec<DictionaryEntry> = all_entries
+                    .iter()
+                    .filter(|e| !assigned_entry_ids.contains(&e.id))
+                    .cloned()
+                    .collect();
+
+                crate::debug!(
+                    "[ContextResolver] No active context, returning {} global entries (filtered from {})",
+                    global_entries.len(),
+                    all_entries.len()
+                );
+                return global_entries;
+            }
         };
 
         // Get the context from SpacetimeDB
@@ -179,19 +251,31 @@ impl ContextResolver {
             }
         };
 
+        crate::debug!(
+            "[ContextResolver] Context '{}' found with dictionary_mode={:?}, {} assigned entries",
+            context.name,
+            context.dictionary_mode,
+            context.dictionary_entry_ids.len()
+        );
+
         // Build a lookup map for entries by ID
         let entries_by_id: std::collections::HashMap<&str, &DictionaryEntry> =
             all_entries.iter().map(|e| (e.id.as_str(), e)).collect();
 
         // Apply override mode
-        match context.dictionary_mode {
+        let result = match context.dictionary_mode {
             OverrideMode::Replace => {
                 // Return only context-specific entries
-                context
+                let entries: Vec<DictionaryEntry> = context
                     .dictionary_entry_ids
                     .iter()
                     .filter_map(|id| entries_by_id.get(id.as_str()).map(|e| (*e).clone()))
-                    .collect()
+                    .collect();
+                crate::debug!(
+                    "[ContextResolver] Replace mode: returning {} context-specific entries",
+                    entries.len()
+                );
+                entries
             }
             OverrideMode::Merge => {
                 // Start with all global entries
@@ -209,9 +293,15 @@ impl ContextResolver {
                     }
                 }
 
+                crate::debug!(
+                    "[ContextResolver] Merge mode: returning {} merged entries",
+                    merged.len()
+                );
                 merged
             }
-        }
+        };
+
+        result
     }
 
     /// Get the currently matched context ID, if any

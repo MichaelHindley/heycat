@@ -405,6 +405,57 @@ describe("Dictionary", () => {
     expect(screen.getByRole("button", { name: /^add$/i })).not.toBeDisabled();
   });
 
+  it("edit: allows changing context assignments and syncs on save", async () => {
+    const user = userEvent.setup();
+    // Entry "brb" (id: "1") is assigned to Slack, VS Code, and Terminal
+    mockInvoke.mockImplementation(createInvokeMock(sampleEntries, sampleContexts));
+
+    render(<Dictionary />, { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(screen.getByText('"brb"')).toBeDefined();
+    });
+
+    // Click edit button for "brb"
+    await user.click(screen.getByRole("button", { name: /edit brb/i }));
+
+    // Open settings panel to see context MultiSelect
+    const toggleButtons = screen.getAllByRole("button", { name: /toggle settings/i });
+    await user.click(toggleButtons[1]); // Edit mode toggle (second one)
+
+    // Verify pre-selected contexts are shown as tags in MultiSelect
+    // "brb" is assigned to Slack, VS Code, and Terminal
+    // Check for Remove buttons which are specific to MultiSelect tags
+    expect(screen.getByRole("button", { name: /remove slack/i })).toBeDefined();
+    expect(screen.getByRole("button", { name: /remove vs code/i })).toBeDefined();
+    expect(screen.getByRole("button", { name: /remove terminal/i })).toBeDefined();
+
+    // Remove Slack context by clicking its X button
+    await user.click(screen.getByRole("button", { name: /remove slack/i }));
+
+    // Slack should no longer be visible as a tag
+    expect(screen.queryByRole("button", { name: /remove slack/i })).toBeNull();
+
+    // Save the changes
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+    // Verify update_dictionary_entry was called
+    await waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledWith("update_dictionary_entry", expect.objectContaining({
+        id: "1",
+        trigger: "brb",
+      }));
+    });
+
+    // Verify update_window_context was called to remove entry from Slack
+    // Slack's dictionaryEntryIds should now be [] (was ["1"])
+    expect(mockInvoke).toHaveBeenCalledWith("update_window_context", expect.objectContaining({
+      id: "ctx-1",
+      name: "Slack",
+      dictionaryEntryIds: [], // Entry "1" removed
+    }));
+  });
+
   describe("Context Badges", () => {
     it("shows 'Global' badge for entry with no context assignments", async () => {
       // Entry "ty" (id: 3) is not assigned to any context
