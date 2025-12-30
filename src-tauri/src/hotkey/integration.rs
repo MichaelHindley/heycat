@@ -47,11 +47,8 @@ pub const DEBOUNCE_DURATION_MS: u64 = 200;
 /// Simulate Cmd+V paste keystroke on macOS using CoreGraphics
 #[cfg(target_os = "macos")]
 fn simulate_paste() -> Result<(), String> {
-    eprintln!("[PASTE-TRACE] integration.rs::simulate_paste() ENTRY, shutting_down={}", crate::shutdown::is_shutting_down());
-
     // Safety check: don't paste during shutdown
     if crate::shutdown::is_shutting_down() {
-        eprintln!("[PASTE-TRACE] integration.rs::simulate_paste() - BLOCKED by shutdown check");
         crate::debug!("Skipping paste - app is shutting down");
         return Ok(());
     }
@@ -59,7 +56,6 @@ fn simulate_paste() -> Result<(), String> {
     // Centralized synthesis ensures key-up always follows key-down and sequences don't interleave.
     crate::keyboard::synth::simulate_cmd_v_paste()?;
 
-    eprintln!("[PASTE-TRACE] integration.rs::simulate_paste() EXIT - paste completed");
     Ok(())
 }
 
@@ -262,11 +258,8 @@ async fn execute_transcription_task<T: TranscriptionEventEmitter>(
 /// Copy text to clipboard and auto-paste
 #[cfg_attr(coverage_nightly, coverage(off))]
 fn copy_and_paste(app_handle: &Option<AppHandle>, text: &str) {
-    eprintln!("[PASTE-TRACE] copy_and_paste() ENTRY, text_len={}, shutting_down={}", text.len(), crate::shutdown::is_shutting_down());
-
     // Safety check: don't paste during shutdown
     if crate::shutdown::is_shutting_down() {
-        eprintln!("[PASTE-TRACE] copy_and_paste() - BLOCKED by shutdown check");
         crate::debug!("Skipping copy_and_paste - app is shutting down");
         return;
     }
@@ -276,7 +269,6 @@ fn copy_and_paste(app_handle: &Option<AppHandle>, text: &str) {
             crate::warn!("Failed to copy to clipboard: {}", e);
         } else {
             crate::debug!("Transcribed text copied to clipboard");
-            eprintln!("[PASTE-TRACE] copy_and_paste() - about to call simulate_paste()");
             if let Err(e) = simulate_paste() {
                 crate::warn!("Failed to auto-paste: {}", e);
             } else {
@@ -286,7 +278,6 @@ fn copy_and_paste(app_handle: &Option<AppHandle>, text: &str) {
     } else {
         crate::warn!("Clipboard unavailable: no app handle configured");
     }
-    eprintln!("[PASTE-TRACE] copy_and_paste() EXIT");
 }
 
 /// Handles hotkey toggle with debouncing and event emission
@@ -1154,9 +1145,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
             };
 
             // Fallback to clipboard if no command was handled
-            eprintln!("[PASTE-TRACE] spawn_transcription: command_handled={}, shutting_down={}", command_handled, crate::shutdown::is_shutting_down());
             if !command_handled {
-                eprintln!("[PASTE-TRACE] spawn_transcription: about to call copy_and_paste()");
                 copy_and_paste(&app_handle, &text);
             }
 
@@ -1302,7 +1291,6 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
                         // Voice command matching is only supported for manual hotkey recordings
                         // (via spawn_transcription). This is by design - auto-stop recordings
                         // are intended for quick dictation, not command execution.
-                        eprintln!("[PASTE-TRACE] silence_detection: about to call copy_and_paste(), shutting_down={}", crate::shutdown::is_shutting_down());
                         copy_and_paste(&app_handle, &text);
 
                         // Emit completed
