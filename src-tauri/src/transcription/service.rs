@@ -121,11 +121,8 @@ pub const DEFAULT_TRANSCRIPTION_TIMEOUT_SECS: u64 = 60;
 /// Simulate Cmd+V paste keystroke on macOS using CoreGraphics
 #[cfg(target_os = "macos")]
 fn simulate_paste() -> Result<(), String> {
-    eprintln!("[PASTE-TRACE] service.rs::simulate_paste() ENTRY, shutting_down={}", crate::shutdown::is_shutting_down());
-
     // Safety check: don't paste during shutdown
     if crate::shutdown::is_shutting_down() {
-        eprintln!("[PASTE-TRACE] service.rs::simulate_paste() - BLOCKED by shutdown check");
         crate::debug!("Skipping paste - app is shutting down");
         return Ok(());
     }
@@ -133,7 +130,6 @@ fn simulate_paste() -> Result<(), String> {
     // Centralized synthesis ensures key-up always follows key-down and sequences don't interleave.
     crate::keyboard::synth::simulate_cmd_v_paste()?;
 
-    eprintln!("[PASTE-TRACE] service.rs::simulate_paste() EXIT - paste completed");
     Ok(())
 }
 
@@ -522,14 +518,11 @@ where
 
             // Fallback to clipboard if no command was handled (using expanded text)
             // Safety check: don't paste during shutdown
-            eprintln!("[PASTE-TRACE] process_recording: command_handled={}, shutting_down={}", command_handled, crate::shutdown::is_shutting_down());
             if !command_handled && !crate::shutdown::is_shutting_down() {
-                eprintln!("[PASTE-TRACE] process_recording: about to write to clipboard and paste");
                 if let Err(e) = app_handle.clipboard().write_text(&expanded_text) {
                     crate::warn!("Failed to copy to clipboard: {}", e);
                 } else {
                     crate::debug!("Transcribed text copied to clipboard");
-                    eprintln!("[PASTE-TRACE] process_recording: about to call simulate_paste()");
                     if let Err(e) = simulate_paste() {
                         crate::warn!("Failed to auto-paste: {}", e);
                     } else {

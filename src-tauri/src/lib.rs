@@ -81,12 +81,9 @@ pub fn run() {
             // CoreGraphics keyboard synthesis mid-flight (leading to stuck keys / multi-paste).
             shutdown::register_app_handle(app.handle().clone());
             if let Err(e) = ctrlc::set_handler(|| {
-                eprintln!("[PASTE-TRACE] ctrlc handler fired - about to call signal_shutdown()");
                 shutdown::signal_shutdown();
-                eprintln!("[PASTE-TRACE] ctrlc handler - about to stop CGEventTap");
                 // Stop CGEventTap run loop to prevent spurious events during exit
                 shutdown::stop_cgeventtap();
-                eprintln!("[PASTE-TRACE] ctrlc handler - requesting graceful app exit");
                 shutdown::request_app_exit(0);
             }) {
                 warn!("Failed to set Ctrl+C handler: {}", e);

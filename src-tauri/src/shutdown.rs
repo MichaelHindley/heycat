@@ -20,7 +20,6 @@ static APP_HANDLE: Mutex<Option<AppHandle>> = Mutex::new(None);
 /// Call this first in WindowEvent::Destroyed before any cleanup
 pub fn signal_shutdown() {
     APP_SHUTTING_DOWN.store(true, Ordering::SeqCst);
-    eprintln!("[PASTE-TRACE] signal_shutdown() called - flag is now TRUE");
     crate::info!("App shutdown signaled");
 }
 
