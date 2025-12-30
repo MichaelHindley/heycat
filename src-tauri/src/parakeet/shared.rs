@@ -225,6 +225,102 @@ impl SharedTranscriptionModel {
         Ok(())
     }
 
+    /// Unload the model from memory and set state to Unloaded.
+    ///
+    /// This releases the ~3GB model memory. After unloading, `is_loaded()` will
+    /// return false and transcription operations will fail with `ModelNotLoaded`.
+    ///
+    /// Thread-safe: acquires transcription lock to ensure no transcription is in progress.
+    ///
+    /// Used by: create-wake-handler-module-for-sleep-wake-events (spec #3)
+    #[allow(dead_code)]
+    pub fn unload(&self) -> TranscriptionResult<()> {
+        // Acquire exclusive transcription access - blocks if transcription is active
+        let _transcription_permit = self.acquire_transcription_lock()?;
+
+        // Set model to None
+        {
+            let mut model_guard = self
+                .model
+                .lock()
+                .map_err(|_| TranscriptionError::LockPoisoned)?;
+            *model_guard = None;
+        }
+
+        // Set state to Unloaded
+        {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| TranscriptionError::LockPoisoned)?;
+            *state = TranscriptionState::Unloaded;
+        }
+
+        crate::info!("Shared Parakeet TDT model unloaded");
+        Ok(())
+    }
+
+    /// Reload the model from the given directory path.
+    ///
+    /// This unloads the current model (if any), then loads from the new path.
+    /// Useful for reloading after system wake events when the model may be corrupted.
+    ///
+    /// Thread-safe: acquires transcription lock to ensure no transcription is in progress.
+    /// State transitions: current state -> Unloaded -> Idle (on success)
+    ///
+    /// Used by: create-wake-handler-module-for-sleep-wake-events (spec #3)
+    #[allow(dead_code)]
+    pub fn reload(&self, model_dir: &Path) -> TranscriptionResult<()> {
+        // Acquire exclusive transcription access - blocks if transcription is active
+        let _transcription_permit = self.acquire_transcription_lock()?;
+
+        // First unload (without acquiring lock again - we already have it)
+        {
+            let mut model_guard = self
+                .model
+                .lock()
+                .map_err(|_| TranscriptionError::LockPoisoned)?;
+            *model_guard = None;
+        }
+        {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| TranscriptionError::LockPoisoned)?;
+            *state = TranscriptionState::Unloaded;
+        }
+        crate::info!("Model unloaded for reload");
+
+        // Now load the new model
+        let path_str = model_dir.to_str().ok_or_else(|| {
+            TranscriptionError::ModelLoadFailed("Invalid path encoding".to_string())
+        })?;
+
+        crate::info!("Reloading shared Parakeet TDT model from {}...", path_str);
+
+        let tdt = ParakeetTDT::from_pretrained(path_str, None)
+            .map_err(|e| TranscriptionError::ModelLoadFailed(e.to_string()))?;
+
+        {
+            let mut guard = self
+                .model
+                .lock()
+                .map_err(|_| TranscriptionError::LockPoisoned)?;
+            *guard = Some(tdt);
+        }
+
+        {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| TranscriptionError::LockPoisoned)?;
+            *state = TranscriptionState::Idle;
+        }
+
+        crate::info!("Shared Parakeet TDT model reloaded successfully");
+        Ok(())
+    }
+
     /// Transcribe audio from a WAV file to text
     ///
     /// This is the primary method for batch transcription (hotkey recording).

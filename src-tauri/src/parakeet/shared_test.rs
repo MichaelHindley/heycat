@@ -189,3 +189,100 @@ fn test_transcription_lock_released_on_error_paths() {
     let guard = model.acquire_transcription_lock();
     assert!(guard.is_ok());
 }
+
+// ==================== Unload/Reload Tests ====================
+// These test the unload and reload functionality for system wake handling
+
+#[test]
+fn test_unload_sets_model_to_none_and_state_to_unloaded() {
+    let model = SharedTranscriptionModel::new();
+
+    // Set up a state as if model was loaded
+    {
+        let mut state = model.state.lock().unwrap();
+        *state = TranscriptionState::Idle;
+    }
+
+    // Unload should succeed
+    let result = model.unload();
+    assert!(result.is_ok());
+
+    // Model should be unloaded
+    assert!(!model.is_loaded());
+
+    // State should be Unloaded
+    assert_eq!(model.state(), TranscriptionState::Unloaded);
+}
+
+#[test]
+fn test_unload_releases_lock_after_completion() {
+    let model = SharedTranscriptionModel::new();
+
+    // Unload
+    let _ = model.unload();
+
+    // Lock should be acquirable again
+    let guard = model.acquire_transcription_lock();
+    assert!(guard.is_ok());
+}
+
+#[test]
+fn test_reload_fails_with_invalid_path() {
+    let model = SharedTranscriptionModel::new();
+
+    // Set up initial state
+    {
+        let mut state = model.state.lock().unwrap();
+        *state = TranscriptionState::Idle;
+    }
+
+    // Reload with invalid path should fail
+    let result = model.reload(Path::new("/nonexistent/model/path"));
+    assert!(result.is_err());
+    assert!(matches!(result, Err(TranscriptionError::ModelLoadFailed(_))));
+
+    // State should be Unloaded (reload unloads first, then fails to load)
+    assert_eq!(model.state(), TranscriptionState::Unloaded);
+}
+
+#[test]
+fn test_reload_releases_lock_after_failure() {
+    let model = SharedTranscriptionModel::new();
+
+    // Reload with invalid path
+    let _ = model.reload(Path::new("/nonexistent/model/path"));
+
+    // Lock should be acquirable again
+    let guard = model.acquire_transcription_lock();
+    assert!(guard.is_ok());
+}
+
+#[test]
+fn test_unload_is_thread_safe() {
+    use std::thread;
+
+    let model = SharedTranscriptionModel::new();
+
+    // Set up initial state
+    {
+        let mut state = model.state.lock().unwrap();
+        *state = TranscriptionState::Idle;
+    }
+
+    let mut handles = vec![];
+
+    for _ in 0..5 {
+        let model_clone = model.clone();
+        handles.push(thread::spawn(move || {
+            // Unload should not panic even when called concurrently
+            let _ = model_clone.unload();
+        }));
+    }
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    // Final state should be Unloaded
+    assert_eq!(model.state(), TranscriptionState::Unloaded);
+}

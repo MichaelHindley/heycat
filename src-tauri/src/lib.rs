@@ -20,6 +20,7 @@ mod swift;
 mod turso;
 mod transcription;
 mod voice_commands;
+mod wake_handler;
 mod window_context;
 mod worktree;
 
@@ -291,7 +292,17 @@ pub fn run() {
                 if let Ok(model_dir) = model::download::get_model_dir(model::download::ModelType::ParakeetTDT) {
                     info!("Loading shared Parakeet TDT model from {:?}...", model_dir);
                     match shared_transcription_model.load(&model_dir) {
-                        Ok(()) => info!("Shared Parakeet TDT model loaded successfully (saves ~3GB by sharing)"),
+                        Ok(()) => {
+                            info!("Shared Parakeet TDT model loaded successfully (saves ~3GB by sharing)");
+
+                            // Initialize wake handler to reload model after system sleep/wake
+                            // The ONNX model may become invalid after sleep, so we reload proactively
+                            wake_handler::init_wake_handler(
+                                app.handle().clone(),
+                                (*shared_transcription_model).clone(),
+                                model_dir,
+                            );
+                        }
                         Err(e) => warn!("Failed to load Parakeet TDT model: {}", e),
                     }
                 }

@@ -11,6 +11,20 @@ use swift_rs::SRString;
 // Hello function for testing
 swift_rs::swift!(fn swift_hello() -> SRString);
 
+// =============================================================================
+// System Wake Notification
+// =============================================================================
+
+/// Type alias for the wake callback function pointer.
+/// The callback takes no arguments and returns void.
+/// Used by: create-wake-handler-module-for-sleep-wake-events (spec #3)
+#[allow(dead_code)]
+pub type WakeCallback = extern "C" fn();
+
+// Pass the callback as a raw pointer since swift_rs doesn't support fn pointers directly
+swift_rs::swift!(fn swift_register_wake_callback(callback: *const std::ffi::c_void));
+swift_rs::swift!(fn swift_unregister_wake_callback());
+
 // Audio device enumeration functions
 swift_rs::swift!(fn swift_refresh_audio_devices() -> i64);
 swift_rs::swift!(fn swift_get_device_name(index: i64) -> SRString);
@@ -255,6 +269,36 @@ pub fn audio_engine_is_capturing() -> bool {
 #[allow(dead_code)]
 pub fn audio_engine_get_sample_count() -> usize {
     unsafe { swift_audio_engine_get_sample_count() as usize }
+}
+
+// =============================================================================
+// System Wake Notification API
+// =============================================================================
+
+/// Register a callback to be invoked when the system wakes from sleep.
+/// The callback will be called on the main thread.
+///
+/// # Arguments
+/// * `callback` - Function pointer to call on system wake
+///
+/// # Safety
+/// The callback must be a valid function pointer that remains valid for the
+/// duration of the registration. Only one callback can be registered at a time;
+/// calling again replaces the previous callback.
+///
+/// Used by: create-wake-handler-module-for-sleep-wake-events (spec #3)
+#[allow(dead_code)]
+pub fn register_wake_callback(callback: WakeCallback) {
+    unsafe { swift_register_wake_callback(callback as *const std::ffi::c_void) }
+}
+
+/// Unregister the wake callback and stop observing wake notifications.
+/// Safe to call even if no callback is registered.
+///
+/// Used by: create-wake-handler-module-for-sleep-wake-events (spec #3)
+#[allow(dead_code)]
+pub fn unregister_wake_callback() {
+    unsafe { swift_unregister_wake_callback() }
 }
 
 #[cfg(test)]

@@ -71,3 +71,24 @@ fn test_audio_engine_is_running_query() {
     // After stopping, should not be running
     assert!(!audio_engine_is_running(), "Engine should not be running after stop");
 }
+
+// A simple extern "C" callback for testing
+extern "C" fn test_wake_callback() {
+    // No-op callback for testing registration
+}
+
+#[test]
+fn test_wake_callback_register_and_unregister() {
+    // Should be able to register a callback without panic
+    register_wake_callback(test_wake_callback);
+
+    // Should be able to unregister without panic
+    unregister_wake_callback();
+
+    // Should be able to unregister again (idempotent)
+    unregister_wake_callback();
+
+    // Should be able to re-register after unregistering
+    register_wake_callback(test_wake_callback);
+    unregister_wake_callback();
+}
