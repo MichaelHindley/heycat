@@ -100,6 +100,9 @@ impl AudioThreadHandle {
     }
 
     /// Stop audio capture and return the stop result
+    ///
+    /// Uses a 5-second timeout to prevent blocking forever if the audio thread
+    /// panics or becomes unresponsive. Returns `StopTimeout` if the timeout expires.
     #[must_use = "this returns a Result that should be handled"]
     pub fn stop(&self) -> Result<StopResult, AudioThreadError> {
         let (response_tx, response_rx) = mpsc::channel();
@@ -107,10 +110,18 @@ impl AudioThreadHandle {
             .send(AudioCommand::Stop(Some(response_tx)))
             .map_err(|_| AudioThreadError::ThreadDisconnected)?;
 
-        // Wait for response with the stop reason
+        // Wait for response with 5-second timeout to prevent blocking forever
+        // if the audio thread panics or becomes unresponsive
+        use std::sync::mpsc::RecvTimeoutError;
         response_rx
-            .recv()
-            .map_err(|_| AudioThreadError::ThreadDisconnected)
+            .recv_timeout(Duration::from_secs(5))
+            .map_err(|e| match e {
+                RecvTimeoutError::Timeout => {
+                    crate::warn!("Audio thread stop timed out after 5 seconds");
+                    AudioThreadError::StopTimeout
+                }
+                RecvTimeoutError::Disconnected => AudioThreadError::ThreadDisconnected,
+            })
     }
 
     /// Shutdown the audio thread gracefully (used in tests)
@@ -145,6 +156,8 @@ pub enum AudioThreadError {
     ThreadDisconnected,
     /// Audio capture failed
     CaptureError(AudioCaptureError),
+    /// Stop operation timed out waiting for audio thread response
+    StopTimeout,
 }
 
 impl std::fmt::Display for AudioThreadError {
@@ -152,6 +165,9 @@ impl std::fmt::Display for AudioThreadError {
         match self {
             AudioThreadError::ThreadDisconnected => write!(f, "Audio thread disconnected"),
             AudioThreadError::CaptureError(e) => write!(f, "Audio capture error: {}", e),
+            AudioThreadError::StopTimeout => {
+                write!(f, "Audio thread stop timed out after 5 seconds")
+            }
         }
     }
 }
