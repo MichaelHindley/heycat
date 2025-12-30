@@ -58,7 +58,7 @@ fn test_reset_to_idle_state_transitions() {
 
     // Test reset from Completed
     {
-        let mut state = model.state.lock().unwrap();
+        let mut state = model.state.lock();
         *state = TranscriptionState::Completed;
     }
     model.reset_to_idle().unwrap();
@@ -66,7 +66,7 @@ fn test_reset_to_idle_state_transitions() {
 
     // Test reset from Error
     {
-        let mut state = model.state.lock().unwrap();
+        let mut state = model.state.lock();
         *state = TranscriptionState::Error;
     }
     model.reset_to_idle().unwrap();
@@ -74,7 +74,7 @@ fn test_reset_to_idle_state_transitions() {
 
     // Test noop from Unloaded (doesn't transition)
     {
-        let mut state = model.state.lock().unwrap();
+        let mut state = model.state.lock();
         *state = TranscriptionState::Unloaded;
     }
     model.reset_to_idle().unwrap();
@@ -91,44 +91,49 @@ fn test_guard_state_lifecycle() {
     // Test normal lifecycle: Idle -> Transcribing -> Idle
     {
         let _guard = TranscribingGuard::new(state.clone()).unwrap();
-        assert_eq!(*state.lock().unwrap(), TranscriptionState::Transcribing);
+        assert_eq!(*state.lock(), TranscriptionState::Transcribing);
     }
-    assert_eq!(*state.lock().unwrap(), TranscriptionState::Idle);
+    assert_eq!(*state.lock(), TranscriptionState::Idle);
 
     // Test complete_success: stays Completed after drop
     {
         let mut guard = TranscribingGuard::new(state.clone()).unwrap();
         guard.complete_success();
-        assert_eq!(*state.lock().unwrap(), TranscriptionState::Completed);
+        assert_eq!(*state.lock(), TranscriptionState::Completed);
     }
-    assert_eq!(*state.lock().unwrap(), TranscriptionState::Completed);
+    assert_eq!(*state.lock(), TranscriptionState::Completed);
 
     // Reset for next test
-    *state.lock().unwrap() = TranscriptionState::Idle;
+    *state.lock() = TranscriptionState::Idle;
 
     // Test complete_with_error: stays Error after drop
     {
         let mut guard = TranscribingGuard::new(state.clone()).unwrap();
         guard.complete_with_error();
-        assert_eq!(*state.lock().unwrap(), TranscriptionState::Error);
+        assert_eq!(*state.lock(), TranscriptionState::Error);
     }
-    assert_eq!(*state.lock().unwrap(), TranscriptionState::Error);
+    assert_eq!(*state.lock(), TranscriptionState::Error);
 }
 
 #[test]
 fn test_guard_resets_state_to_idle_on_panic() {
-    use std::panic;
+    use std::panic::{self, AssertUnwindSafe};
 
     let state = Arc::new(Mutex::new(TranscriptionState::Idle));
     let state_clone = state.clone();
 
-    let result = panic::catch_unwind(move || {
+    // AssertUnwindSafe is needed because parking_lot::Mutex doesn't implement
+    // UnwindSafe by default. This is safe here because we're testing panic
+    // recovery behavior and the mutex will be in a consistent state.
+    let result = panic::catch_unwind(AssertUnwindSafe(move || {
         let _guard = TranscribingGuard::new(state_clone).unwrap();
         panic!("Simulated panic during transcription");
-    });
+    }));
 
     assert!(result.is_err());
-    assert_eq!(*state.lock().unwrap(), TranscriptionState::Idle);
+    // With parking_lot::Mutex, the lock is NOT poisoned after a panic,
+    // so we can safely acquire it and verify the state was reset.
+    assert_eq!(*state.lock(), TranscriptionState::Idle);
 }
 
 #[test]
@@ -137,7 +142,7 @@ fn test_guard_fails_when_model_not_loaded() {
     let result = TranscribingGuard::new(state.clone());
     assert!(result.is_err());
     assert!(matches!(result, Err(TranscriptionError::ModelNotLoaded)));
-    assert_eq!(*state.lock().unwrap(), TranscriptionState::Unloaded);
+    assert_eq!(*state.lock(), TranscriptionState::Unloaded);
 }
 
 // ==================== Transcription Lock Tests ====================
@@ -162,7 +167,8 @@ fn test_transcription_lock_blocks_concurrent_access() {
 
         handles.push(thread::spawn(move || {
             for _ in 0..5 {
-                let _guard = model_clone.acquire_transcription_lock().unwrap();
+                // parking_lot::Mutex::lock() returns the guard directly, no unwrap needed
+                let _guard = model_clone.acquire_transcription_lock();
                 let current = counter_clone.fetch_add(1, Ordering::SeqCst) + 1;
                 max_concurrent_clone.fetch_max(current, Ordering::SeqCst);
                 thread::sleep(Duration::from_micros(10));
@@ -185,9 +191,9 @@ fn test_transcription_lock_released_on_error_paths() {
     // Error should release lock
     let _ = model.transcribe_samples(vec![], 16000, 1);
 
-    // Lock should be acquirable again
-    let guard = model.acquire_transcription_lock();
-    assert!(guard.is_ok());
+    // Lock should be acquirable again - with parking_lot, this always succeeds
+    let _guard = model.acquire_transcription_lock();
+    // If we get here, the lock was successfully acquired
 }
 
 // ==================== Unload/Reload Tests ====================

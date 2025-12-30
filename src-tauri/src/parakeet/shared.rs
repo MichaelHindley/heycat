@@ -1,9 +1,15 @@
 // SharedTranscriptionModel for thread-safe Parakeet model sharing
 // Eliminates duplicate model instances (~3GB memory savings)
+//
+// Uses parking_lot::Mutex instead of std::sync::Mutex because:
+// - parking_lot::Mutex does NOT poison on panic - it simply releases the lock
+// - This allows subsequent transcriptions to proceed normally after a panic
+// - std::sync::Mutex would poison the lock, making the model permanently unavailable
 
+use parking_lot::{Mutex, MutexGuard};
 use parakeet_rs::ParakeetTDT;
 use std::path::Path;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::Arc;
 
 use super::types::{TranscriptionError, TranscriptionResult, TranscriptionService, TranscriptionState};
 use super::utils::fix_parakeet_text;
@@ -40,10 +46,12 @@ impl TranscribingGuard {
     /// Create a new TranscribingGuard, setting state to Transcribing.
     ///
     /// # Errors
-    /// - `LockPoisoned` if the state mutex is poisoned
     /// - `ModelNotLoaded` if the model is in Unloaded state
+    ///
+    /// Note: Uses parking_lot::Mutex which doesn't poison on panic,
+    /// so LockPoisoned errors are no longer possible.
     pub fn new(state: Arc<Mutex<TranscriptionState>>) -> TranscriptionResult<Self> {
-        let mut guard = state.lock().map_err(|_| TranscriptionError::LockPoisoned)?;
+        let mut guard = state.lock();
         if *guard == TranscriptionState::Unloaded {
             return Err(TranscriptionError::ModelNotLoaded);
         }
@@ -60,9 +68,8 @@ impl TranscribingGuard {
     /// Sets state to `Completed` and marks the guard as completed
     /// so it won't reset to `Idle` on drop.
     pub fn complete_success(&mut self) {
-        if let Ok(mut guard) = self.state.lock() {
-            *guard = TranscriptionState::Completed;
-        }
+        let mut guard = self.state.lock();
+        *guard = TranscriptionState::Completed;
         self.completed = true;
     }
 
@@ -71,9 +78,8 @@ impl TranscribingGuard {
     /// Sets state to `Error` and marks the guard as completed
     /// so it won't reset to `Idle` on drop.
     pub fn complete_with_error(&mut self) {
-        if let Ok(mut guard) = self.state.lock() {
-            *guard = TranscriptionState::Error;
-        }
+        let mut guard = self.state.lock();
+        *guard = TranscriptionState::Error;
         self.completed = true;
     }
 }
@@ -83,20 +89,15 @@ impl Drop for TranscribingGuard {
         // Only reset to Idle if we didn't explicitly complete
         // This handles both normal completion (where we want Idle)
         // and panics (where we want to reset from Transcribing)
+        //
+        // Note: parking_lot::Mutex doesn't poison on panic, so the lock
+        // is always available after a panic, allowing recovery.
         if !self.completed {
-            match self.state.lock() {
-                Ok(mut guard) => {
-                    // Only reset if still in Transcribing state
-                    // (in case someone else changed it)
-                    if *guard == TranscriptionState::Transcribing {
-                        *guard = TranscriptionState::Idle;
-                    }
-                }
-                Err(_) => {
-                    crate::warn!(
-                        "Failed to reset transcription state in drop - lock poisoned"
-                    );
-                }
+            let mut guard = self.state.lock();
+            // Only reset if still in Transcribing state
+            // (in case someone else changed it)
+            if *guard == TranscriptionState::Transcribing {
+                *guard = TranscriptionState::Idle;
             }
         }
     }
@@ -156,10 +157,10 @@ impl SharedTranscriptionModel {
     /// This must be called before any transcription to ensure mutual exclusion
     /// between batch (`transcribe_file`) and streaming (`transcribe_samples`) modes.
     /// The returned guard holds the lock until dropped.
-    fn acquire_transcription_lock(&self) -> TranscriptionResult<MutexGuard<'_, ()>> {
-        self.transcription_lock
-            .lock()
-            .map_err(|_| TranscriptionError::LockPoisoned)
+    ///
+    /// Note: Uses parking_lot::Mutex which doesn't poison, so this always succeeds.
+    fn acquire_transcription_lock(&self) -> MutexGuard<'_, ()> {
+        self.transcription_lock.lock()
     }
 
     /// Load the Parakeet TDT model from the given directory path
@@ -176,18 +177,12 @@ impl SharedTranscriptionModel {
             .map_err(|e| TranscriptionError::ModelLoadFailed(e.to_string()))?;
 
         {
-            let mut guard = self
-                .model
-                .lock()
-                .map_err(|_| TranscriptionError::LockPoisoned)?;
+            let mut guard = self.model.lock();
             *guard = Some(tdt);
         }
 
         {
-            let mut state = self
-                .state
-                .lock()
-                .map_err(|_| TranscriptionError::LockPoisoned)?;
+            let mut state = self.state.lock();
             *state = TranscriptionState::Idle;
         }
 
@@ -197,27 +192,18 @@ impl SharedTranscriptionModel {
 
     /// Check if the model is loaded
     pub fn is_loaded(&self) -> bool {
-        self.model
-            .lock()
-            .map(|guard| guard.is_some())
-            .unwrap_or(false)
+        self.model.lock().is_some()
     }
 
     /// Get the current transcription state
     #[allow(dead_code)] // Will be used for UI state display
     pub fn state(&self) -> TranscriptionState {
-        self.state
-            .lock()
-            .map(|guard| *guard)
-            .unwrap_or(TranscriptionState::Unloaded)
+        *self.state.lock()
     }
 
     /// Reset state from Completed/Error back to Idle
     pub fn reset_to_idle(&self) -> TranscriptionResult<()> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| TranscriptionError::LockPoisoned)?;
+        let mut state = self.state.lock();
 
         if *state == TranscriptionState::Completed || *state == TranscriptionState::Error {
             *state = TranscriptionState::Idle;
@@ -335,6 +321,12 @@ impl SharedTranscriptionModel {
     /// Acquires `transcription_lock` before transcription to prevent concurrent
     /// execution with `transcribe_samples()`. The lock is held for the duration
     /// of the transcription and released when the guard is dropped.
+    ///
+    /// ## Panic Resilience
+    ///
+    /// Uses parking_lot::Mutex which doesn't poison on panic. If parakeet-rs
+    /// panics during transcription, the lock is released and subsequent
+    /// transcriptions can proceed normally.
     pub fn transcribe_file(&self, file_path: &str) -> TranscriptionResult<String> {
         if file_path.is_empty() {
             return Err(TranscriptionError::InvalidAudio(
@@ -343,17 +335,14 @@ impl SharedTranscriptionModel {
         }
 
         // Acquire exclusive transcription access - blocks if streaming is active
-        let _transcription_permit = self.acquire_transcription_lock()?;
+        let _transcription_permit = self.acquire_transcription_lock();
 
         // Acquire guard - sets state to Transcribing
         let mut state_guard = TranscribingGuard::new(self.state.clone())?;
 
         // Do the actual transcription work
         let result = {
-            let mut model_guard = self
-                .model
-                .lock()
-                .map_err(|_| TranscriptionError::LockPoisoned)?;
+            let mut model_guard = self.model.lock();
 
             let tdt = model_guard.as_mut().ok_or(TranscriptionError::ModelNotLoaded)?;
 
@@ -393,6 +382,12 @@ impl SharedTranscriptionModel {
     /// execution with `transcribe_file()`. The lock is held for the duration
     /// of the transcription and released when the method returns.
     ///
+    /// ## Panic Resilience
+    ///
+    /// Uses parking_lot::Mutex which doesn't poison on panic. If parakeet-rs
+    /// panics during transcription, the lock is released and subsequent
+    /// transcriptions can proceed normally.
+    ///
     /// Note: We don't set state to Transcribing for streaming use cases
     /// to avoid state conflicts with batch transcription. The state machine
     /// is primarily for the batch transcription flow.
@@ -409,12 +404,9 @@ impl SharedTranscriptionModel {
         }
 
         // Acquire exclusive transcription access - blocks if batch transcription is active
-        let _transcription_permit = self.acquire_transcription_lock()?;
+        let _transcription_permit = self.acquire_transcription_lock();
 
-        let mut guard = self
-            .model
-            .lock()
-            .map_err(|_| TranscriptionError::LockPoisoned)?;
+        let mut guard = self.model.lock();
 
         let tdt = guard.as_mut().ok_or(TranscriptionError::ModelNotLoaded)?;
 
