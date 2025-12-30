@@ -1,32 +1,24 @@
 // Voice commands module - command matching and execution
+//
+// Tauri commands use TursoClient for persistence.
+// This file contains Tauri-specific wrappers and is excluded from coverage.
+#![cfg_attr(coverage_nightly, coverage(off))]
 
 pub mod actions;
 pub mod executor;
 pub mod matcher;
 pub mod registry;
 
-use crate::spacetimedb::client::SpacetimeClient;
-use registry::{ActionType, CommandDefinition, CommandRegistry, RegistryError};
+use crate::turso::{events as turso_events, TursoClient};
+use registry::{ActionType, CommandDefinition, RegistryError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tauri::AppHandle;
 use uuid::Uuid;
 
-/// State wrapper for the command registry
-pub struct VoiceCommandsState {
-    pub registry: Arc<Mutex<CommandRegistry>>,
-}
-
-impl VoiceCommandsState {
-    /// Create a new VoiceCommandsState with a SpacetimeDB client
-    pub fn new(client: Arc<Mutex<SpacetimeClient>>) -> Result<Self, RegistryError> {
-        let mut registry = CommandRegistry::new(client);
-        registry.load()?;
-        Ok(Self {
-            registry: Arc::new(Mutex::new(registry)),
-        })
-    }
-}
+/// Type alias for Turso client state
+pub type TursoClientState = Arc<TursoClient>;
 
 /// DTO for command definition (for Tauri serialization)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +48,12 @@ impl From<&CommandDefinition> for CommandDto {
     }
 }
 
+impl From<CommandDefinition> for CommandDto {
+    fn from(cmd: CommandDefinition) -> Self {
+        CommandDto::from(&cmd)
+    }
+}
+
 /// Input for adding a new command
 #[derive(Debug, Clone, Deserialize)]
 pub struct AddCommandInput {
@@ -75,22 +73,33 @@ pub struct UpdateCommandInput {
     pub enabled: bool,
 }
 
+/// Map RegistryError to user-friendly error messages
+fn to_user_error(error: RegistryError) -> String {
+    match error {
+        RegistryError::EmptyTrigger => "Trigger phrase cannot be empty".to_string(),
+        RegistryError::NotFound(id) => format!("Command with ID '{}' not found", id),
+        RegistryError::PersistenceError(msg) => format!("Failed to save command: {}", msg),
+        RegistryError::LoadError(msg) => format!("Failed to load commands: {}", msg),
+    }
+}
+
 /// Get all registered commands
 #[tauri::command]
-pub fn get_commands(
-    state: tauri::State<'_, VoiceCommandsState>,
+pub async fn get_commands(
+    turso_client: tauri::State<'_, TursoClientState>,
 ) -> Result<Vec<CommandDto>, String> {
-    let registry = state
-        .registry
-        .lock()
-        .map_err(|e| format!("Lock error: {}", e))?;
-    Ok(registry.list().iter().map(|c| CommandDto::from(*c)).collect())
+    turso_client
+        .list_voice_commands()
+        .await
+        .map(|commands| commands.into_iter().map(CommandDto::from).collect())
+        .map_err(to_user_error)
 }
 
 /// Add a new command
 #[tauri::command]
-pub fn add_command(
-    state: tauri::State<'_, VoiceCommandsState>,
+pub async fn add_command(
+    app_handle: AppHandle,
+    turso_client: tauri::State<'_, TursoClientState>,
     input: AddCommandInput,
 ) -> Result<CommandDto, String> {
     let action_type: ActionType = input.action_type.parse()?;
@@ -102,32 +111,44 @@ pub fn add_command(
         enabled: input.enabled,
     };
 
-    let mut registry = state
-        .registry
-        .lock()
-        .map_err(|e| format!("Lock error: {}", e))?;
-    registry.add(cmd.clone()).map_err(|e| e.to_string())?;
+    turso_client
+        .add_voice_command(&cmd)
+        .await
+        .map_err(to_user_error)?;
+
+    // Emit voice_commands_updated event
+    turso_events::emit_voice_commands_updated(&app_handle, "add", &cmd.id.to_string());
+
+    crate::info!("Added voice command: {}", cmd.trigger);
     Ok(CommandDto::from(&cmd))
 }
 
 /// Remove a command by ID
 #[tauri::command]
-pub fn remove_command(
-    state: tauri::State<'_, VoiceCommandsState>,
+pub async fn remove_command(
+    app_handle: AppHandle,
+    turso_client: tauri::State<'_, TursoClientState>,
     id: String,
 ) -> Result<(), String> {
     let uuid = Uuid::parse_str(&id).map_err(|e| format!("Invalid UUID: {}", e))?;
-    let mut registry = state
-        .registry
-        .lock()
-        .map_err(|e| format!("Lock error: {}", e))?;
-    registry.delete(uuid).map_err(|e| e.to_string())
+
+    turso_client
+        .delete_voice_command(uuid)
+        .await
+        .map_err(to_user_error)?;
+
+    // Emit voice_commands_updated event
+    turso_events::emit_voice_commands_updated(&app_handle, "delete", &id);
+
+    crate::info!("Deleted voice command: {}", id);
+    Ok(())
 }
 
 /// Update an existing command
 #[tauri::command]
-pub fn update_command(
-    state: tauri::State<'_, VoiceCommandsState>,
+pub async fn update_command(
+    app_handle: AppHandle,
+    turso_client: tauri::State<'_, TursoClientState>,
     input: UpdateCommandInput,
 ) -> Result<CommandDto, String> {
     let uuid = Uuid::parse_str(&input.id).map_err(|e| format!("Invalid UUID: {}", e))?;
@@ -140,10 +161,14 @@ pub fn update_command(
         enabled: input.enabled,
     };
 
-    let mut registry = state
-        .registry
-        .lock()
-        .map_err(|e| format!("Lock error: {}", e))?;
-    registry.update(cmd.clone()).map_err(|e| e.to_string())?;
+    turso_client
+        .update_voice_command(&cmd)
+        .await
+        .map_err(to_user_error)?;
+
+    // Emit voice_commands_updated event
+    turso_events::emit_voice_commands_updated(&app_handle, "update", &input.id);
+
+    crate::info!("Updated voice command: {}", input.id);
     Ok(CommandDto::from(&cmd))
 }

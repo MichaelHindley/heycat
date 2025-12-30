@@ -4,27 +4,17 @@
 // This file contains Tauri-specific wrappers and is excluded from coverage.
 #![cfg_attr(coverage_nightly, coverage(off))]
 
-use crate::events::window_context_events::{self, WindowContextsUpdatedPayload};
-use crate::spacetimedb::SpacetimeClient;
+use crate::turso::{events as turso_events, TursoClient};
 use crate::window_context::{
     get_active_window, get_running_applications, ActiveWindowInfo, OverrideMode,
     RunningApplication, WindowContext, WindowContextStoreError, WindowMatcher,
 };
-use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter, State};
+use std::sync::Arc;
+use tauri::{AppHandle, State};
 use uuid::Uuid;
 
-/// Type alias for SpacetimeDB client state (required - no fallback)
-pub type SpacetimeClientState = Arc<Mutex<SpacetimeClient>>;
-
-/// Helper macro to emit events with error logging
-macro_rules! emit_or_warn {
-    ($handle:expr, $event:expr, $payload:expr) => {
-        if let Err(e) = $handle.emit($event, $payload) {
-            crate::warn!("Failed to emit event '{}': {}", $event, e);
-        }
-    };
-}
+/// Type alias for Turso client state
+pub type TursoClientState = Arc<TursoClient>;
 
 /// Map WindowContextStoreError to user-friendly error messages
 fn to_user_error(error: WindowContextStoreError) -> String {
@@ -60,25 +50,25 @@ pub fn list_running_applications() -> Vec<RunningApplication> {
 
 /// List all window contexts
 ///
-/// Returns all contexts from SpacetimeDB.
+/// Returns all contexts from Turso database.
 #[tauri::command]
-pub fn list_window_contexts(
-    spacetimedb_client: State<'_, SpacetimeClientState>,
+pub async fn list_window_contexts(
+    turso_client: State<'_, TursoClientState>,
 ) -> Result<Vec<WindowContext>, String> {
-    let client = spacetimedb_client
-        .lock()
-        .map_err(|_| "Failed to access SpacetimeDB client".to_string())?;
-    client.list_window_contexts().map_err(to_user_error)
+    turso_client
+        .list_window_contexts()
+        .await
+        .map_err(to_user_error)
 }
 
 /// Add a new window context
 ///
 /// Creates a new context with the given parameters, generates a unique ID,
-/// persists to SpacetimeDB, and emits a window_contexts_updated event.
+/// persists to Turso, and emits a window_contexts_updated event.
 #[tauri::command]
-pub fn add_window_context(
+pub async fn add_window_context(
     app_handle: AppHandle,
-    spacetimedb_client: State<'_, SpacetimeClientState>,
+    turso_client: State<'_, TursoClientState>,
     name: String,
     app_name: String,
     title_pattern: Option<String>,
@@ -119,12 +109,8 @@ pub fn add_window_context(
     let enabled_val = enabled.unwrap_or(true);
     let priority_val = priority.unwrap_or(0);
 
-    // Add context to SpacetimeDB
-    let client = spacetimedb_client
-        .lock()
-        .map_err(|_| "Failed to access SpacetimeDB client".to_string())?;
-
-    let context = client
+    // Add context to Turso
+    let context = turso_client
         .add_window_context(
             name.clone(),
             matcher.clone(),
@@ -135,17 +121,11 @@ pub fn add_window_context(
             enabled_val,
             priority_val,
         )
+        .await
         .map_err(to_user_error)?;
 
     // Emit window_contexts_updated event
-    emit_or_warn!(
-        app_handle,
-        window_context_events::WINDOW_CONTEXTS_UPDATED,
-        WindowContextsUpdatedPayload {
-            action: "add".to_string(),
-            context_id: context.id.to_string(),
-        }
-    );
+    turso_events::emit_window_contexts_updated(&app_handle, "add", &context.id.to_string());
 
     crate::info!("Added window context: {} ({})", context.name, context.id);
     Ok(context)
@@ -153,12 +133,12 @@ pub fn add_window_context(
 
 /// Update an existing window context
 ///
-/// Updates the context with the given ID, persists to SpacetimeDB,
+/// Updates the context with the given ID, persists to Turso,
 /// and emits a window_contexts_updated event.
 #[tauri::command]
-pub fn update_window_context(
+pub async fn update_window_context(
     app_handle: AppHandle,
-    spacetimedb_client: State<'_, SpacetimeClientState>,
+    turso_client: State<'_, TursoClientState>,
     id: String,
     name: String,
     app_name: String,
@@ -210,22 +190,14 @@ pub fn update_window_context(
         priority: priority.unwrap_or(0),
     };
 
-    // Update context in SpacetimeDB
-    let client = spacetimedb_client
-        .lock()
-        .map_err(|_| "Failed to access SpacetimeDB client".to_string())?;
-
-    client.update_window_context(context).map_err(to_user_error)?;
+    // Update context in Turso
+    turso_client
+        .update_window_context(context)
+        .await
+        .map_err(to_user_error)?;
 
     // Emit window_contexts_updated event
-    emit_or_warn!(
-        app_handle,
-        window_context_events::WINDOW_CONTEXTS_UPDATED,
-        WindowContextsUpdatedPayload {
-            action: "update".to_string(),
-            context_id: id.clone(),
-        }
-    );
+    turso_events::emit_window_contexts_updated(&app_handle, "update", &id);
 
     crate::info!("Updated window context: {}", id);
     Ok(())
@@ -233,32 +205,24 @@ pub fn update_window_context(
 
 /// Delete a window context
 ///
-/// Removes the context with the given ID, persists to SpacetimeDB,
+/// Removes the context with the given ID, persists to Turso,
 /// and emits a window_contexts_updated event.
 #[tauri::command]
-pub fn delete_window_context(
+pub async fn delete_window_context(
     app_handle: AppHandle,
-    spacetimedb_client: State<'_, SpacetimeClientState>,
+    turso_client: State<'_, TursoClientState>,
     id: String,
 ) -> Result<(), String> {
     let uuid = Uuid::parse_str(&id).map_err(|_| format!("Invalid UUID: {}", id))?;
 
-    // Delete context from SpacetimeDB
-    let client = spacetimedb_client
-        .lock()
-        .map_err(|_| "Failed to access SpacetimeDB client".to_string())?;
-
-    client.delete_window_context(uuid).map_err(to_user_error)?;
+    // Delete context from Turso
+    turso_client
+        .delete_window_context(uuid)
+        .await
+        .map_err(to_user_error)?;
 
     // Emit window_contexts_updated event
-    emit_or_warn!(
-        app_handle,
-        window_context_events::WINDOW_CONTEXTS_UPDATED,
-        WindowContextsUpdatedPayload {
-            action: "delete".to_string(),
-            context_id: id.clone(),
-        }
-    );
+    turso_events::emit_window_contexts_updated(&app_handle, "delete", &id);
 
     crate::info!("Deleted window context: {}", id);
     Ok(())

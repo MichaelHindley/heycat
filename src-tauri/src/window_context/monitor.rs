@@ -6,7 +6,7 @@
 use super::types::ActiveWindowInfo;
 use super::{get_active_window, WindowContext};
 use crate::events::window_context_events::{self, ActiveWindowChangedPayload};
-use crate::spacetimedb::client::SpacetimeClient;
+use crate::turso::TursoClient;
 use regex::Regex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -88,14 +88,14 @@ impl WindowMonitor {
     ///
     /// # Arguments
     /// * `app_handle` - Tauri app handle for event emission
-    /// * `spacetime_client` - SpacetimeDB client for window context retrieval
+    /// * `turso_client` - Turso client for window context retrieval
     ///
     /// # Returns
     /// Ok(()) if started successfully, Err if already running
     pub fn start(
         &mut self,
         app_handle: AppHandle,
-        spacetime_client: Arc<Mutex<SpacetimeClient>>,
+        turso_client: Arc<TursoClient>,
     ) -> Result<(), String> {
         if self.running.load(Ordering::SeqCst) {
             return Err("Monitor is already running".to_string());
@@ -109,6 +109,12 @@ impl WindowMonitor {
 
         let handle = thread::spawn(move || {
             crate::info!("[WindowMonitor] Starting background monitoring");
+
+            // Create a tokio runtime for async operations in this thread
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to create tokio runtime for WindowMonitor");
 
             let mut last_window: Option<ActiveWindowInfo> = None;
             let mut last_context_id: Option<Uuid> = None;
@@ -128,17 +134,17 @@ impl WindowMonitor {
                         };
 
                         if window_changed {
-                            // Find matching context from SpacetimeDB
-                            let matched_context = spacetime_client
-                                .lock()
-                                .ok()
-                                .and_then(|client| {
-                                    client.list_window_contexts().ok()
-                                })
-                                .and_then(|contexts| {
-                                    find_matching_context(&contexts, &window)
-                                        .map(|ctx| (ctx.id, ctx.name.clone()))
-                                });
+                            // Find matching context from Turso
+                            let matched_context = rt.block_on(async {
+                                turso_client
+                                    .list_window_contexts()
+                                    .await
+                                    .ok()
+                                    .and_then(|contexts| {
+                                        find_matching_context(&contexts, &window)
+                                            .map(|ctx| (ctx.id, ctx.name.clone()))
+                                    })
+                            });
 
                             let matched_context_id = matched_context.as_ref().map(|(id, _)| *id);
                             let matched_context_name = matched_context.map(|(_, name)| name);

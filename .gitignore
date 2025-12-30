@@ -37,6 +37,3 @@ coverage/
 
 # Git worktrees
 worktrees/
-
-# SpacetimeDB build artifacts
-spacetimedb/target/

@@ -10,7 +10,7 @@
 
 use super::{OverrideMode, WindowMonitor};
 use crate::dictionary::DictionaryEntry;
-use crate::spacetimedb::client::SpacetimeClient;
+use crate::turso::TursoClient;
 use crate::voice_commands::registry::CommandDefinition;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
@@ -19,17 +19,32 @@ use uuid::Uuid;
 pub struct ContextResolver {
     /// Reference to the window monitor for current context
     monitor: Arc<Mutex<WindowMonitor>>,
-    /// Reference to SpacetimeDB client for window contexts
-    client: Arc<Mutex<SpacetimeClient>>,
+    /// Reference to Turso client for window contexts
+    client: Arc<TursoClient>,
 }
 
 impl ContextResolver {
     /// Create a new context resolver
     pub fn new(
         monitor: Arc<Mutex<WindowMonitor>>,
-        client: Arc<Mutex<SpacetimeClient>>,
+        client: Arc<TursoClient>,
     ) -> Self {
         Self { monitor, client }
+    }
+
+    /// Helper to run async operations in sync context
+    fn run_async<F, T>(&self, future: F) -> T
+    where
+        F: std::future::Future<Output = T>,
+    {
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => tokio::task::block_in_place(|| handle.block_on(future)),
+            Err(_) => {
+                let rt = tokio::runtime::Runtime::new()
+                    .expect("Failed to create runtime for context resolver");
+                rt.block_on(future)
+            }
+        }
     }
 
     /// Get the effective commands based on active context
@@ -64,18 +79,15 @@ impl ContextResolver {
             }
             None => {
                 // Get all contexts to find which commands are assigned somewhere
-                let assigned_command_ids: std::collections::HashSet<Uuid> = match self.client.lock() {
-                    Ok(client) => {
-                        match client.list_window_contexts() {
-                            Ok(contexts) => contexts
-                                .iter()
-                                .flat_map(|ctx| ctx.command_ids.iter().cloned())
-                                .collect(),
-                            Err(_) => std::collections::HashSet::new(),
-                        }
+                let assigned_command_ids: std::collections::HashSet<Uuid> = self.run_async(async {
+                    match self.client.list_window_contexts().await {
+                        Ok(contexts) => contexts
+                            .iter()
+                            .flat_map(|ctx| ctx.command_ids.iter().cloned())
+                            .collect(),
+                        Err(_) => std::collections::HashSet::new(),
                     }
-                    Err(_) => std::collections::HashSet::new(),
-                };
+                });
 
                 // Return only commands not assigned to any context
                 let global_commands: Vec<CommandDefinition> = all_commands
@@ -93,25 +105,19 @@ impl ContextResolver {
             }
         };
 
-        // Get the context from SpacetimeDB
-        let context = match self.client.lock() {
-            Ok(client) => match client.get_window_context(context_id) {
+        // Get the context from Turso
+        let context = self.run_async(async {
+            match self.client.get_window_context(context_id).await {
                 Ok(ctx) => ctx,
                 Err(e) => {
                     crate::warn!(
-                        "[ContextResolver] Failed to get context from SpacetimeDB: {}, returning global commands",
+                        "[ContextResolver] Failed to get context from Turso: {}, returning global commands",
                         e
                     );
-                    return all_commands.to_vec();
+                    None
                 }
-            },
-            Err(_) => {
-                crate::warn!(
-                    "[ContextResolver] Failed to lock SpacetimeDB client, returning global commands"
-                );
-                return all_commands.to_vec();
             }
-        };
+        });
 
         let context = match context {
             Some(ctx) => ctx,
@@ -191,18 +197,15 @@ impl ContextResolver {
             }
             None => {
                 // Get all contexts to find which entries are assigned somewhere
-                let assigned_entry_ids: std::collections::HashSet<String> = match self.client.lock() {
-                    Ok(client) => {
-                        match client.list_window_contexts() {
-                            Ok(contexts) => contexts
-                                .iter()
-                                .flat_map(|ctx| ctx.dictionary_entry_ids.iter().cloned())
-                                .collect(),
-                            Err(_) => std::collections::HashSet::new(),
-                        }
+                let assigned_entry_ids: std::collections::HashSet<String> = self.run_async(async {
+                    match self.client.list_window_contexts().await {
+                        Ok(contexts) => contexts
+                            .iter()
+                            .flat_map(|ctx| ctx.dictionary_entry_ids.iter().cloned())
+                            .collect(),
+                        Err(_) => std::collections::HashSet::new(),
                     }
-                    Err(_) => std::collections::HashSet::new(),
-                };
+                });
 
                 // Return only entries not assigned to any context
                 let global_entries: Vec<DictionaryEntry> = all_entries
@@ -220,25 +223,19 @@ impl ContextResolver {
             }
         };
 
-        // Get the context from SpacetimeDB
-        let context = match self.client.lock() {
-            Ok(client) => match client.get_window_context(context_id) {
+        // Get the context from Turso
+        let context = self.run_async(async {
+            match self.client.get_window_context(context_id).await {
                 Ok(ctx) => ctx,
                 Err(e) => {
                     crate::warn!(
-                        "[ContextResolver] Failed to get context from SpacetimeDB: {}, returning global dictionary",
+                        "[ContextResolver] Failed to get context from Turso: {}, returning global dictionary",
                         e
                     );
-                    return all_entries.to_vec();
+                    None
                 }
-            },
-            Err(_) => {
-                crate::warn!(
-                    "[ContextResolver] Failed to lock SpacetimeDB client, returning global dictionary"
-                );
-                return all_entries.to_vec();
             }
-        };
+        });
 
         let context = match context {
             Some(ctx) => ctx,

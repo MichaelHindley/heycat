@@ -1,6 +1,6 @@
-// Fuzzy matcher - matches transcribed text against registered commands
+// Fuzzy matcher - matches transcribed text against commands
 
-use crate::voice_commands::registry::{CommandDefinition, CommandRegistry};
+use crate::voice_commands::registry::CommandDefinition;
 use serde::Serialize;
 use strsim::normalized_levenshtein;
 use std::collections::HashMap;
@@ -189,12 +189,6 @@ impl CommandMatcher {
         } else {
             None
         }
-    }
-
-    /// Match input against all commands in the registry
-    pub fn match_input(&self, input: &str, registry: &CommandRegistry) -> MatchResult {
-        let commands: Vec<_> = registry.list().iter().map(|c| (*c).clone()).collect();
-        self.match_commands(input, &commands)
     }
 
     /// Match input against a slice of commands

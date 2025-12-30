@@ -1,7 +1,7 @@
 // Window context store error types
 //
-// The WindowContextStore struct was removed as SpacetimeDB is now used for persistence.
-// This error type is kept for API compatibility with SpacetimeDB client.
+// The WindowContextStore struct was removed as Turso is now used for persistence.
+// This error type is kept for API compatibility with TursoClient.
 
 use uuid::Uuid;
 

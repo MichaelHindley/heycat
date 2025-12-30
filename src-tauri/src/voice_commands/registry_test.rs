@@ -1,6 +1,6 @@
 // Tests for voice command registry types and validation
 //
-// Note: CRUD operations are tested via SpacetimeDB integration tests.
+// Note: CRUD operations are tested via Turso integration tests.
 // These tests cover type definitions, serialization, and error handling.
 
 use super::*;

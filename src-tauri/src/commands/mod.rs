@@ -26,16 +26,14 @@ use crate::events::{
 use crate::audio::{AudioDeviceError, AudioInputDevice, AudioThreadHandle, StopReason, encode_wav, SystemFileWriter};
 use crate::parakeet::SharedTranscriptionModel;
 use crate::recording::{AudioData, RecordingManager, RecordingMetadata};
-use crate::spacetimedb::SpacetimeClient;
+use crate::turso::{events as turso_events, TursoClient};
 use crate::window_context::get_active_window;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
-/// Type alias for SpacetimeDB client state
-/// Note: The client is always created at startup or the app fails to start,
-/// so we don't need Option here.
-pub type SpacetimeClientState = Arc<Mutex<SpacetimeClient>>;
+/// Type alias for Turso client state
+pub type TursoClientState = Arc<TursoClient>;
 
 /// Helper macro to emit events with error logging
 macro_rules! emit_or_warn {
@@ -222,11 +220,11 @@ pub fn start_recording(
 /// After successfully stopping the recording, this command triggers transcription
 /// via the TranscriptionService. This enables button-initiated recordings to get
 /// the same transcription flow as hotkey-initiated recordings.
-/// Also stores recording metadata in SpacetimeDB if connected.
+/// Also stores recording metadata in Turso.
 #[tauri::command]
-pub fn stop_recording(
+pub async fn stop_recording(
     app_handle: AppHandle,
-    spacetimedb_client: State<'_, SpacetimeClientState>,
+    turso_client: State<'_, TursoClientState>,
     state: State<'_, ProductionState>,
     audio_thread: State<'_, AudioThreadState>,
     transcription_service: State<'_, TranscriptionServiceState>,
@@ -283,7 +281,7 @@ pub fn stop_recording(
             }
         }
 
-        // Store recording metadata in SpacetimeDB if connected
+        // Store recording metadata in Turso
         if !metadata.file_path.is_empty() {
             // Capture active window info
             let (app_name, bundle_id, title) = match get_active_window() {
@@ -298,24 +296,25 @@ pub fn stop_recording(
                 }
             };
 
-            if let Ok(client) = spacetimedb_client.lock() {
-                if client.is_connected() {
-                    let recording_id = uuid::Uuid::new_v4().to_string();
-                    if let Err(e) = client.add_recording(
-                        recording_id,
-                        metadata.file_path.clone(),
-                        metadata.duration_secs,
-                        metadata.sample_count as u64,
-                        metadata.stop_reason.clone(),
-                        app_name,
-                        bundle_id,
-                        title,
-                    ) {
-                        crate::warn!("Failed to store recording in SpacetimeDB: {}", e);
-                    } else {
-                        crate::debug!("Recording metadata stored in SpacetimeDB");
-                    }
-                }
+            let recording_id = uuid::Uuid::new_v4().to_string();
+            if let Err(e) = turso_client
+                .add_recording(
+                    recording_id.clone(),
+                    metadata.file_path.clone(),
+                    metadata.duration_secs,
+                    metadata.sample_count as u64,
+                    metadata.stop_reason.clone(),
+                    app_name,
+                    bundle_id,
+                    title,
+                )
+                .await
+            {
+                crate::warn!("Failed to store recording in Turso: {}", e);
+            } else {
+                crate::debug!("Recording metadata stored in Turso");
+                // Emit recordings_updated event
+                turso_events::emit_recordings_updated(&app_handle, "add", Some(&recording_id));
             }
         }
 
@@ -361,9 +360,9 @@ pub fn clear_last_recording_buffer(state: State<'_, ProductionState>) -> Result<
 /// * `limit` - Maximum number of recordings to return (default: 20)
 /// * `offset` - Number of recordings to skip (default: 0)
 #[tauri::command]
-pub fn list_recordings(
+pub async fn list_recordings(
     app_handle: AppHandle,
-    spacetimedb_client: State<'_, SpacetimeClientState>,
+    turso_client: State<'_, TursoClientState>,
     limit: Option<usize>,
     offset: Option<usize>,
 ) -> Result<PaginatedRecordingsResponse, String> {
@@ -374,39 +373,36 @@ pub fn list_recordings(
     let recordings_dir = crate::paths::get_recordings_dir(worktree_context.as_ref())
         .unwrap_or_else(|_| std::path::PathBuf::from(".").join("heycat").join("recordings"));
 
-    // Fetch recording context from SpacetimeDB to merge with recordings
+    // Fetch recording context from Turso to merge with recordings
     let mut recording_context: std::collections::HashMap<String, RecordingContextData> = std::collections::HashMap::new();
-    if let Ok(client) = spacetimedb_client.lock() {
-        if client.is_connected() {
-            // Get all recordings from SpacetimeDB
-            if let Ok(sdb_recordings) = client.list_recordings() {
-                // Build file_path -> recording_id map and populate context
-                let mut file_to_recording_id: std::collections::HashMap<String, String> = std::collections::HashMap::new();
 
-                for recording in &sdb_recordings {
-                    file_to_recording_id.insert(recording.file_path.clone(), recording.id.clone());
+    // Get all recordings from Turso
+    if let Ok(turso_recordings) = turso_client.list_recordings().await {
+        // Build file_path -> recording_id map and populate context
+        let mut file_to_recording_id: std::collections::HashMap<String, String> = std::collections::HashMap::new();
 
-                    // Initialize context with window info
-                    recording_context.insert(recording.file_path.clone(), RecordingContextData {
-                        transcription: None, // Will be filled in below
-                        active_window_app_name: recording.active_window_app_name.clone(),
-                        active_window_bundle_id: recording.active_window_bundle_id.clone(),
-                        active_window_title: recording.active_window_title.clone(),
-                    });
-                }
+        for recording in &turso_recordings {
+            file_to_recording_id.insert(recording.file_path.clone(), recording.id.clone());
 
-                // Get all transcriptions and add to context
-                if let Ok(all_transcriptions) = client.list_transcriptions() {
-                    for trans in all_transcriptions {
-                        // Find the file_path for this transcription's recording_id
-                        for (file_path, recording_id) in &file_to_recording_id {
-                            if *recording_id == trans.recording_id {
-                                if let Some(ctx) = recording_context.get_mut(file_path) {
-                                    ctx.transcription = Some(trans.text.clone());
-                                }
-                                break;
-                            }
+            // Initialize context with window info
+            recording_context.insert(recording.file_path.clone(), RecordingContextData {
+                transcription: None, // Will be filled in below
+                active_window_app_name: recording.active_window_app_name.clone(),
+                active_window_bundle_id: recording.active_window_bundle_id.clone(),
+                active_window_title: recording.active_window_title.clone(),
+            });
+        }
+
+        // Get all transcriptions and add to context
+        if let Ok(all_transcriptions) = turso_client.list_transcriptions().await {
+            for trans in all_transcriptions {
+                // Find the file_path for this transcription's recording_id
+                for (file_path, recording_id) in &file_to_recording_id {
+                    if *recording_id == trans.recording_id {
+                        if let Some(ctx) = recording_context.get_mut(file_path) {
+                            ctx.transcription = Some(trans.text.clone());
                         }
+                        break;
                     }
                 }
             }
@@ -418,19 +414,19 @@ pub fn list_recordings(
 
 /// Delete a recording file
 ///
-/// Also removes recording metadata from SpacetimeDB if connected.
+/// Also removes recording metadata from Turso.
 #[tauri::command]
-pub fn delete_recording(
-    spacetimedb_client: State<'_, SpacetimeClientState>,
+pub async fn delete_recording(
+    app_handle: AppHandle,
+    turso_client: State<'_, TursoClientState>,
     file_path: String,
 ) -> Result<(), String> {
-    // Try to delete from SpacetimeDB first (non-blocking, ignore errors)
-    if let Ok(client) = spacetimedb_client.lock() {
-        if client.is_connected() {
-            if let Err(e) = client.delete_recording_by_path(&file_path) {
-                crate::debug!("SpacetimeDB recording delete (may not exist): {}", e);
-            }
-        }
+    // Try to delete from Turso first (non-blocking, ignore errors)
+    if let Err(e) = turso_client.delete_recording_by_path(&file_path).await {
+        crate::debug!("Turso recording delete (may not exist): {}", e);
+    } else {
+        // Emit recordings_updated event on successful delete
+        turso_events::emit_recordings_updated(&app_handle, "delete", Some(&file_path));
     }
 
     // Delete the actual file
@@ -439,11 +435,11 @@ pub fn delete_recording(
 
 /// Transcribe an audio file and copy result to clipboard
 ///
-/// Also stores the transcription in SpacetimeDB if connected.
+/// Also stores the transcription in Turso.
 #[tauri::command]
 pub async fn transcribe_file(
     app_handle: AppHandle,
-    spacetimedb_client: State<'_, SpacetimeClientState>,
+    turso_client: State<'_, TursoClientState>,
     shared_model: State<'_, Arc<SharedTranscriptionModel>>,
     file_path: String,
 ) -> Result<String, String> {
@@ -477,30 +473,30 @@ pub async fn transcribe_file(
                 crate::warn!("Failed to copy transcription to clipboard: {}", e);
             }
 
-            // Store transcription in SpacetimeDB if connected
-            if let Ok(client) = spacetimedb_client.lock() {
-                if client.is_connected() {
-                    // Find recording ID for this file path
-                    if let Ok(recording) = client.get_recording_by_path(&file_path) {
-                        if let Some(recording) = recording {
-                            let transcription_id = uuid::Uuid::new_v4().to_string();
-                            if let Err(e) = client.add_transcription(
-                                transcription_id,
-                                recording.id,
-                                text.clone(),
-                                None, // language not detected
-                                "parakeet-tdt".to_string(),
-                                duration_ms,
-                            ) {
-                                crate::warn!("Failed to store transcription in SpacetimeDB: {}", e);
-                            } else {
-                                crate::debug!("Transcription stored in SpacetimeDB");
-                            }
-                        } else {
-                            crate::debug!("No SpacetimeDB recording found for path: {}", file_path);
-                        }
-                    }
+            // Store transcription in Turso
+            // Find recording ID for this file path
+            if let Ok(Some(recording)) = turso_client.get_recording_by_path(&file_path).await {
+                let recording_id = recording.id.clone();
+                let transcription_id = uuid::Uuid::new_v4().to_string();
+                if let Err(e) = turso_client
+                    .add_transcription(
+                        transcription_id.clone(),
+                        recording_id.clone(),
+                        text.clone(),
+                        None, // language not detected
+                        "parakeet-tdt".to_string(),
+                        duration_ms,
+                    )
+                    .await
+                {
+                    crate::warn!("Failed to store transcription in Turso: {}", e);
+                } else {
+                    crate::debug!("Transcription stored in Turso");
+                    // Emit transcriptions_updated event
+                    turso_events::emit_transcriptions_updated(&app_handle, "add", Some(&transcription_id), Some(&recording_id));
                 }
+            } else {
+                crate::debug!("No Turso recording found for path: {}", file_path);
             }
 
             // Emit transcription completed event
@@ -856,7 +852,7 @@ pub fn open_accessibility_preferences() -> Result<(), String> {
 }
 
 // =============================================================================
-// Transcription Storage Commands (SpacetimeDB)
+// Transcription Storage Commands (Turso)
 // =============================================================================
 
 /// Transcription record for frontend consumption
@@ -871,68 +867,59 @@ pub struct TranscriptionInfo {
     pub created_at: String,
 }
 
-/// List all transcriptions from SpacetimeDB
+/// List all transcriptions from Turso
 ///
-/// Returns all stored transcriptions if SpacetimeDB is connected,
-/// otherwise returns an empty list.
+/// Returns all stored transcriptions.
 #[tauri::command]
-pub fn list_transcriptions(
-    spacetimedb_client: State<'_, SpacetimeClientState>,
+pub async fn list_transcriptions(
+    turso_client: State<'_, TursoClientState>,
 ) -> Result<Vec<TranscriptionInfo>, String> {
-    if let Ok(client) = spacetimedb_client.lock() {
-        if client.is_connected() {
-            return client
-                .list_transcriptions()
-                .map(|transcriptions| {
-                    transcriptions
-                        .into_iter()
-                        .map(|t| TranscriptionInfo {
-                            id: t.id,
-                            recording_id: t.recording_id,
-                            text: t.text,
-                            language: t.language,
-                            model_version: t.model_version,
-                            duration_ms: t.duration_ms,
-                            created_at: t.created_at,
-                        })
-                        .collect()
+    turso_client
+        .list_transcriptions()
+        .await
+        .map(|transcriptions| {
+            transcriptions
+                .into_iter()
+                .map(|t| TranscriptionInfo {
+                    id: t.id,
+                    recording_id: t.recording_id,
+                    text: t.text,
+                    language: t.language,
+                    model_version: t.model_version,
+                    duration_ms: t.duration_ms,
+                    created_at: t.created_at,
                 })
-                .map_err(|e| format!("Failed to list transcriptions: {}", e));
-        }
-    }
-    Ok(Vec::new())
+                .collect()
+        })
+        .map_err(|e| format!("Failed to list transcriptions: {}", e))
 }
 
 /// Get transcriptions for a specific recording
 ///
 /// Returns all transcriptions linked to the given recording ID.
 #[tauri::command]
-pub fn get_transcriptions_by_recording(
-    spacetimedb_client: State<'_, SpacetimeClientState>,
+pub async fn get_transcriptions_by_recording(
+    turso_client: State<'_, TursoClientState>,
     recording_id: String,
 ) -> Result<Vec<TranscriptionInfo>, String> {
-    if let Ok(client) = spacetimedb_client.lock() {
-        if client.is_connected() {
-            return client
-                .get_transcriptions_by_recording(&recording_id)
-                .map(|transcriptions| {
-                    transcriptions
-                        .into_iter()
-                        .map(|t| TranscriptionInfo {
-                            id: t.id,
-                            recording_id: t.recording_id,
-                            text: t.text,
-                            language: t.language,
-                            model_version: t.model_version,
-                            duration_ms: t.duration_ms,
-                            created_at: t.created_at,
-                        })
-                        .collect()
+    turso_client
+        .get_transcriptions_by_recording(&recording_id)
+        .await
+        .map(|transcriptions| {
+            transcriptions
+                .into_iter()
+                .map(|t| TranscriptionInfo {
+                    id: t.id,
+                    recording_id: t.recording_id,
+                    text: t.text,
+                    language: t.language,
+                    model_version: t.model_version,
+                    duration_ms: t.duration_ms,
+                    created_at: t.created_at,
                 })
-                .map_err(|e| format!("Failed to get transcriptions: {}", e));
-        }
-    }
-    Ok(Vec::new())
+                .collect()
+        })
+        .map_err(|e| format!("Failed to get transcriptions: {}", e))
 }
 
 // =============================================================================

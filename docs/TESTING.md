@@ -342,3 +342,51 @@ When touching existing test files, apply these principles:
 4. **Rewrite**: Tests that are behavior-focused but overly fragile
 
 **Example:** 5 tests (`test_new_manager_starts_idle`, `test_default_manager_starts_idle`, `test_default_state_is_idle`, `test_start_recording_from_idle`, `test_valid_transition_recording_to_processing`) → 1 test: `test_complete_recording_flow()` covering the full cycle.
+
+---
+
+## Test Isolation for Shared Resources
+
+### Background: Segfault in Combined Tests
+
+Running `bun run test && cargo test` can cause intermittent SIGSEGV if tests accessing shared global state run in parallel. This was caused by the Swift `SharedAudioEngine` singleton being accessed by multiple Rust tests concurrently.
+
+See `docs/SEGFAULT_INVESTIGATION.md` for full root cause analysis.
+
+### Solution: Serial Test Execution
+
+Tests that access shared global resources (especially the Swift audio engine) must be serialized using the `serial_test` crate:
+
+```rust
+use serial_test::serial;
+
+#[test]
+#[serial(audio_engine)]  // All tests with same key run serially
+fn test_audio_engine_operations() {
+    // Safe to access SharedAudioEngine here
+}
+```
+
+### When to Use `#[serial]`
+
+Add `#[serial(audio_engine)]` to any test that:
+- Calls functions in `crate::swift::*` related to audio
+- Uses `AudioMonitorHandle` (spawns thread that touches Swift audio)
+- Directly starts/stops the audio engine
+
+Tests that only check types, traits, or use mocks don't need serialization.
+
+### Files with Serialized Tests
+
+| File | Tests | Reason |
+|------|-------|--------|
+| `src/swift.rs` | `test_list_audio_devices_returns_vec`, `test_audio_engine_*` | Direct Swift FFI calls |
+| `src/audio/monitor.rs` | All tests except `test_audio_monitor_handle_is_send_sync` | Spawns threads that call Swift |
+
+### Adding New Audio Tests
+
+When adding new tests that interact with the audio system:
+
+1. Add `use serial_test::serial;` to the test module
+2. Add `#[serial(audio_engine)]` attribute to the test
+3. The key `audio_engine` ensures all audio tests run serially across all modules

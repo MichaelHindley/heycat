@@ -13,10 +13,10 @@ use crate::events::{
 };
 use crate::parakeet::{SharedTranscriptionModel, TranscriptionService as TranscriptionServiceTrait};
 use crate::recording::RecordingManager;
-use crate::spacetimedb::SpacetimeClient;
+use crate::turso::{events as turso_events, TursoClient};
 use crate::voice_commands::executor::ActionDispatcher;
 use crate::voice_commands::matcher::{CommandMatcher, MatchResult};
-use crate::voice_commands::registry::CommandRegistry;
+use crate::voice_commands::registry::CommandDefinition;
 use crate::window_context::ContextResolver;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
@@ -24,64 +24,89 @@ use tauri::{AppHandle, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tokio::sync::Semaphore;
 
-/// Type alias for SpacetimeDB client state (required - no fallback)
-pub type SpacetimeClientState = Arc<Mutex<SpacetimeClient>>;
+/// Type alias for Turso client state
+pub type TursoClientState = Arc<TursoClient>;
 
-/// Store transcription result in SpacetimeDB
+/// Store transcription result in Turso
 ///
 /// This function is called after successful transcription to persist the result.
 /// It looks up the recording by file_path and stores the transcription linked to it.
-/// If the recording doesn't exist (e.g., hotkey flow bypasses storage), it creates one first.
-fn store_transcription_in_spacetimedb(
+fn store_transcription_in_turso(
     app_handle: &AppHandle,
     file_path: &str,
     text: &str,
     duration_ms: u64,
 ) {
-    // Get SpacetimeDB client from managed state
-    let spacetimedb_client: Option<tauri::State<'_, SpacetimeClientState>> =
+    // Get Turso client from managed state
+    let turso_client: Option<tauri::State<'_, TursoClientState>> =
         app_handle.try_state();
 
-    if let Some(client_state) = spacetimedb_client {
-        if let Ok(client_guard) = client_state.lock() {
+    if let Some(client) = turso_client {
+        // Async block to run with Turso client
+        let async_block = async {
             // Look up recording by file_path to get recording_id
-            let recording_id = match client_guard.get_recording_by_path(file_path) {
+            let recording_id = match client.get_recording_by_path(file_path).await {
                 Ok(Some(recording)) => {
-                    crate::debug!("Found existing recording in SpacetimeDB: {}", recording.id);
+                    crate::debug!("Found existing recording in Turso: {}", recording.id);
                     recording.id
                 }
                 Ok(None) => {
                     // Recording should exist - both normal and hotkey flows store recordings now
                     crate::warn!(
-                        "Recording not found in SpacetimeDB for transcription: {}",
+                        "Recording not found in Turso for transcription: {}",
                         file_path
                     );
                     return;
                 }
                 Err(e) => {
-                    crate::debug!("Failed to look up recording in SpacetimeDB: {}", e);
+                    crate::debug!("Failed to look up recording in Turso: {}", e);
                     return;
                 }
             };
 
             // Store the transcription
             let transcription_id = uuid::Uuid::new_v4().to_string();
-            let model_version = "whisper-tiny-quantized".to_string();
+            let model_version = "parakeet-tdt".to_string();
 
-            if let Err(e) = client_guard.add_transcription(
-                transcription_id,
-                recording_id.clone(),
-                text.to_string(),
-                None, // language - could be detected in future
-                model_version,
-                duration_ms,
-            ) {
-                crate::warn!("Failed to store transcription in SpacetimeDB: {}", e);
+            if let Err(e) = client
+                .add_transcription(
+                    transcription_id.clone(),
+                    recording_id.clone(),
+                    text.to_string(),
+                    None, // language - could be detected in future
+                    model_version,
+                    duration_ms,
+                )
+                .await
+            {
+                crate::warn!("Failed to store transcription in Turso: {}", e);
             } else {
                 crate::debug!(
-                    "Transcription stored in SpacetimeDB for recording {}",
+                    "Transcription stored in Turso for recording {}",
                     recording_id
                 );
+                // Emit transcriptions_updated event
+                turso_events::emit_transcriptions_updated(
+                    app_handle,
+                    "add",
+                    Some(&transcription_id),
+                    Some(&recording_id),
+                );
+            }
+        };
+
+        // Handle case where no Tokio runtime is available
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                tokio::task::block_in_place(|| handle.block_on(async_block));
+            }
+            Err(_) => {
+                // No runtime available, create a temporary one
+                if let Ok(rt) = tokio::runtime::Runtime::new() {
+                    rt.block_on(async_block);
+                } else {
+                    crate::warn!("Failed to create runtime for transcription storage");
+                }
             }
         }
     }
@@ -136,8 +161,8 @@ where
     transcription_emitter: Arc<T>,
     /// Recording state for buffer cleanup
     recording_state: Arc<Mutex<RecordingManager>>,
-    /// Optional command registry for voice command matching
-    command_registry: Option<Arc<Mutex<CommandRegistry>>>,
+    /// Optional Turso client for fetching voice commands
+    turso_client: Option<Arc<TursoClient>>,
     /// Optional command matcher for voice command matching
     command_matcher: Option<Arc<CommandMatcher>>,
     /// Optional action dispatcher for executing matched commands
@@ -154,8 +179,6 @@ where
     dictionary_expander: Arc<RwLock<Option<DictionaryExpander>>>,
     /// Optional context resolver for window-aware command/dictionary resolution
     context_resolver: Option<Arc<ContextResolver>>,
-    /// Optional SpacetimeDB client for context-aware dictionary expansion
-    spacetime_client: Option<Arc<Mutex<SpacetimeClient>>>,
 }
 
 impl<T, C> RecordingTranscriptionService<T, C>
@@ -174,7 +197,7 @@ where
             shared_transcription_model,
             transcription_emitter,
             recording_state,
-            command_registry: None,
+            turso_client: None,
             command_matcher: None,
             action_dispatcher: None,
             command_emitter: None,
@@ -183,13 +206,12 @@ where
             transcription_timeout: Duration::from_secs(DEFAULT_TRANSCRIPTION_TIMEOUT_SECS),
             dictionary_expander: Arc::new(RwLock::new(None)),
             context_resolver: None,
-            spacetime_client: None,
         }
     }
 
-    /// Add voice command registry (builder pattern)
-    pub fn with_command_registry(mut self, registry: Arc<Mutex<CommandRegistry>>) -> Self {
-        self.command_registry = Some(registry);
+    /// Add Turso client for voice command queries (builder pattern)
+    pub fn with_turso_client(mut self, client: Arc<TursoClient>) -> Self {
+        self.turso_client = Some(client);
         self
     }
 
@@ -227,12 +249,6 @@ where
     /// Add context resolver for window-aware command/dictionary resolution (builder pattern)
     pub fn with_context_resolver(mut self, resolver: Arc<ContextResolver>) -> Self {
         self.context_resolver = Some(resolver);
-        self
-    }
-
-    /// Add SpacetimeDB client for context-aware dictionary expansion (builder pattern)
-    pub fn with_spacetime_client(mut self, client: Arc<Mutex<SpacetimeClient>>) -> Self {
-        self.spacetime_client = Some(client);
         self
     }
 
@@ -285,7 +301,7 @@ where
         let shared_model = self.shared_transcription_model.clone();
         let transcription_emitter = self.transcription_emitter.clone();
         let recording_state = self.recording_state.clone();
-        let command_registry = self.command_registry.clone();
+        let turso_client = self.turso_client.clone();
         let command_matcher = self.command_matcher.clone();
         let action_dispatcher = self.action_dispatcher.clone();
         let command_emitter = self.command_emitter.clone();
@@ -294,7 +310,6 @@ where
         let timeout_duration = self.transcription_timeout;
         let dictionary_expander = self.dictionary_expander.clone();
         let context_resolver = self.context_resolver.clone();
-        let spacetime_client = self.spacetime_client.clone();
 
         crate::info!("Spawning transcription task for: {}", file_path);
 
@@ -389,8 +404,8 @@ where
                 text.len()
             );
 
-            // Store transcription in SpacetimeDB if connected
-            store_transcription_in_spacetimedb(
+            // Store transcription in Turso
+            store_transcription_in_turso(
                 &app_handle,
                 &file_path_for_storage,
                 &text,
@@ -400,35 +415,28 @@ where
             // Apply dictionary expansion using context-resolved entries when available
             let expansion_result = {
                 // Try context-aware dictionary expansion first
-                // IMPORTANT: We get dictionary entries first, then release the lock before
-                // calling the resolver. This avoids a deadlock since the resolver also
-                // needs to acquire the SpacetimeDB lock internally.
-                let context_entries = match (&context_resolver, &spacetime_client) {
+                // Get TursoClient from app state for dictionary entries
+                let turso_client: Option<tauri::State<'_, TursoClientState>> =
+                    app_handle.try_state();
+
+                let context_entries = match (&context_resolver, &turso_client) {
                     (Some(resolver), Some(client)) => {
                         crate::debug!("[DictionaryExpansion] Context resolver available, attempting context-aware expansion");
-                        // Step 1: Get all dictionary entries (lock is released after this block)
-                        let all_entries = match client.lock() {
-                            Ok(client_guard) => {
-                                match client_guard.list_dictionary_entries() {
-                                    Ok(entries) => {
-                                        crate::debug!(
-                                            "[DictionaryExpansion] Retrieved {} total dictionary entries from SpacetimeDB",
-                                            entries.len()
-                                        );
-                                        Some(entries)
-                                    }
-                                    Err(e) => {
-                                        crate::warn!("[DictionaryExpansion] Failed to get dictionary entries from SpacetimeDB: {}", e);
-                                        None
-                                    }
-                                }
+                        // Get all dictionary entries from Turso
+                        let all_entries = match client.list_dictionary_entries().await {
+                            Ok(entries) => {
+                                crate::debug!(
+                                    "[DictionaryExpansion] Retrieved {} total dictionary entries",
+                                    entries.len()
+                                );
+                                Some(entries)
                             }
-                            Err(_) => {
-                                crate::warn!("[DictionaryExpansion] Failed to lock SpacetimeDB client for context resolution");
+                            Err(e) => {
+                                crate::warn!("[DictionaryExpansion] Failed to get dictionary entries: {}", e);
                                 None
                             }
                         };
-                        // Step 2: Now that lock is released, call resolver (which needs its own lock)
+                        // Apply context resolver to filter entries
                         match all_entries {
                             Some(all_entries) => {
                                 let entries = resolver.get_effective_dictionary(&all_entries);
@@ -449,7 +457,7 @@ where
                         }
                     }
                     _ => {
-                        crate::debug!("[DictionaryExpansion] No context resolver available");
+                        crate::debug!("[DictionaryExpansion] No context resolver or Turso client available");
                         None
                     }
                 };
@@ -509,7 +517,7 @@ where
 
             // Try voice command matching if configured (using expanded text)
             let command_handled =
-                Self::try_command_matching(&expanded_text, &command_registry, &command_matcher, &action_dispatcher, &command_emitter, &transcription_emitter, &context_resolver)
+                Self::try_command_matching(&expanded_text, &turso_client, &command_matcher, &action_dispatcher, &command_emitter, &transcription_emitter, &context_resolver)
                     .await;
 
             // Fallback to clipboard if no command was handled (using expanded text)
@@ -570,7 +578,7 @@ where
     /// When a context_resolver is provided, uses context-resolved commands for matching.
     async fn try_command_matching(
         text: &str,
-        command_registry: &Option<Arc<Mutex<CommandRegistry>>>,
+        turso_client: &Option<Arc<TursoClient>>,
         command_matcher: &Option<Arc<CommandMatcher>>,
         action_dispatcher: &Option<Arc<ActionDispatcher>>,
         command_emitter: &Option<Arc<C>>,
@@ -578,25 +586,35 @@ where
         context_resolver: &Option<Arc<ContextResolver>>,
     ) -> bool {
         // Check if all voice command components are configured
-        let (registry, matcher, dispatcher, emitter) = match (
-            command_registry,
+        let (client, matcher, dispatcher, emitter) = match (
+            turso_client,
             command_matcher,
             action_dispatcher,
             command_emitter,
         ) {
-            (Some(r), Some(m), Some(d), Some(e)) => (r, m, d, e),
+            (Some(c), Some(m), Some(d), Some(e)) => (c, m, d, e),
             _ => {
                 crate::debug!("Voice commands not configured, skipping command matching");
                 return false;
             }
         };
 
-        // Local enum to capture match results before releasing the registry lock.
-        // IMPORTANT: registry_guard must be dropped before any await to ensure
-        // this async block remains Send.
+        // Fetch all commands from Turso
+        let all_commands = match client.list_voice_commands().await {
+            Ok(commands) => commands,
+            Err(e) => {
+                crate::error!("Failed to fetch voice commands from Turso: {}", e);
+                transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
+                    error: "Failed to load voice commands. Please try again.".to_string(),
+                });
+                return false;
+            }
+        };
+
+        // Local enum to capture match results
         enum MatchOutcome {
             Matched {
-                cmd: crate::voice_commands::registry::CommandDefinition,
+                cmd: CommandDefinition,
                 trigger: String,
                 confidence: f64,
             },
@@ -606,80 +624,66 @@ where
             NoMatch,
         }
 
-        // Lock registry, match, extract all needed data, then release lock
-        let outcome = {
-            let registry_guard = match registry.lock() {
-                Ok(g) => g,
-                Err(_) => {
-                    crate::error!("Failed to lock command registry - lock poisoned");
-                    transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
-                        error: "Internal error: command registry unavailable. Please restart the application.".to_string(),
-                    });
-                    return false;
+        // Get effective commands - either context-resolved or all commands
+        let match_result = match context_resolver {
+            Some(resolver) => {
+                let effective_commands = resolver.get_effective_commands(&all_commands);
+                if effective_commands.is_empty() {
+                    crate::debug!("No effective commands for current context, falling back to global");
+                    matcher.match_commands(text, &all_commands)
+                } else {
+                    crate::debug!(
+                        "Using {} context-resolved commands for matching",
+                        effective_commands.len()
+                    );
+                    matcher.match_commands(text, &effective_commands)
                 }
-            };
-
-            // Get all commands from registry as a list for matching
-            let all_commands: Vec<_> = registry_guard.list().into_iter().cloned().collect();
-
-            // Get effective commands - either context-resolved or all commands
-            let match_result = match context_resolver {
-                Some(resolver) => {
-                    let effective_commands = resolver.get_effective_commands(&all_commands);
-                    if effective_commands.is_empty() {
-                        crate::debug!("No effective commands for current context, falling back to global");
-                        matcher.match_commands(text, &all_commands)
-                    } else {
-                        crate::debug!(
-                            "Using {} context-resolved commands for matching",
-                            effective_commands.len()
-                        );
-                        matcher.match_commands(text, &effective_commands)
-                    }
-                }
-                None => matcher.match_commands(text, &all_commands),
-            };
-
-            match match_result {
-                MatchResult::Exact {
-                    command: matched_cmd,
-                    ..
-                } => match registry_guard.get(matched_cmd.id).cloned() {
-                    Some(cmd) => MatchOutcome::Matched {
-                        cmd,
-                        trigger: matched_cmd.trigger.clone(),
-                        confidence: 1.0,
-                    },
-                    None => MatchOutcome::NoMatch,
-                },
-                MatchResult::Fuzzy {
-                    command: matched_cmd,
-                    score,
-                    ..
-                } => match registry_guard.get(matched_cmd.id).cloned() {
-                    Some(cmd) => MatchOutcome::Matched {
-                        cmd,
-                        trigger: matched_cmd.trigger.clone(),
-                        confidence: score,
-                    },
-                    None => MatchOutcome::NoMatch,
-                },
-                MatchResult::Ambiguous { candidates } => {
-                    let candidate_data: Vec<_> = candidates
-                        .iter()
-                        .map(|c| CommandCandidate {
-                            id: c.command.id.to_string(),
-                            trigger: c.command.trigger.clone(),
-                            confidence: c.score,
-                        })
-                        .collect();
-                    MatchOutcome::Ambiguous {
-                        candidates: candidate_data,
-                    }
-                }
-                MatchResult::NoMatch => MatchOutcome::NoMatch,
             }
-            // registry_guard is dropped here - before any await
+            None => matcher.match_commands(text, &all_commands),
+        };
+
+        // Build a lookup map for finding commands by ID
+        let commands_by_id: std::collections::HashMap<uuid::Uuid, &CommandDefinition> =
+            all_commands.iter().map(|cmd| (cmd.id, cmd)).collect();
+
+        let outcome = match match_result {
+            MatchResult::Exact {
+                command: matched_cmd,
+                ..
+            } => match commands_by_id.get(&matched_cmd.id) {
+                Some(cmd) => MatchOutcome::Matched {
+                    cmd: (*cmd).clone(),
+                    trigger: matched_cmd.trigger.clone(),
+                    confidence: 1.0,
+                },
+                None => MatchOutcome::NoMatch,
+            },
+            MatchResult::Fuzzy {
+                command: matched_cmd,
+                score,
+                ..
+            } => match commands_by_id.get(&matched_cmd.id) {
+                Some(cmd) => MatchOutcome::Matched {
+                    cmd: (*cmd).clone(),
+                    trigger: matched_cmd.trigger.clone(),
+                    confidence: score,
+                },
+                None => MatchOutcome::NoMatch,
+            },
+            MatchResult::Ambiguous { candidates } => {
+                let candidate_data: Vec<_> = candidates
+                    .iter()
+                    .map(|c| CommandCandidate {
+                        id: c.command.id.to_string(),
+                        trigger: c.command.trigger.clone(),
+                        confidence: c.score,
+                    })
+                    .collect();
+                MatchOutcome::Ambiguous {
+                    candidates: candidate_data,
+                }
+            }
+            MatchResult::NoMatch => MatchOutcome::NoMatch,
         };
 
         match outcome {

@@ -13,6 +13,8 @@ use crate::events::{
     TranscriptionCompletedPayload, TranscriptionErrorPayload, TranscriptionEventEmitter,
     TranscriptionStartedPayload,
 };
+use crate::turso::{events as turso_events, TursoClient};
+use crate::window_context::get_active_window;
 use crate::hotkey::double_tap::{DoubleTapDetector, DEFAULT_DOUBLE_TAP_WINDOW_MS};
 use crate::hotkey::ShortcutBackend;
 use crate::recording::{RecordingDetectors, SilenceConfig};
@@ -20,13 +22,12 @@ use crate::model::{check_model_exists_for_type, ModelType};
 use crate::recording::{RecordingManager, RecordingState};
 use crate::voice_commands::executor::ActionDispatcher;
 use crate::voice_commands::matcher::{CommandMatcher, MatchResult};
-use crate::voice_commands::registry::CommandRegistry;
+use crate::voice_commands::registry::CommandDefinition;
 use crate::parakeet::{SharedTranscriptionModel, TranscriptionService};
-use crate::spacetimedb::SpacetimeClient;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tokio::sync::Semaphore;
 
@@ -127,8 +128,8 @@ impl Default for SilenceDetectionConfig {
 /// Note: All fields except `emitter` have default implementations.
 /// The `emitter` must be set for command events to be emitted.
 pub struct VoiceCommandConfig<C: CommandEventEmitter> {
-    /// Registry of available voice commands
-    pub registry: Arc<Mutex<CommandRegistry>>,
+    /// Turso client for fetching voice commands
+    pub turso_client: Arc<TursoClient>,
     /// Matcher for finding commands from transcribed text
     pub matcher: Arc<CommandMatcher>,
     /// Dispatcher for executing matched command actions
@@ -331,8 +332,6 @@ pub struct HotkeyIntegration<R: RecordingEventEmitter, T: TranscriptionEventEmit
     app_handle: Option<AppHandle>,
     /// Directory for saving recordings (supports worktree isolation)
     recordings_dir: std::path::PathBuf,
-    /// Optional SpacetimeDB client for storing recordings with metadata
-    spacetimedb_client: Option<Arc<Mutex<SpacetimeClient>>>,
 
     // === Escape Key Runtime State ===
     /// Whether Escape key is currently registered (to track cleanup)
@@ -367,7 +366,6 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
             app_handle: None,
             recordings_dir: crate::paths::get_recordings_dir(None)
                 .unwrap_or_else(|_| std::path::PathBuf::from(".").join("heycat").join("recordings")),
-            spacetimedb_client: None,
             // Escape key runtime state
             escape_registered: Arc::new(AtomicBool::new(false)),
             double_tap_detector: None,
@@ -385,12 +383,6 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
     /// Add recordings directory for worktree-aware recording storage (builder pattern)
     pub fn with_recordings_dir(mut self, recordings_dir: std::path::PathBuf) -> Self {
         self.recordings_dir = recordings_dir;
-        self
-    }
-
-    /// Add SpacetimeDB client for storing recordings with metadata (builder pattern)
-    pub fn with_spacetimedb_client(mut self, client: Arc<Mutex<SpacetimeClient>>) -> Self {
-        self.spacetimedb_client = Some(client);
         self
     }
 
@@ -482,19 +474,19 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
         self
     }
 
-    /// Add voice command registry for command matching (builder pattern)
+    /// Add Turso client for voice command fetching (builder pattern)
     ///
     /// Note: Prefer `with_voice_commands()` for new code. This method is kept for
     /// backward compatibility and alternative builder patterns.
     #[allow(dead_code)]
-    pub fn with_command_registry(mut self, registry: Arc<Mutex<CommandRegistry>>) -> Self {
+    pub fn with_turso_client(mut self, turso_client: Arc<TursoClient>) -> Self {
         if let Some(ref mut config) = self.voice_commands {
-            config.registry = registry;
+            config.turso_client = turso_client;
         } else {
             // Create a placeholder config - other fields must be set separately
             // This is for backward compatibility with incremental builder pattern
             self.voice_commands = Some(VoiceCommandConfig {
-                registry,
+                turso_client,
                 matcher: Arc::new(CommandMatcher::new()),
                 dispatcher: Arc::new(ActionDispatcher::new()),
                 emitter: None,
@@ -740,7 +732,6 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
             // App integration
             app_handle: None,
             recordings_dir: std::env::temp_dir().join("heycat-test-recordings"),
-            spacetimedb_client: None,
             // Escape key runtime state
             escape_registered: Arc::new(AtomicBool::new(false)),
             double_tap_detector: None,
@@ -849,33 +840,55 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
                             metadata.sample_count, metadata.duration_secs
                         );
 
-                        // Store recording in SpacetimeDB with active window context
-                        if let Some(ref client) = self.spacetimedb_client {
-                            let (app_name, bundle_id, title) = match crate::window_context::get_active_window() {
-                                Ok(info) => (Some(info.app_name), info.bundle_id, info.window_title),
-                                Err(e) => {
-                                    crate::debug!("Could not get active window info: {}", e);
-                                    (None, None, None)
-                                }
-                            };
+                        // Store recording metadata in Turso (same as stop_recording command)
+                        if let Some(ref app_handle) = self.app_handle {
+                            if !metadata.file_path.is_empty() {
+                                // Get TursoClient from managed state
+                                if let Some(turso_client) = app_handle.try_state::<std::sync::Arc<TursoClient>>() {
+                                    // Capture active window info
+                                    let (app_name, bundle_id, title) = match get_active_window() {
+                                        Ok(info) => (
+                                            Some(info.app_name),
+                                            info.bundle_id,
+                                            info.window_title,
+                                        ),
+                                        Err(e) => {
+                                            crate::debug!("Could not get active window info: {}", e);
+                                            (None, None, None)
+                                        }
+                                    };
 
-                            if let Ok(client_guard) = client.lock() {
-                                if client_guard.is_connected() {
                                     let recording_id = uuid::Uuid::new_v4().to_string();
-                                    if let Err(e) = client_guard.add_recording(
-                                        recording_id,
-                                        metadata.file_path.clone(),
-                                        metadata.duration_secs,
-                                        metadata.sample_count as u64,
-                                        metadata.stop_reason.clone(),
-                                        app_name,
-                                        bundle_id,
-                                        title,
-                                    ) {
-                                        crate::warn!("Failed to store recording in SpacetimeDB: {}", e);
-                                    } else {
-                                        crate::debug!("Recording stored in SpacetimeDB");
-                                    }
+                                    let file_path = metadata.file_path.clone();
+                                    let duration_secs = metadata.duration_secs;
+                                    let sample_count = metadata.sample_count as u64;
+                                    let stop_reason = metadata.stop_reason.clone();
+                                    let client = turso_client.inner().clone();
+                                    let app_handle_clone = app_handle.clone();
+
+                                    // Spawn async task to store recording
+                                    tauri::async_runtime::spawn(async move {
+                                        if let Err(e) = client
+                                            .add_recording(
+                                                recording_id.clone(),
+                                                file_path,
+                                                duration_secs,
+                                                sample_count,
+                                                stop_reason,
+                                                app_name,
+                                                bundle_id,
+                                                title,
+                                            )
+                                            .await
+                                        {
+                                            crate::warn!("Failed to store recording in Turso: {}", e);
+                                        } else {
+                                            crate::debug!("Recording metadata stored in Turso (hotkey flow)");
+                                            turso_events::emit_recordings_updated(&app_handle_clone, "add", Some(&recording_id));
+                                        }
+                                    });
+                                } else {
+                                    crate::debug!("TursoClient not available in app state");
                                 }
                             }
                         }
@@ -965,10 +978,10 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
         }
 
         // Optional voice command components from voice_commands config
-        let (command_registry, command_matcher, action_dispatcher, command_emitter) =
+        let (turso_client, command_matcher, action_dispatcher, command_emitter) =
             if let Some(ref vc) = self.voice_commands {
                 (
-                    Some(vc.registry.clone()),
+                    Some(vc.turso_client.clone()),
                     Some(vc.matcher.clone()),
                     Some(vc.dispatcher.clone()),
                     vc.emitter.clone(),
@@ -1013,13 +1026,8 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
             crate::info!("=== end spawn_transcription text ===");
 
             // Try voice command matching if configured
-            // Note: We extract all data from the lock before any await to ensure Send safety
-            // Local enum to capture match results before releasing the registry lock.
-            // IMPORTANT: registry_guard must be dropped before any await to ensure
-            // this async block remains Send. Holding a MutexGuard across an await
-            // point would make it !Send.
             enum MatchOutcome {
-                Matched { cmd: crate::voice_commands::registry::CommandDefinition, trigger: String, confidence: f64 },
+                Matched { cmd: CommandDefinition, trigger: String, confidence: f64 },
                 Ambiguous { candidates: Vec<CommandCandidate> },
                 NoMatch,
             }
@@ -1034,61 +1042,61 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
                 }
             };
 
-            let command_handled = if let (Some(registry), Some(matcher), Some(dispatcher), Some(emitter)) =
-                (&command_registry, &command_matcher, &action_dispatcher, &command_emitter)
+            let command_handled = if let (Some(client), Some(matcher), Some(dispatcher), Some(emitter)) =
+                (&turso_client, &command_matcher, &action_dispatcher, &command_emitter)
             {
-                // Lock registry, match, extract all needed data, then release lock
-                let outcome = {
-                    let registry_guard = match registry.lock() {
-                        Ok(g) => g,
-                        Err(_) => {
-                            crate::error!("Failed to lock command registry - lock poisoned");
-                            // Emit error event so UI doesn't hang waiting
-                            transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
-                                error: "Internal error: command registry unavailable. Please restart the application.".to_string(),
-                            });
-                            clear_recording_buffer();
-                            return;
-                        }
-                    };
-
-                    let match_result = matcher.match_input(&text, &registry_guard);
-
-                    match match_result {
-                        MatchResult::Exact { command: matched_cmd, .. } => {
-                            match registry_guard.get(matched_cmd.id).cloned() {
-                                Some(cmd) => MatchOutcome::Matched {
-                                    cmd,
-                                    trigger: matched_cmd.trigger.clone(),
-                                    confidence: 1.0
-                                },
-                                None => MatchOutcome::NoMatch,
-                            }
-                        }
-                        MatchResult::Fuzzy { command: matched_cmd, score, .. } => {
-                            match registry_guard.get(matched_cmd.id).cloned() {
-                                Some(cmd) => MatchOutcome::Matched {
-                                    cmd,
-                                    trigger: matched_cmd.trigger.clone(),
-                                    confidence: score
-                                },
-                                None => MatchOutcome::NoMatch,
-                            }
-                        }
-                        MatchResult::Ambiguous { candidates } => {
-                            let candidate_data: Vec<_> = candidates
-                                .iter()
-                                .map(|c| CommandCandidate {
-                                    id: c.command.id.to_string(),
-                                    trigger: c.command.trigger.clone(),
-                                    confidence: c.score,
-                                })
-                                .collect();
-                            MatchOutcome::Ambiguous { candidates: candidate_data }
-                        }
-                        MatchResult::NoMatch => MatchOutcome::NoMatch,
+                // Fetch all commands from Turso
+                let all_commands = match client.list_voice_commands().await {
+                    Ok(commands) => commands,
+                    Err(e) => {
+                        crate::error!("Failed to fetch voice commands from Turso: {}", e);
+                        transcription_emitter.emit_transcription_error(TranscriptionErrorPayload {
+                            error: "Failed to load voice commands. Please try again.".to_string(),
+                        });
+                        clear_recording_buffer();
+                        return;
                     }
-                    // registry_guard is dropped here - before any await
+                };
+
+                // Build a lookup map for finding commands by ID
+                let commands_by_id: std::collections::HashMap<uuid::Uuid, &CommandDefinition> =
+                    all_commands.iter().map(|cmd| (cmd.id, cmd)).collect();
+
+                let match_result = matcher.match_commands(&text, &all_commands);
+
+                let outcome = match match_result {
+                    MatchResult::Exact { command: matched_cmd, .. } => {
+                        match commands_by_id.get(&matched_cmd.id) {
+                            Some(cmd) => MatchOutcome::Matched {
+                                cmd: (*cmd).clone(),
+                                trigger: matched_cmd.trigger.clone(),
+                                confidence: 1.0
+                            },
+                            None => MatchOutcome::NoMatch,
+                        }
+                    }
+                    MatchResult::Fuzzy { command: matched_cmd, score, .. } => {
+                        match commands_by_id.get(&matched_cmd.id) {
+                            Some(cmd) => MatchOutcome::Matched {
+                                cmd: (*cmd).clone(),
+                                trigger: matched_cmd.trigger.clone(),
+                                confidence: score
+                            },
+                            None => MatchOutcome::NoMatch,
+                        }
+                    }
+                    MatchResult::Ambiguous { candidates } => {
+                        let candidate_data: Vec<_> = candidates
+                            .iter()
+                            .map(|c| CommandCandidate {
+                                id: c.command.id.to_string(),
+                                trigger: c.command.trigger.clone(),
+                                confidence: c.score,
+                            })
+                            .collect();
+                        MatchOutcome::Ambiguous { candidates: candidate_data }
+                    }
+                    MatchResult::NoMatch => MatchOutcome::NoMatch,
                 };
 
                 match outcome {

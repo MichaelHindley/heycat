@@ -1,6 +1,6 @@
 // Dictionary store types for dictionary entries
 //
-// The DictionaryStore struct was removed as SpacetimeDB is now used for persistence.
+// The DictionaryStore struct was removed as Turso is now used for persistence.
 // The DictionaryEntry and DictionaryError types are kept for API compatibility.
 
 use serde::{Deserialize, Serialize};

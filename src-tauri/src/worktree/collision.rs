@@ -28,7 +28,7 @@ pub struct LockInfo {
     pub pid: u32,
     /// Timestamp when the lock was created (Unix epoch seconds)
     pub timestamp: u64,
-    /// Process ID of the SpacetimeDB sidecar (if running)
+    /// Process ID of an optional background process (legacy, no longer used)
     pub sidecar_pid: Option<u32>,
 }
 
@@ -252,10 +252,10 @@ pub fn cleanup_stale_lock(lock_file: &PathBuf) -> Result<(), CollisionError> {
     // Try to read and parse the lock file to get the sidecar PID
     if let Ok(content) = fs::read_to_string(lock_file) {
         if let Some(lock_info) = LockInfo::parse(&content) {
-            // Kill the sidecar process if it exists and is still running
+            // Kill the background process if it exists and is still running (legacy support)
             if let Some(sidecar_pid) = lock_info.sidecar_pid {
                 if is_process_running(sidecar_pid) {
-                    crate::info!("Killing stale SpacetimeDB sidecar process (PID: {})", sidecar_pid);
+                    crate::info!("Killing stale background process (PID: {})", sidecar_pid);
                     kill_process(sidecar_pid);
                 }
             }
@@ -263,42 +263,6 @@ pub fn cleanup_stale_lock(lock_file: &PathBuf) -> Result<(), CollisionError> {
     }
 
     remove_lock_at(lock_file)
-}
-
-/// Update the lock file with the sidecar PID.
-///
-/// This should be called after the SpacetimeDB sidecar starts successfully.
-///
-/// # Arguments
-/// * `worktree_context` - Optional worktree context for path resolution
-/// * `sidecar_pid` - The PID of the SpacetimeDB sidecar process
-pub fn update_lock_with_sidecar_pid(
-    worktree_context: Option<&WorktreeContext>,
-    sidecar_pid: u32,
-) -> Result<(), CollisionError> {
-    let data_dir =
-        paths::get_data_dir(worktree_context).map_err(|_| CollisionError::DataDirNotFound)?;
-    let lock_file = data_dir.join(LOCK_FILE_NAME);
-
-    // Read existing lock info
-    let content = fs::read_to_string(&lock_file)
-        .map_err(|e| CollisionError::LockFileError(format!("Failed to read lock file: {}", e)))?;
-
-    let mut lock_info = LockInfo::parse(&content)
-        .ok_or_else(|| CollisionError::LockFileError("Failed to parse lock file".to_string()))?;
-
-    // Update with sidecar PID
-    lock_info.sidecar_pid = Some(sidecar_pid);
-
-    // Write back
-    let mut file = fs::File::create(&lock_file)
-        .map_err(|e| CollisionError::LockFileError(format!("Failed to open lock file: {}", e)))?;
-
-    file.write_all(lock_info.serialize().as_bytes())
-        .map_err(|e| CollisionError::LockFileError(format!("Failed to write lock file: {}", e)))?;
-
-    crate::debug!("Updated lock file with sidecar PID: {}", sidecar_pid);
-    Ok(())
 }
 
 /// Kill a process by PID.

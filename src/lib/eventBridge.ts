@@ -44,10 +44,9 @@ export const eventNames = {
   // Hotkey events
   KEY_BLOCKING_UNAVAILABLE: "key_blocking_unavailable",
 
-  // SpacetimeDB events
+  // Database events (from Turso)
   RECORDINGS_UPDATED: "recordings_updated",
   TRANSCRIPTIONS_UPDATED: "transcriptions_updated",
-  SPACETIMEDB_CONNECTION_STATUS: "spacetimedb_connection_status",
 
   // UI state events
   OVERLAY_MODE: "overlay-mode",
@@ -76,25 +75,18 @@ export interface KeyBlockingUnavailablePayload {
   timestamp: string;
 }
 
-/** Payload for recordings_updated event (from SpacetimeDB) */
+/** Payload for recordings_updated event (from Turso) */
 export interface RecordingsUpdatedPayload {
   changeType: string;
   recordingId: string | null;
   timestamp: string;
 }
 
-/** Payload for transcriptions_updated event (from SpacetimeDB) */
+/** Payload for transcriptions_updated event (from Turso) */
 export interface TranscriptionsUpdatedPayload {
   changeType: string;
   transcriptionId: string | null;
   recordingId: string | null;
-  timestamp: string;
-}
-
-/** Payload for spacetimedb_connection_status event */
-export interface SpacetimeDBConnectionStatusPayload {
-  connected: boolean;
-  error: string | null;
   timestamp: string;
 }
 
@@ -206,11 +198,11 @@ export async function setupEventBridge(
   );
 
   // ============================================================
-  // SpacetimeDB events → Query invalidation
-  // These events are emitted when SpacetimeDB subscription callbacks fire
+  // Database events → Query invalidation
+  // These events are emitted after Turso CRUD operations
   // ============================================================
 
-  // Recordings updated via SpacetimeDB - invalidate all paginated recordings lists
+  // Recordings updated - invalidate all paginated recordings lists
   unlistenFns.push(
     await listen<RecordingsUpdatedPayload>(eventNames.RECORDINGS_UPDATED, () => {
       queryClient.invalidateQueries({
@@ -219,7 +211,7 @@ export async function setupEventBridge(
     })
   );
 
-  // Transcriptions updated via SpacetimeDB - invalidate all paginated recordings lists
+  // Transcriptions updated - invalidate all paginated recordings lists
   // (transcriptions are displayed as part of recordings)
   unlistenFns.push(
     await listen<TranscriptionsUpdatedPayload>(eventNames.TRANSCRIPTIONS_UPDATED, () => {
@@ -227,23 +219,6 @@ export async function setupEventBridge(
         queryKey: ["tauri", "list_recordings"],
       });
     })
-  );
-
-  // SpacetimeDB connection status - log for debugging
-  unlistenFns.push(
-    await listen<SpacetimeDBConnectionStatusPayload>(
-      eventNames.SPACETIMEDB_CONNECTION_STATUS,
-      (event) => {
-        if (event.payload.connected) {
-          console.log("[heycat] SpacetimeDB connected");
-        } else {
-          console.warn(
-            "[heycat] SpacetimeDB disconnected:",
-            event.payload.error ?? "unknown reason"
-          );
-        }
-      }
-    )
   );
 
   // ============================================================

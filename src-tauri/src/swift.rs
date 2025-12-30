@@ -260,6 +260,7 @@ pub fn audio_engine_get_sample_count() -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn test_swift_hello() {
@@ -268,6 +269,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(audio_engine)]
     fn test_list_audio_devices_returns_vec() {
         let devices = list_audio_devices();
         // Should return a vector (may be empty if no devices)
@@ -284,6 +286,7 @@ mod tests {
     /// Run manually with: cargo test test_audio_engine_capture -- --ignored
     #[test]
     #[ignore]
+    #[serial(audio_engine)]
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn test_audio_engine_capture() {
         // Start engine (may fail if no audio device available)
@@ -325,6 +328,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(audio_engine)]
     fn test_audio_engine_is_running_query() {
         // Ensure clean state by stopping any running engine
         audio_engine_stop();

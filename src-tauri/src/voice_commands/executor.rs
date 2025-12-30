@@ -212,19 +212,22 @@ impl ExecutorState {
 #[tauri::command]
 pub async fn test_command(
     app_handle: AppHandle,
-    state: tauri::State<'_, crate::voice_commands::VoiceCommandsState>,
+    turso_client: tauri::State<'_, crate::voice_commands::TursoClientState>,
     executor_state: tauri::State<'_, ExecutorState>,
     id: String,
 ) -> Result<ActionResult, String> {
     let uuid = Uuid::parse_str(&id).map_err(|e| format!("Invalid UUID: {}", e))?;
 
-    let command = {
-        let registry = state
-            .registry
-            .lock()
-            .map_err(|e| format!("Lock error: {}", e))?;
-        registry.get(uuid).cloned().ok_or_else(|| format!("Command not found: {}", id))?
-    };
+    // Load commands from Turso and find the one we want
+    let commands = turso_client
+        .list_voice_commands()
+        .await
+        .map_err(|e| format!("Failed to load commands: {}", e))?;
+
+    let command = commands
+        .into_iter()
+        .find(|c| c.id == uuid)
+        .ok_or_else(|| format!("Command not found: {}", id))?;
 
     let result = executor_state.dispatcher.execute(&command).await;
 

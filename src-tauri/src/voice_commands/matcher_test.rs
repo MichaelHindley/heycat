@@ -1,7 +1,7 @@
 // Tests for voice command matching
 //
 // Note: These tests use match_commands() directly with command slices,
-// avoiding the need for SpacetimeDB integration.
+// avoiding the need for database integration.
 
 use super::*;
 use crate::voice_commands::registry::{ActionType, CommandDefinition};

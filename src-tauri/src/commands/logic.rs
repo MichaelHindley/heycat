@@ -377,7 +377,7 @@ pub struct PaginatedRecordingsResponse {
 
 use std::collections::HashMap;
 
-/// Context data for a recording from SpacetimeDB
+/// Context data for a recording from database
 #[derive(Debug, Clone, Default)]
 pub struct RecordingContextData {
     /// Transcription text
@@ -398,7 +398,7 @@ pub struct RecordingContextData {
 /// * `recordings_dir` - Directory containing recording files (supports worktree isolation)
 /// * `limit` - Maximum number of recordings to return (for pagination)
 /// * `offset` - Number of recordings to skip (for pagination)
-/// * `recording_context` - Map of file_path to context data (from SpacetimeDB)
+/// * `recording_context` - Map of file_path to context data (from Turso database)
 ///
 /// # Returns
 /// A paginated response with recordings sorted by creation time (newest first).

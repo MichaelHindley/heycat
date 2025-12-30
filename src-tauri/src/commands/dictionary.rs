@@ -6,22 +6,12 @@
 
 use crate::commands::TranscriptionServiceState;
 use crate::dictionary::{DictionaryEntry, DictionaryError};
-use crate::events::dictionary_events::{self, DictionaryUpdatedPayload};
-use crate::spacetimedb::SpacetimeClient;
-use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter, State};
+use crate::turso::{events as turso_events, TursoClient};
+use std::sync::Arc;
+use tauri::{AppHandle, State};
 
-/// Type alias for SpacetimeDB client state (required - no fallback)
-pub type SpacetimeClientState = Arc<Mutex<SpacetimeClient>>;
-
-/// Helper macro to emit events with error logging
-macro_rules! emit_or_warn {
-    ($handle:expr, $event:expr, $payload:expr) => {
-        if let Err(e) = $handle.emit($event, $payload) {
-            crate::warn!("Failed to emit event '{}': {}", $event, e);
-        }
-    };
-}
+/// Type alias for Turso client state
+pub type TursoClientState = Arc<TursoClient>;
 
 /// Map DictionaryError to user-friendly error messages
 fn to_user_error(error: DictionaryError) -> String {
@@ -33,39 +23,39 @@ fn to_user_error(error: DictionaryError) -> String {
     }
 }
 
-/// Refresh the dictionary expander in the transcription service with current entries from SpacetimeDB
-fn refresh_dictionary_expander(
-    client: &SpacetimeClient,
+/// Refresh the dictionary expander in the transcription service with current entries from Turso
+async fn refresh_dictionary_expander(
+    client: &TursoClient,
     transcription_service: &TranscriptionServiceState,
 ) {
-    // Read entries from SpacetimeDB (the source of truth)
-    match client.list_dictionary_entries() {
+    // Read entries from Turso (the source of truth)
+    match client.list_dictionary_entries().await {
         Ok(entries) => {
             transcription_service.update_dictionary(&entries);
         }
         Err(e) => {
-            crate::warn!("Failed to refresh dictionary expander from SpacetimeDB: {:?}", e);
+            crate::warn!("Failed to refresh dictionary expander from Turso: {:?}", e);
         }
     }
 }
 
 /// List all dictionary entries
 ///
-/// Returns all entries from SpacetimeDB.
+/// Returns all entries from Turso database.
 #[tauri::command]
-pub fn list_dictionary_entries(
-    spacetimedb_client: State<'_, SpacetimeClientState>,
+pub async fn list_dictionary_entries(
+    turso_client: State<'_, TursoClientState>,
 ) -> Result<Vec<DictionaryEntry>, String> {
-    let client = spacetimedb_client
-        .lock()
-        .map_err(|_| "Failed to access SpacetimeDB client".to_string())?;
-    client.list_dictionary_entries().map_err(to_user_error)
+    turso_client
+        .list_dictionary_entries()
+        .await
+        .map_err(to_user_error)
 }
 
 /// Add a new dictionary entry
 ///
 /// Creates a new entry with the given trigger and expansion, generates a unique ID,
-/// persists to SpacetimeDB, updates the transcription service expander, and emits a dictionary_updated event.
+/// persists to Turso, updates the transcription service expander, and emits a dictionary_updated event.
 ///
 /// # Arguments
 /// * `trigger` - The trigger word/phrase (e.g., "brb")
@@ -77,9 +67,9 @@ pub fn list_dictionary_entries(
 /// # Returns
 /// The newly created DictionaryEntry with its generated ID
 #[tauri::command]
-pub fn add_dictionary_entry(
+pub async fn add_dictionary_entry(
     app_handle: AppHandle,
-    spacetimedb_client: State<'_, SpacetimeClientState>,
+    turso_client: State<'_, TursoClientState>,
     transcription_service: State<'_, TranscriptionServiceState>,
     trigger: String,
     expansion: String,
@@ -95,12 +85,8 @@ pub fn add_dictionary_entry(
     let auto_enter_val = auto_enter.unwrap_or(false);
     let disable_suffix_val = disable_suffix.unwrap_or(false);
 
-    // Add entry to SpacetimeDB
-    let client = spacetimedb_client
-        .lock()
-        .map_err(|_| "Failed to access SpacetimeDB client".to_string())?;
-
-    let entry = client
+    // Add entry to Turso
+    let entry = turso_client
         .add_dictionary_entry(
             trigger.clone(),
             expansion.clone(),
@@ -108,29 +94,27 @@ pub fn add_dictionary_entry(
             auto_enter_val,
             disable_suffix_val,
         )
+        .await
         .map_err(to_user_error)?;
 
-    // Refresh the dictionary expander with entries from SpacetimeDB
-    refresh_dictionary_expander(&client, &transcription_service);
+    // Refresh the dictionary expander with entries from Turso
+    refresh_dictionary_expander(&turso_client, &transcription_service).await;
 
     // Emit dictionary_updated event
-    emit_or_warn!(
-        app_handle,
-        dictionary_events::DICTIONARY_UPDATED,
-        DictionaryUpdatedPayload {
-            action: "add".to_string(),
-            entry_id: entry.id.clone(),
-        }
-    );
+    turso_events::emit_dictionary_updated(&app_handle, "add", &entry.id);
 
-    crate::info!("Added dictionary entry: {} -> {}", entry.trigger, entry.expansion);
+    crate::info!(
+        "Added dictionary entry: {} -> {}",
+        entry.trigger,
+        entry.expansion
+    );
     Ok(entry)
 }
 
 /// Update an existing dictionary entry
 ///
 /// Updates the trigger and expansion for the entry with the given ID,
-/// persists to SpacetimeDB, updates the transcription service expander, and emits a dictionary_updated event.
+/// persists to Turso, updates the transcription service expander, and emits a dictionary_updated event.
 ///
 /// # Arguments
 /// * `id` - The unique ID of the entry to update
@@ -140,9 +124,9 @@ pub fn add_dictionary_entry(
 /// * `auto_enter` - Whether to simulate enter keypress after expansion (defaults to false)
 /// * `disable_suffix` - Whether to suppress trailing punctuation (defaults to false)
 #[tauri::command]
-pub fn update_dictionary_entry(
+pub async fn update_dictionary_entry(
     app_handle: AppHandle,
-    spacetimedb_client: State<'_, SpacetimeClientState>,
+    turso_client: State<'_, TursoClientState>,
     transcription_service: State<'_, TranscriptionServiceState>,
     id: String,
     trigger: String,
@@ -159,12 +143,8 @@ pub fn update_dictionary_entry(
     let auto_enter_val = auto_enter.unwrap_or(false);
     let disable_suffix_val = disable_suffix.unwrap_or(false);
 
-    // Update entry in SpacetimeDB
-    let client = spacetimedb_client
-        .lock()
-        .map_err(|_| "Failed to access SpacetimeDB client".to_string())?;
-
-    client
+    // Update entry in Turso
+    turso_client
         .update_dictionary_entry(
             id.clone(),
             trigger.clone(),
@@ -173,20 +153,14 @@ pub fn update_dictionary_entry(
             auto_enter_val,
             disable_suffix_val,
         )
+        .await
         .map_err(to_user_error)?;
 
-    // Refresh the dictionary expander with entries from SpacetimeDB
-    refresh_dictionary_expander(&client, &transcription_service);
+    // Refresh the dictionary expander with entries from Turso
+    refresh_dictionary_expander(&turso_client, &transcription_service).await;
 
     // Emit dictionary_updated event
-    emit_or_warn!(
-        app_handle,
-        dictionary_events::DICTIONARY_UPDATED,
-        DictionaryUpdatedPayload {
-            action: "update".to_string(),
-            entry_id: id.clone(),
-        }
-    );
+    turso_events::emit_dictionary_updated(&app_handle, "update", &id);
 
     crate::info!("Updated dictionary entry: {}", id);
     Ok(())
@@ -194,37 +168,29 @@ pub fn update_dictionary_entry(
 
 /// Delete a dictionary entry
 ///
-/// Removes the entry with the given ID, persists to SpacetimeDB,
+/// Removes the entry with the given ID, persists to Turso,
 /// updates the transcription service expander, and emits a dictionary_updated event.
 ///
 /// # Arguments
 /// * `id` - The unique ID of the entry to delete
 #[tauri::command]
-pub fn delete_dictionary_entry(
+pub async fn delete_dictionary_entry(
     app_handle: AppHandle,
-    spacetimedb_client: State<'_, SpacetimeClientState>,
+    turso_client: State<'_, TursoClientState>,
     transcription_service: State<'_, TranscriptionServiceState>,
     id: String,
 ) -> Result<(), String> {
-    // Delete entry from SpacetimeDB
-    let client = spacetimedb_client
-        .lock()
-        .map_err(|_| "Failed to access SpacetimeDB client".to_string())?;
+    // Delete entry from Turso
+    turso_client
+        .delete_dictionary_entry(&id)
+        .await
+        .map_err(to_user_error)?;
 
-    client.delete_dictionary_entry(&id).map_err(to_user_error)?;
-
-    // Refresh the dictionary expander with entries from SpacetimeDB
-    refresh_dictionary_expander(&client, &transcription_service);
+    // Refresh the dictionary expander with entries from Turso
+    refresh_dictionary_expander(&turso_client, &transcription_service).await;
 
     // Emit dictionary_updated event
-    emit_or_warn!(
-        app_handle,
-        dictionary_events::DICTIONARY_UPDATED,
-        DictionaryUpdatedPayload {
-            action: "delete".to_string(),
-            entry_id: id.clone(),
-        }
-    );
+    turso_events::emit_dictionary_updated(&app_handle, "delete", &id);
 
     crate::info!("Deleted dictionary entry: {}", id);
     Ok(())

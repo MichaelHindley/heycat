@@ -268,6 +268,7 @@ fn monitor_thread_main(command_rx: Receiver<MonitorCommand>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn test_audio_monitor_handle_is_send_sync() {
@@ -276,6 +277,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(audio_engine)]
     fn test_spawn_and_drop() {
         let handle = AudioMonitorHandle::spawn();
         drop(handle);
@@ -283,6 +285,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(audio_engine)]
     fn test_stop_without_start() {
         let handle = AudioMonitorHandle::spawn();
         // Stop when not started should be fine
@@ -290,12 +293,14 @@ mod tests {
     }
 
     #[test]
+    #[serial(audio_engine)]
     fn test_shutdown() {
         let handle = AudioMonitorHandle::spawn();
         assert!(handle.shutdown().is_ok());
     }
 
     #[test]
+    #[serial(audio_engine)]
     fn test_engine_running_query() {
         // Ensure clean state
         swift::audio_engine_stop();
@@ -305,6 +310,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(audio_engine)]
     fn test_init_without_device() {
         let handle = AudioMonitorHandle::spawn();
         // Init without device should succeed (pre-warms the engine)
@@ -312,6 +318,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(audio_engine)]
     fn test_init_is_idempotent() {
         let handle = AudioMonitorHandle::spawn();
         // First init
@@ -321,6 +328,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(audio_engine)]
     fn test_start_after_init_works() {
         let handle = AudioMonitorHandle::spawn();
         // Pre-warm the engine

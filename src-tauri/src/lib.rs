@@ -16,8 +16,8 @@ mod parakeet;
 mod paths;
 mod recording;
 mod shutdown;
-mod spacetimedb;
 mod swift;
+mod turso;
 mod transcription;
 mod voice_commands;
 mod window_context;
@@ -67,6 +67,8 @@ pub fn run() {
                 .level_for("tract_onnx", tauri_plugin_log::log::LevelFilter::Warn)
                 .level_for("tract_hir", tauri_plugin_log::log::LevelFilter::Warn)
                 .level_for("tract_linalg", tauri_plugin_log::log::LevelFilter::Warn)
+                // Suppress verbose INFO logs from ONNX Runtime during model loading
+                .level_for("ort", tauri_plugin_log::log::LevelFilter::Warn)
                 .build(),
         )
         .setup(|app| {
@@ -173,57 +175,46 @@ pub fn run() {
                 }
             }
 
-            // Start SpacetimeDB sidecar process (REQUIRED)
-            // This provides local database storage with real-time sync capabilities
-            let worktree_id = worktree_context.as_ref().map(|ctx| ctx.identifier.as_str());
-            let sidecar_manager = spacetimedb::SidecarManager::with_defaults(worktree_id);
-            let spacetimedb_handle: Arc<Mutex<spacetimedb::SidecarHandle>> = match sidecar_manager.start_and_wait() {
-                Ok(handle) => {
-                    let sidecar_pid = handle.pid();
-                    info!(
-                        "SpacetimeDB sidecar started on {} (PID: {})",
-                        handle.config().websocket_url(),
-                        sidecar_pid
-                    );
+            // Initialize Turso/libsql embedded database client
+            // Uses worktree-aware data directory for isolation
+            let turso_data_dir = paths::get_data_dir(worktree_context.as_ref())
+                .unwrap_or_else(|_| std::path::PathBuf::from(".").join("heycat"));
+            let turso_client: std::sync::Arc<turso::TursoClient> = match turso::TursoClient::new_blocking(turso_data_dir) {
+                Ok(client) => {
+                    info!("Turso database initialized at: {:?}", client.db_path());
 
-                    // Update lock file with sidecar PID for crash recovery
-                    if let Err(e) = worktree::update_lock_with_sidecar_pid(
-                        worktree_context.as_ref(),
-                        sidecar_pid,
-                    ) {
-                        warn!("Failed to update lock file with sidecar PID: {}", e);
+                    // Initialize database schema (creates tables if needed, runs migrations)
+                    // Must handle the case where no Tokio runtime is available
+                    let schema_result = match tokio::runtime::Handle::try_current() {
+                        Ok(handle) => tokio::task::block_in_place(|| {
+                            handle.block_on(turso::initialize_schema(&client))
+                        }),
+                        Err(_) => {
+                            // No runtime available, create a temporary one
+                            let rt = tokio::runtime::Runtime::new()
+                                .expect("Failed to create tokio runtime for schema init");
+                            rt.block_on(turso::initialize_schema(&client))
+                        }
+                    };
+                    match schema_result {
+                        Ok(()) => {
+                            debug!("Turso database schema initialized");
+                        }
+                        Err(e) => {
+                            error!("Failed to initialize Turso schema: {}", e);
+                            return Err(format!("Turso schema initialization failed: {}", e).into());
+                        }
                     }
 
-                    Arc::new(Mutex::new(handle))
+                    std::sync::Arc::new(client)
                 }
                 Err(e) => {
-                    // Fatal: SpacetimeDB is required for data storage
-                    error!("Failed to start SpacetimeDB sidecar: {}", e);
-                    return Err(format!("SpacetimeDB sidecar failed to start: {}. Please check that SpacetimeDB is installed correctly.", e).into());
+                    // Fatal: Turso database is required for data storage
+                    error!("Failed to initialize Turso database: {}", e);
+                    return Err(format!("Database initialization failed: {}", e).into());
                 }
             };
-            app.manage(spacetimedb_handle.clone());
-
-            // Connect to SpacetimeDB via SDK client (REQUIRED)
-            let spacetimedb_client: Arc<Mutex<spacetimedb::SpacetimeClient>> = {
-                let sidecar_guard = spacetimedb_handle.lock().unwrap();
-                let config = sidecar_guard.config().clone();
-                drop(sidecar_guard); // Release lock before connecting
-
-                let mut client = spacetimedb::SpacetimeClient::new(config, app.handle().clone());
-                match client.connect() {
-                    Ok(()) => {
-                        info!("SpacetimeDB SDK client connected");
-                        Arc::new(Mutex::new(client))
-                    }
-                    Err(e) => {
-                        // Fatal: SpacetimeDB connection is required
-                        error!("Failed to connect SpacetimeDB SDK client: {}", e);
-                        return Err(format!("SpacetimeDB client connection failed: {}. Please check that SpacetimeDB is running.", e).into());
-                    }
-                }
-            };
-            app.manage(spacetimedb_client.clone());
+            app.manage(turso_client.clone());
 
             // Create shared state for recording manager
             let recording_state = Arc::new(Mutex::new(recording::RecordingManager::new()));
@@ -281,30 +272,17 @@ pub fn run() {
             // Manage shared transcription model for Tauri commands
             app.manage(shared_transcription_model.clone());
 
-            // Create and manage VoiceCommandsState
-            debug!("Creating VoiceCommandsState...");
-            let (command_registry, command_matcher, action_dispatcher) = match voice_commands::VoiceCommandsState::new(spacetimedb_client.clone()) {
-                Ok(voice_state) => {
-                    // Share the same registry between UI and matcher
-                    let registry = voice_state.registry.clone();
-                    let matcher = Arc::new(voice_commands::matcher::CommandMatcher::new());
-                    let executor_state = voice_commands::executor::ExecutorState::new();
-                    let dispatcher = executor_state.dispatcher.clone();
+            // Create and manage voice command executor and registry for command matching
+            debug!("Creating voice command infrastructure...");
+            let executor_state = voice_commands::executor::ExecutorState::new();
+            let dispatcher = executor_state.dispatcher.clone();
+            app.manage(executor_state);
 
-                    app.manage(voice_state);
-                    app.manage(executor_state);
-                    debug!("VoiceCommandsState initialized successfully");
-                    (Some(registry), Some(matcher), Some(dispatcher))
-                }
-                Err(e) => {
-                    warn!("Failed to initialize VoiceCommandsState: {}", e);
-                    // Still create executor state even if voice commands failed
-                    let executor_state = voice_commands::executor::ExecutorState::new();
-                    app.manage(executor_state);
-                    (None, None, None)
-                }
-            };
-            debug!("ExecutorState initialized successfully");
+            // Initialize command matcher for transcription service command matching
+            // Voice commands are fetched directly from TursoClient - no registry cache needed
+            let command_matcher = Arc::new(voice_commands::matcher::CommandMatcher::new());
+            let action_dispatcher = Some(dispatcher);
+            debug!("Voice command infrastructure initialized");
 
             // Eager model loading at startup (if models exist)
             // Load TDT model into shared model if available
@@ -336,7 +314,7 @@ pub fn run() {
             debug!("Starting window monitor...");
             let window_monitor = Arc::new({
                 let mut monitor = window_context::WindowMonitor::new();
-                if let Err(e) = monitor.start(app.handle().clone(), spacetimedb_client.clone()) {
+                if let Err(e) = monitor.start(app.handle().clone(), turso_client.clone()) {
                     warn!("Failed to start window monitor: {}", e);
                 }
                 Mutex::new(monitor)
@@ -346,35 +324,44 @@ pub fn run() {
             debug!("Creating context resolver...");
             let context_resolver = Arc::new(window_context::ContextResolver::new(
                 window_monitor.clone(),
-                spacetimedb_client.clone(),
+                turso_client.clone(),
             ));
 
-            // Create expander for transcription service from SpacetimeDB dictionary entries
+            // Create expander for transcription service from dictionary entries
             {
-                let client = spacetimedb_client.lock().expect("spacetimedb client lock poisoned during setup");
-                match client.list_dictionary_entries() {
+                let entries = match tokio::runtime::Handle::try_current() {
+                    Ok(handle) => tokio::task::block_in_place(|| {
+                        handle.block_on(turso_client.list_dictionary_entries())
+                    }),
+                    Err(_) => {
+                        let rt = tokio::runtime::Runtime::new()
+                            .expect("Failed to create runtime for dictionary entries");
+                        rt.block_on(turso_client.list_dictionary_entries())
+                    }
+                };
+                match entries {
                     Ok(entries) => {
                         if entries.is_empty() {
-                            debug!("No dictionary entries loaded from SpacetimeDB");
+                            debug!("No dictionary entries loaded");
                         } else {
-                            info!("Loaded {} dictionary entries for expansion from SpacetimeDB", entries.len());
+                            info!("Loaded {} dictionary entries for expansion", entries.len());
                             let expander = dictionary::DictionaryExpander::new(&entries);
                             transcription_service = transcription_service.with_dictionary_expander(expander);
                             debug!("Dictionary expander wired to TranscriptionService");
                         }
                     }
                     Err(e) => {
-                        warn!("Failed to load dictionary entries from SpacetimeDB: {}", e);
+                        warn!("Failed to load dictionary entries: {}", e);
                     }
                 }
             }
 
-            // Wire up voice command integration to transcription service if available
-            if let (Some(ref registry), Some(ref matcher), Some(ref dispatcher)) = (&command_registry, &command_matcher, &action_dispatcher) {
+            // Wire up voice command integration to transcription service
+            if let Some(ref dispatcher) = action_dispatcher {
                 let service_command_emitter = Arc::new(commands::TauriEventEmitter::new(app.handle().clone()));
                 transcription_service = transcription_service
-                    .with_command_registry(registry.clone())
-                    .with_command_matcher(matcher.clone())
+                    .with_turso_client(turso_client.clone())
+                    .with_command_matcher(command_matcher.clone())
                     .with_action_dispatcher(dispatcher.clone())
                     .with_command_emitter(service_command_emitter);
                 debug!("Voice commands wired to TranscriptionService");
@@ -382,8 +369,7 @@ pub fn run() {
 
             // Wire context resolver to transcription service for window-aware command resolution
             transcription_service = transcription_service
-                .with_context_resolver(context_resolver)
-                .with_spacetime_client(spacetimedb_client.clone());
+                .with_context_resolver(context_resolver);
             debug!("Context resolver wired to TranscriptionService");
 
             let transcription_service = Arc::new(transcription_service);
@@ -423,17 +409,16 @@ pub fn run() {
                 .with_shortcut_backend(escape_backend)
                 .with_transcription_callback(transcription_callback)
                 .with_hotkey_emitter(hotkey_emitter)
-                .with_spacetimedb_client(spacetimedb_client.clone())
                 .with_silence_detection_enabled(false); // Disable for push-to-talk
 
-            // Wire up voice command integration using grouped config if available
+            // Wire up voice command integration using grouped config
             // (still needed for HotkeyIntegration's silence detection callback)
-            if let (Some(registry), Some(matcher), Some(dispatcher)) = (command_registry, command_matcher, action_dispatcher) {
+            if let Some(dispatcher) = action_dispatcher {
                 let command_emitter = Arc::new(commands::TauriEventEmitter::new(app.handle().clone()));
                 integration_builder = integration_builder
                     .with_voice_commands(hotkey::integration::VoiceCommandConfig {
-                        registry,
-                        matcher,
+                        turso_client: turso_client.clone(),
+                        matcher: command_matcher.clone(),
                         dispatcher,
                         emitter: Some(command_emitter),
                     });
@@ -517,8 +502,7 @@ pub fn run() {
             let keyboard_capture = Arc::new(Mutex::new(keyboard_capture::KeyboardCapture::new()));
             app.manage(keyboard_capture);
 
-            // Manage window monitor for Tauri commands (window context and dictionary
-            // now use SpacetimeDB directly via spacetimedb_client)
+            // Manage window monitor for Tauri commands
             app.manage(window_monitor);
 
             info!("Setup complete! Ready to record.");
@@ -530,17 +514,6 @@ pub fn run() {
                 shutdown::signal_shutdown();
 
                 debug!("Window destroyed, cleaning up...");
-
-                // Stop SpacetimeDB sidecar process
-                // This must happen early to ensure clean database shutdown
-                if let Some(handle) = window.app_handle().try_state::<Arc<Mutex<spacetimedb::SidecarHandle>>>() {
-                    if let Ok(mut guard) = handle.lock() {
-                        match guard.stop() {
-                            Ok(()) => debug!("SpacetimeDB sidecar stopped successfully"),
-                            Err(e) => warn!("Failed to stop SpacetimeDB sidecar: {}", e),
-                        }
-                    }
-                }
 
                 // Get worktree context for cleanup
                 let worktree_context = window.app_handle()

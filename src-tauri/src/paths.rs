@@ -79,6 +79,18 @@ pub fn get_recordings_dir(worktree_context: Option<&WorktreeContext>) -> Result<
     Ok(get_data_dir(worktree_context)?.join("recordings"))
 }
 
+/// Get the Turso database directory path.
+///
+/// Returns:
+/// - Main repo: `~/.local/share/heycat/turso/`
+/// - Worktree: `~/.local/share/heycat-{identifier}/turso/`
+///
+/// Note: Currently unused - will be used by CRUD migration specs
+#[allow(dead_code)]
+pub fn get_turso_dir(worktree_context: Option<&WorktreeContext>) -> Result<PathBuf, PathError> {
+    Ok(get_data_dir(worktree_context)?.join("turso"))
+}
+
 /// Ensure a directory exists, creating it if necessary.
 ///
 /// Returns the path to the directory on success.
