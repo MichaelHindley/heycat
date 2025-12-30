@@ -63,6 +63,12 @@ pub fn register_cgeventtap_run_loop(run_loop: CFRunLoop) {
 pub fn stop_cgeventtap() {
     if let Ok(guard) = CGEVENTTAP_RUN_LOOP.lock() {
         if let Some(ref run_loop) = *guard {
+            // SAFETY: CFRunLoop reference is guaranteed valid throughout app lifetime.
+            // The run loop is registered via register_cgeventtap_run_loop() at CGEventTap
+            // startup (cgeventtap.rs) and lives in a static Mutex. The CGEventTap thread
+            // owns the run loop and keeps it alive. This function is only called during
+            // shutdown (via Ctrl+C handler or window close), at which point stopping
+            // the run loop is safe and necessary to allow clean thread termination.
             unsafe {
                 CFRunLoopStop(run_loop.as_concrete_TypeRef());
             }
