@@ -2323,6 +2323,7 @@ dependencies = [
  "libsql",
  "objc",
  "parakeet-rs",
+ "parking_lot",
  "regex",
  "ringbuf",
  "serde",
