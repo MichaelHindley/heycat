@@ -117,37 +117,43 @@ bun run tauri dev   # Uses port 1421-1429, unique hotkey
 
 The wrapper script automatically detects the worktree context and configures both Vite and Tauri with the correct port.
 
-### Complete a feature and merge to main
+### Cattle worktree workflow (PR-based)
 
-When a feature is complete in a worktree, use the completion script to merge it to main:
+Worktrees are ephemeral - created per-feature, deleted after PR merge:
 
-```bash
-# From your worktree
-bun scripts/complete-feature.ts
+```
+/create-worktree → develop → /submit-pr → (review) → /close-worktree
 ```
 
-This "golden path" script:
-1. Fetches latest main
-2. Rebases your feature onto main
-3. Squashes all commits into a single conventional commit (derived from WIP messages)
-4. Fast-forward merges to main
-5. Resets the worktree branch to main (ready for next feature)
-
-**If conflicts occur:**
-
+**1. Create worktree** (from main repo):
 ```bash
-# Resolve conflicts in the listed files, then:
-git add <resolved-files>
-git rebase --continue
-bun scripts/complete-feature.ts --continue
+# Via command (recommended for agents)
+/create-worktree
+
+# Or manually
+bun scripts/create-worktree.ts <branch-name>
 ```
 
-**Preview mode:**
+**2. Develop feature**:
+- Make changes, commit with WIP messages
+- Use `/sync-worktree` to rebase on latest main if needed
 
+**3. Submit PR** (from worktree):
 ```bash
-bun scripts/complete-feature.ts --dry-run
+/submit-pr
 ```
+This pushes the branch and creates a PR via `gh pr create`.
 
-**For coding agents:**
+**4. Review phase**:
+- Worktree stays alive for fixes
+- Push additional commits if changes requested
 
-Use the `/merge-worktree` command to trigger this flow with intelligent conflict resolution.
+**5. Close worktree** (after PR merged):
+```bash
+/close-worktree
+```
+This deletes the worktree and cleans up all data directories.
+
+### Legacy: Direct merge to main
+
+The `complete-feature.ts` script still exists for direct merging but is deprecated in favor of the PR workflow above.

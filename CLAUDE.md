@@ -43,3 +43,13 @@ You may never use npm or npx, always use bun or bunx.
 ### Review Independence
 **When:** Code reviews for specs or features
 Reviews must use a **fresh subagent** with no implementation context. Use `/devloop:agile:review`.
+
+### Worktrees (Cattle Model)
+**When:** Starting a new feature, submitting for review, cleaning up after PR merge
+**Commands:**
+- `/create-worktree` - Create ephemeral worktree for new feature (run from main repo)
+- `/sync-worktree` - Rebase worktree onto latest main
+- `/submit-pr` - Push branch and create PR (run from worktree)
+- `/close-worktree` - Delete worktree after PR is merged
+
+**Workflow:** Create worktree → develop → submit PR → (review) → close worktree
