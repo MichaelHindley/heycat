@@ -70,3 +70,16 @@ See "⚠️ Required: Worktree-First Development" section above. Additional comm
 - `/sync-worktree` - Rebase worktree onto latest main (use when main has updates)
 - `/submit-pr` - Push branch and create PR (run from worktree when specs complete)
 - `/close-worktree` - Delete worktree after PR is merged
+
+**Starting Claude in a worktree:**
+To ensure subagents (like `/devloop:agile:review`) operate in the correct directory, use:
+```bash
+# Create new worktree and start Claude there
+./scripts/start-worktree-session.sh feature/my-feature
+
+# Resume session in existing worktree
+./scripts/start-worktree-session.sh --resume my-feature
+
+# List available worktrees
+./scripts/start-worktree-session.sh --list
+```
