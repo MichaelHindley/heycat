@@ -1,5 +1,7 @@
 // Global hotkey registration module
 
+use serde::{Deserialize, Serialize};
+
 mod tauri_backend;
 // TauriShortcutBackend is used internally by create_shortcut_backend on non-macOS platforms
 #[allow(unused_imports)]
@@ -47,6 +49,17 @@ impl std::fmt::Display for HotkeyError {
 
 impl std::error::Error for HotkeyError {}
 
+/// Recording mode determines how the hotkey triggers recording
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum RecordingMode {
+    /// Press once to start, press again to stop (default)
+    #[default]
+    Toggle,
+    /// Hold to record, release to stop
+    PushToTalk,
+}
+
 /// Map backend error messages to HotkeyError variants
 pub fn map_backend_error(msg: &str) -> HotkeyError {
     let lower = msg.to_lowercase();
@@ -63,6 +76,25 @@ pub fn map_backend_error(msg: &str) -> HotkeyError {
 pub trait ShortcutBackend {
     fn register(&self, shortcut: &str, callback: Box<dyn Fn() + Send + Sync>) -> Result<(), String>;
     fn unregister(&self, shortcut: &str) -> Result<(), String>;
+}
+
+/// Extended trait for shortcut backends that support key release detection
+///
+/// This trait adds support for push-to-talk mode where we need separate
+/// callbacks for key press and key release events.
+pub trait ShortcutBackendExt: ShortcutBackend {
+    /// Register a shortcut with separate press and release callbacks
+    ///
+    /// - `on_press`: Called when the key is pressed down
+    /// - `on_release`: Called when the key is released
+    ///
+    /// Returns an error if registration fails.
+    fn register_with_release(
+        &self,
+        shortcut: &str,
+        on_press: Box<dyn Fn() + Send + Sync>,
+        on_release: Box<dyn Fn() + Send + Sync>,
+    ) -> Result<(), String>;
 }
 
 /// Null implementation of ShortcutBackend for placeholder configs
