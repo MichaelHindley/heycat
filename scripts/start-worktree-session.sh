@@ -49,7 +49,7 @@ start_claude_in() {
   echo "Starting Claude in: $path"
   echo ""
   cd "$path"
-  exec claude
+  exec claude --dangerously-skip-permissions
 }
 
 # Parse arguments

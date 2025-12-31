@@ -13,7 +13,7 @@
  * The path defaults to worktrees/<branch-name> (inside repository)
  */
 
-import { existsSync, mkdirSync, writeFileSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { basename, resolve } from "path";
 import { getDevPort } from "./dev-port";
@@ -252,6 +252,14 @@ ${colors.bold}Example:${colors.reset}
   // Create settings file
   const settingsPath = createSettingsFile(identifier, hotkey);
   success(`\nSettings file created: ${settingsPath}`);
+
+  // Copy .env file if it exists in main repo (it's gitignored so not in worktree)
+  const mainEnvPath = resolve(process.cwd(), ".env");
+  const worktreeEnvPath = resolve(worktreePath, ".env");
+  if (existsSync(mainEnvPath) && !existsSync(worktreeEnvPath)) {
+    copyFileSync(mainEnvPath, worktreeEnvPath);
+    success(`Copied .env from main repository`);
+  }
 
   // Print instructions
   log(`
