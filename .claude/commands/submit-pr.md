@@ -48,18 +48,23 @@ If the push fails due to divergence, ask user how to proceed:
 
 Collect information for the PR:
 
-1. **Title**: Derive from one of:
+1. **Linear Issue ID**: Extract from branch name if present
+   - Pattern: `HEY-\d+` at the start of branch name (e.g., `HEY-123-fix-login`)
+   - Example: Branch `HEY-42-audio-improvements` → Issue ID `HEY-42`
+   - If found, this will be added to PR body for auto-linking with Linear
+
+2. **Title**: Derive from one of:
    - Linear issue title (if branch follows `HEY-123-*` pattern, fetch from Linear)
    - Branch name (convert `feature/dark-mode` → "Feature: Dark mode")
    - Ask user if unclear
 
-2. **Summary**: Summarize the changes by looking at:
+3. **Summary**: Summarize the changes by looking at:
    ```bash
    git log origin/main..HEAD --format="%s"
    ```
    Create 1-3 bullet points describing what changed
 
-3. **Test plan**: Ask user for test plan, or suggest based on changes
+4. **Test plan**: Ask user for test plan, or suggest based on changes
 
 ### Step 4: Create the PR
 
@@ -68,6 +73,8 @@ gh pr create --title "<title>" --body "$(cat <<'EOF'
 ## Summary
 <bullet points>
 
+Closes HEY-123
+
 ## Test plan
 <test instructions>
 
@@ -75,6 +82,8 @@ gh pr create --title "<title>" --body "$(cat <<'EOF'
 EOF
 )"
 ```
+
+**Note**: Only include the `Closes HEY-xxx` line if a Linear issue ID was extracted in Step 3. This line auto-links the PR to the Linear issue and will close the issue when the PR is merged.
 
 **IMPORTANT:** Before running `gh pr create`, verify with the user:
 - Is the title correct?
@@ -100,12 +109,16 @@ Use this format for the PR body:
 - <Main change 2>
 - <Main change 3 if applicable>
 
+Closes HEY-123
+
 ## Test plan
 - [ ] <Test step 1>
 - [ ] <Test step 2>
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 ```
+
+**Linear Integration**: The `Closes HEY-xxx` line links the PR to the Linear issue. Only include this if the branch name contains a Linear issue ID (e.g., `HEY-123-fix-audio`). You can also use `Fixes HEY-xxx` or just `HEY-xxx` (without auto-close).
 
 ## Handling Review Feedback
 

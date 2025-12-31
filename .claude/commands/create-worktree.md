@@ -22,10 +22,17 @@ You are creating a new ephemeral worktree for developing a feature. This is part
 
 ### Step 1: Determine branch name
 
-Ask the user for a branch name if not provided. Suggest formats:
-- For Linear issues: `<issue-id>-<short-description>` (e.g., `HEY-123-audio-improvements`)
-- For features: `feature/<name>` (e.g., `feature/dark-mode`)
-- For bugfixes: `fix/<name>` (e.g., `fix/memory-leak`)
+1. **Check for Linear issue**: Ask the user if they have a Linear issue ID (e.g., `HEY-123`)
+   - If yes, ask for a short description (2-3 words, kebab-case)
+   - Generate branch name: `HEY-123-short-description`
+
+2. **Alternative**: If no Linear issue, suggest these formats:
+   - For features: `feature/<name>` (e.g., `feature/dark-mode`)
+   - For bugfixes: `fix/<name>` (e.g., `fix/memory-leak`)
+
+**Preferred format for Linear issues**: `HEY-<id>-<description>`
+- Example: `HEY-42-audio-improvements`
+- This enables automatic PR linking in Linear when using `/submit-pr`
 
 ### Step 2: Fetch latest main
 
@@ -82,6 +89,13 @@ Remind the user of the full workflow:
 - Each worktree gets a unique recording hotkey to avoid conflicts
 - Data is stored in isolated directories (`~/.local/share/heycat-<id>/`)
 - The worktree should be deleted after the PR is merged using `/close-worktree`
+
+## Linear Integration
+
+When the branch name starts with a Linear issue ID (e.g., `HEY-123-fix-audio`):
+- `/submit-pr` will automatically include `Closes HEY-123` in the PR body
+- The PR will appear linked in the Linear issue
+- When the PR is merged, the Linear issue will auto-close
 
 ## Troubleshooting
 

@@ -11,11 +11,13 @@ Usage: $(basename "$0") [OPTIONS] [branch-name]
 Start a Claude session in a worktree (create new or resume existing).
 
 Options:
+  -i, --issue ID       Create worktree for Linear issue (e.g., HEY-123)
   -r, --resume NAME    Resume session in existing worktree heycat-NAME
   -l, --list           List available worktrees
   -h, --help           Show this help
 
 Examples:
+  $(basename "$0") --issue HEY-123      # Create worktree for Linear issue (PREFERRED)
   $(basename "$0") feature/audio        # Create new worktree, start Claude
   $(basename "$0") --resume audio       # Resume in heycat-audio worktree
   $(basename "$0") -l                   # List worktrees
@@ -53,8 +55,10 @@ start_claude_in() {
 # Parse arguments
 RESUME=""
 BRANCH_NAME=""
+ISSUE_ID=""
 while [[ $# -gt 0 ]]; do
   case $1 in
+    -i|--issue) ISSUE_ID="$2"; shift 2 ;;
     -r|--resume) RESUME="$2"; shift 2 ;;
     -l|--list) list_worktrees; exit 0 ;;
     -h|--help) usage; exit 0 ;;
@@ -90,11 +94,16 @@ fi
 
 SCHEMA='{"type":"object","properties":{"worktreePath":{"type":"string","description":"Full absolute path to the created worktree"},"success":{"type":"boolean"},"error":{"type":"string"}},"required":["success","worktreePath"]}'
 
-# Build prompt with optional branch name
-if [ -n "$BRANCH_NAME" ]; then
+# Build prompt with optional branch name or issue ID
+if [ -n "$ISSUE_ID" ]; then
+  BRANCH_CONTEXT="Linear issue: $ISSUE_ID
+Ask me for a short description (2-3 words, kebab-case) to complete the branch name.
+Branch format should be: $ISSUE_ID-<description> (e.g., $ISSUE_ID-fix-audio)"
+elif [ -n "$BRANCH_NAME" ]; then
   BRANCH_CONTEXT="Branch name: $BRANCH_NAME"
 else
-  BRANCH_CONTEXT="Ask me for a branch name or Linear issue ID."
+  BRANCH_CONTEXT="Ask me for a Linear issue ID (e.g., HEY-123) or branch name.
+PREFERRED: Use Linear issue format like HEY-123-description for automatic PR linking."
 fi
 
 PROMPT="Create a git worktree for feature development.
@@ -104,12 +113,13 @@ $BRANCH_CONTEXT
 Steps:
 1. Verify we're in the main repo (not a worktree) - check if .git is a directory
 2. Check for clean working directory with git status --porcelain
-3. If no branch name provided, ask what branch/issue to create
+3. If no branch/issue provided, ask what to create (prefer Linear issue format: HEY-xxx-description)
 4. Fetch origin main
 5. Run: bun scripts/create-worktree.ts <branch-name>
 6. Run: cd <worktree-path> && bun install
 
-IMPORTANT: Return the full absolute path to the worktree in your response."
+IMPORTANT: Return the full absolute path to the worktree in your response.
+NOTE: Branch names starting with HEY-xxx enable automatic PR linking in Linear."
 
 echo "Creating worktree via Claude..."
 

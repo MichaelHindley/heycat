@@ -19,6 +19,8 @@ export default {
     customTemplates: {},
     linear: {
       teamId: "cb5ea72f-7c34-4cd9-9d22-9bd49074f3f2",
+      teamPrefix: "HEY",
+      branchFormat: "{identifier}-{title}", // e.g., HEY-123-fix-audio
       stateMapping: {
         "1-backlog": "Backlog",
         "2-todo": "Todo",
