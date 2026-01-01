@@ -45,6 +45,14 @@ fn test_parse_shortcut_key_navigation() {
 }
 
 #[test]
+fn test_parse_shortcut_key_number_keys() {
+    assert_eq!(parse_shortcut_key("0").unwrap(), Key::Num0);
+    assert_eq!(parse_shortcut_key("1").unwrap(), Key::Num1);
+    assert_eq!(parse_shortcut_key("5").unwrap(), Key::Num5);
+    assert_eq!(parse_shortcut_key("9").unwrap(), Key::Num9);
+}
+
+#[test]
 fn test_parse_shortcut_key_unknown() {
     let result = parse_shortcut_key("UnknownKey");
     assert!(result.is_err());

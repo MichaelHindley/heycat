@@ -195,9 +195,9 @@ impl HotkeyServiceDyn {
 /// Create the appropriate shortcut backend for the current platform
 ///
 /// - **macOS**: Uses CGEventTapHotkeyBackend (supports fn key, media keys, requires Accessibility permission)
-/// - **Windows/Linux**: Uses TauriShortcutBackend (standard Tauri global shortcut plugin)
+/// - **Windows/Linux**: Uses RdevShortcutBackend (supports push-to-talk with key release detection)
 ///
-/// Both backends implement the `ShortcutBackend` trait, so they can be used interchangeably.
+/// Both backends implement the `ShortcutBackend` trait and `ShortcutBackendExt` for PTT support.
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub fn create_shortcut_backend(app: tauri::AppHandle) -> Arc<dyn ShortcutBackend + Send + Sync> {
     #[cfg(target_os = "macos")]
@@ -208,6 +208,8 @@ pub fn create_shortcut_backend(app: tauri::AppHandle) -> Arc<dyn ShortcutBackend
     }
     #[cfg(not(target_os = "macos"))]
     {
-        Arc::new(TauriShortcutBackend::new(app))
+        // Suppress unused variable warning since RdevShortcutBackend doesn't need the app handle
+        let _ = app;
+        Arc::new(RdevShortcutBackend::new())
     }
 }
