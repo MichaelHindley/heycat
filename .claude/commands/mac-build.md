@@ -73,25 +73,41 @@ bun scripts/docker/mac-build.ts
 bun scripts/docker/mac-build.ts --sync-only
 ```
 
+**Build and fetch artifacts:**
+```bash
+bun scripts/docker/mac-build.ts --fetch-artifacts
+```
+
 This script will:
 1. Check SSH connection to macOS host
 2. Sync workspace via rsync (excluding node_modules, target, etc.)
 3. Run `bun install` on the host
 4. Run `bun run tauri build` (or `tauri dev` with `--dev` flag)
 5. Display build output
+6. With `--fetch-artifacts`: Copy build artifacts to `./bundle/`
 
 ### Step 4: Access build artifacts
 
-After a release build, artifacts are on the macOS host:
+**Automatic (recommended):** Use `--fetch-artifacts` flag to automatically copy artifacts to `./bundle/`:
+```bash
+bun scripts/docker/mac-build.ts --fetch-artifacts
 ```
-${HEYCAT_MAC_PATH}/src-tauri/target/release/bundle/
+
+After fetching, artifacts are in:
+```
+./bundle/
 ├── macos/
 │   └── heycat.app
 └── dmg/
     └── heycat_0.1.0_aarch64.dmg
 ```
 
-To copy back to container:
+**Manual:** If you didn't use `--fetch-artifacts`, artifacts are on the macOS host:
+```
+${HEYCAT_MAC_PATH}/src-tauri/target/release/bundle/
+```
+
+To copy manually:
 ```bash
 rsync -avz ${HEYCAT_MAC_USER}@${HEYCAT_MAC_HOST}:${HEYCAT_MAC_PATH}/src-tauri/target/release/bundle/ ./bundle/
 ```
