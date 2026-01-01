@@ -222,7 +222,9 @@ async function runBuildOnMac(config: MacBuildConfig, isDev: boolean): Promise<bo
   info(`Command: ${buildCmd}`);
 
   // Build the remote command - install deps and run build
-  const remoteCommand = `cd ${config.path} && bun install && ${buildCmd}`;
+  // Escape path with single quotes to prevent shell injection
+  const escapedPath = config.path.replace(/'/g, "'\\''");
+  const remoteCommand = `cd '${escapedPath}' && bun install && ${buildCmd}`;
 
   const result = await Bun.spawn(
     ["ssh", "-t", sshTarget, remoteCommand],

@@ -1,18 +1,5 @@
 import { describe, expect, it } from "bun:test";
-
-/**
- * Convert branch name to a valid container ID.
- * Matches the implementation in create-container.ts
- */
-function branchToContainerId(branchName: string): string {
-  // Order matters: truncate first, then remove leading/trailing dashes
-  return branchName
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "-")
-    .replace(/-+/g, "-")
-    .slice(0, 32)
-    .replace(/^-|-$/g, "");
-}
+import { branchToContainerId } from "./create-container";
 
 describe("create-container", () => {
   describe("branchToContainerId", () => {

@@ -58,8 +58,8 @@ export function getContainerId(): string | null {
  * Get the worktree identifier from the current directory.
  * Returns null if running in the main repository.
  *
- * The identifier is the directory name of the worktree, which matches
- * the Rust backend's algorithm (last component of gitdir path).
+ * The identifier is the current directory name (basename of cwd),
+ * which matches the Rust backend's worktree identifier algorithm.
  */
 export function getWorktreeIdentifier(): string | null {
   const gitPath = resolve(process.cwd(), ".git");

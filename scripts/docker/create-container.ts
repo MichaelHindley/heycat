@@ -127,7 +127,7 @@ function getProjectRoot(): string {
  * Convert branch name to a valid container ID.
  * Removes special characters and limits length.
  */
-function branchToContainerId(branchName: string): string {
+export function branchToContainerId(branchName: string): string {
   // Replace special characters with dashes, limit to 32 chars
   // Order matters: truncate first, then remove leading/trailing dashes
   return branchName
@@ -385,7 +385,10 @@ ${colors.bold}Stop and remove container:${colors.reset}
 `);
 }
 
-main().catch((err) => {
-  error(err.message || String(err));
-  process.exit(1);
-});
+// Only run main when executed directly, not when imported as a module
+if (import.meta.main) {
+  main().catch((err) => {
+    error(err.message || String(err));
+    process.exit(1);
+  });
+}
