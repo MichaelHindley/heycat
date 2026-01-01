@@ -101,6 +101,19 @@ describe("mac-build", () => {
       expect(config).not.toBeNull();
       expect(config?.host).toBe("mac.local");
     });
+
+    it("defaults host to host.docker.internal when HEYCAT_MAC_HOST not set", () => {
+      // Only set user and path, not host
+      process.env.HEYCAT_MAC_USER = "devuser";
+      process.env.HEYCAT_MAC_PATH = "/Users/devuser/heycat";
+
+      const config = getConfig();
+
+      expect(config).not.toBeNull();
+      expect(config?.host).toBe("host.docker.internal");
+      expect(config?.user).toBe("devuser");
+      expect(config?.path).toBe("/Users/devuser/heycat");
+    });
   });
 
   describe("rsync exclusions", () => {
