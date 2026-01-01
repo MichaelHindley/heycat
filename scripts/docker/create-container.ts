@@ -3,18 +3,20 @@
  * Create a new Docker development container for heycat.
  *
  * This script mirrors create-worktree.ts logic but for Docker containers:
- * 1. Starts a container via docker-compose with HEYCAT_DEV_ID set
- * 2. Creates a feature branch inside the container
- * 3. Runs bun install
- * 4. Outputs container access instructions
+ * 1. Validates the issue exists in Linear and gets its HEY-### identifier
+ * 2. Starts a container via docker-compose with HEYCAT_DEV_ID set
+ * 3. Creates a feature branch with format: HEY-###-<issue-slug>
+ * 4. Runs bun install
+ * 5. Outputs container access instructions
  *
- * Usage: bun scripts/docker/create-container.ts <branch-name>
+ * Usage: bun scripts/docker/create-container.ts --issue <issue-slug>
  *
- * Supports Linear issue branch naming (e.g., HEY-123-add-feature)
+ * All development must go through Linear - no freeform branch names allowed.
  */
 
 import { existsSync } from "fs";
 import { resolve } from "path";
+import { validateLinearIssue } from "../lib/linear";
 
 // ANSI color codes for terminal output
 const colors = {
@@ -41,6 +43,32 @@ function error(message: string): void {
 
 function info(message: string): void {
   console.log(`${colors.cyan}${message}${colors.reset}`);
+}
+
+function warn(message: string): void {
+  console.log(`${colors.yellow}${message}${colors.reset}`);
+}
+
+/**
+ * Parse command line arguments.
+ */
+function parseArgs(args: string[]): { issue: string | null; help: boolean } {
+  let issue: string | null = null;
+  let help = false;
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--help" || arg === "-h") {
+      help = true;
+    } else if (arg === "--issue" || arg === "-i") {
+      issue = args[++i] || null;
+    } else if (!arg.startsWith("-") && !issue) {
+      // Support legacy positional argument (but issue is still required)
+      issue = arg;
+    }
+  }
+
+  return { issue, help };
 }
 
 /**
@@ -229,26 +257,32 @@ async function installDependencies(containerName: string): Promise<boolean> {
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
+  const { issue: issueSlug, help } = parseArgs(args);
 
-  if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
+  if (help || !issueSlug) {
     log(`
-${colors.bold}Usage:${colors.reset} bun scripts/docker/create-container.ts <branch-name>
+${colors.bold}Usage:${colors.reset} bun scripts/docker/create-container.ts --issue <issue-slug>
 
-${colors.bold}Arguments:${colors.reset}
-  branch-name  Name for the git branch (required)
-               Supports Linear issue format: HEY-123-description
+${colors.bold}Options:${colors.reset}
+  --issue, -i  Linear issue slug or identifier (required)
+               Examples: docker-development-workflow, HEY-156
 
 ${colors.bold}Description:${colors.reset}
-  Creates a new Docker development container:
+  Creates a new Docker development container linked to a Linear issue:
+  - Validates the issue exists in Linear
+  - Creates branch with format: HEY-###-<issue-slug>
   - Starts container via docker-compose
-  - Creates feature branch inside container
   - Runs bun install
 
 ${colors.bold}Example:${colors.reset}
-  bun scripts/docker/create-container.ts feature-audio-improvements
-  bun scripts/docker/create-container.ts HEY-123-add-dark-mode
+  bun scripts/docker/create-container.ts --issue docker-development-workflow
+  bun scripts/docker/create-container.ts -i HEY-156
+
+${colors.bold}Note:${colors.reset}
+  All development must go through Linear. Freeform branch names are not allowed.
+  This ensures PRs are automatically linked to Linear issues.
 `);
-    process.exit(0);
+    process.exit(help ? 0 : 1);
   }
 
   // Check Docker is available
@@ -257,7 +291,23 @@ ${colors.bold}Example:${colors.reset}
     process.exit(1);
   }
 
-  const branchName = args[0];
+  // Validate issue exists in Linear
+  info(`\nValidating issue in Linear: ${issueSlug}`);
+  const issueInfo = await validateLinearIssue(issueSlug);
+  if (!issueInfo) {
+    error(`Issue not found in Linear: ${issueSlug}`);
+    warn("Make sure the issue exists and LINEAR_API_KEY is set.");
+    process.exit(1);
+  }
+
+  success(`Found issue: ${issueInfo.identifier} - ${issueInfo.title}`);
+
+  // Build branch name: HEY-###-<slug>
+  const issueSlugNormalized = issueInfo.title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  const branchName = `${issueInfo.identifier}-${issueSlugNormalized}`;
   const devId = branchToContainerId(branchName);
   const containerName = `heycat-dev-${devId}`;
   const projectRoot = getProjectRoot();

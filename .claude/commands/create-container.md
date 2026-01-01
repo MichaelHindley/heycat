@@ -6,6 +6,8 @@ description: Create a Docker development container for feature development
 
 You are creating a new Docker development container for developing a feature. This is part of the "cattle" container model - containers are created per-feature and deleted after the PR is merged.
 
+**IMPORTANT**: All development must go through Linear. Freeform branch names are not allowed.
+
 ## Prerequisites Check
 
 1. Verify Docker is running:
@@ -21,19 +23,13 @@ You are creating a new Docker development container for developing a feature. Th
 
 ## Execution Flow
 
-### Step 1: Determine branch name
+### Step 1: Identify the Linear issue
 
-1. **Check for Linear issue**: Ask the user if they have a Linear issue ID (e.g., `HEY-123`)
-   - If yes, ask for a short description (2-3 words, kebab-case)
-   - Generate branch name: `HEY-123-short-description`
+**Ask the user for the Linear issue slug or identifier.** Examples:
+- Issue slug: `docker-development-workflow`
+- Issue identifier: `HEY-156`
 
-2. **Alternative**: If no Linear issue, suggest these formats:
-   - For features: `feature/<name>` (e.g., `feature/dark-mode`)
-   - For bugfixes: `fix/<name>` (e.g., `fix/memory-leak`)
-
-**Preferred format for Linear issues**: `HEY-<id>-<description>`
-- Example: `HEY-42-audio-improvements`
-- This enables automatic PR linking in Linear when using `/submit-pr`
+If the user doesn't have a Linear issue yet, direct them to create one first using `/devloop:agile:issue` or `/devloop:agile:quick`.
 
 ### Step 2: Verify SSH agent
 
@@ -47,15 +43,23 @@ Warn user if no SSH keys are loaded - they may have issues pushing/pulling insid
 ### Step 3: Create the container
 
 ```bash
-bun scripts/docker/create-container.ts <branch-name>
+bun scripts/docker/create-container.ts --issue <issue-slug-or-id>
 ```
 
 This script will:
-1. Build the Docker image (if not already built)
-2. Start a container with the branch name as ID
-3. Create a new branch inside the container
-4. Run `bun install` for dependencies
-5. Print access instructions
+1. Validate the issue exists in Linear
+2. Get the HEY-### identifier from Linear
+3. Build the Docker image (if not already built)
+4. Start a container with branch format: `HEY-###-<issue-title-slug>`
+5. Create a new branch inside the container
+6. Run `bun install` for dependencies
+7. Print access instructions
+
+Example:
+```bash
+bun scripts/docker/create-container.ts --issue docker-development-workflow
+# Creates branch: HEY-156-docker-development-workflow
+```
 
 ### Step 4: Access the container
 
@@ -74,7 +78,7 @@ docker exec -it heycat-dev-<container-id> claude
 
 Print the container details:
 - Container name
-- Branch name
+- Branch name (with HEY-### prefix)
 - How to access the container
 - How to run tests
 - How to trigger macOS builds
@@ -100,15 +104,21 @@ Remind the user of the full workflow:
 
 ## Linear Integration
 
-When the branch name starts with a Linear issue ID (e.g., `HEY-123-fix-audio`):
-- `/submit-pr` will automatically include `Closes HEY-123` in the PR body
+When the branch name starts with a Linear issue ID (e.g., `HEY-156-docker-development-workflow`):
+- `/submit-pr` will automatically include `Closes HEY-156` in the PR body
 - The PR will appear linked in the Linear issue
 - When the PR is merged, the Linear issue will auto-close
+
+This is why all branches MUST be created through a Linear issue - it ensures proper cross-linking.
 
 ## Troubleshooting
 
 **"Docker is not running"**
 - Start Docker Desktop or run `sudo systemctl start docker`
+
+**"Issue not found in Linear"**
+- Verify the issue slug or identifier is correct
+- Check that LINEAR_API_KEY is set in your environment
 
 **"Failed to build Docker image"**
 - Check Dockerfile.dev for errors
@@ -116,7 +126,7 @@ When the branch name starts with a Linear issue ID (e.g., `HEY-123-fix-audio`):
 
 **"Container already exists"**
 - Remove the existing container: `docker rm -f heycat-dev-<id>`
-- Or use a different branch name
+- Or the branch was already created for this issue
 
 **"SSH agent not forwarded"**
 - Ensure `SSH_AUTH_SOCK` is set

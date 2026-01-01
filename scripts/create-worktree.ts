@@ -3,13 +3,15 @@
  * Create a new git worktree with heycat-specific setup.
  *
  * This script:
- * 1. Creates a git worktree at the specified path with the given branch
- * 2. Generates a unique default hotkey based on the worktree identifier
- * 3. Creates an initial settings file with the unique hotkey
- * 4. Provides instructions for running the dev server
+ * 1. Validates the issue exists in Linear and gets its HEY-### identifier
+ * 2. Creates a git worktree with branch format: HEY-###-<issue-slug>
+ * 3. Generates a unique default hotkey based on the worktree identifier
+ * 4. Creates an initial settings file with the unique hotkey
+ * 5. Provides instructions for running the dev server
  *
- * Usage: bun scripts/create-worktree.ts <branch-name> [path]
+ * Usage: bun scripts/create-worktree.ts --issue <issue-slug> [--path <path>]
  *
+ * All development must go through Linear - no freeform branch names allowed.
  * The path defaults to worktrees/<branch-name> (inside repository)
  */
 
@@ -17,6 +19,7 @@ import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { basename, resolve } from "path";
 import { getDevPort } from "./dev-port";
+import { validateLinearIssue } from "./lib/linear";
 
 // ANSI color codes for terminal output
 const colors = {
@@ -176,28 +179,60 @@ async function createWorktree(branchName: string, worktreePath: string): Promise
   return result === 0;
 }
 
+/**
+ * Parse command line arguments.
+ */
+function parseArgs(args: string[]): { issue: string | null; path: string | null; help: boolean } {
+  let issue: string | null = null;
+  let path: string | null = null;
+  let help = false;
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--help" || arg === "-h") {
+      help = true;
+    } else if (arg === "--issue" || arg === "-i") {
+      issue = args[++i] || null;
+    } else if (arg === "--path" || arg === "-p") {
+      path = args[++i] || null;
+    } else if (!arg.startsWith("-") && !issue) {
+      // Support legacy positional argument (but issue is still required)
+      issue = arg;
+    }
+  }
+
+  return { issue, path, help };
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
+  const { issue: issueSlug, path: customPath, help } = parseArgs(args);
 
-  if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
+  if (help || !issueSlug) {
     log(`
-${colors.bold}Usage:${colors.reset} bun scripts/create-worktree.ts <branch-name> [path]
+${colors.bold}Usage:${colors.reset} bun scripts/create-worktree.ts --issue <issue-slug> [--path <path>]
 
-${colors.bold}Arguments:${colors.reset}
-  branch-name  Name for the new git branch (required)
-  path         Path for the worktree (default: worktrees/<branch-name>)
+${colors.bold}Options:${colors.reset}
+  --issue, -i  Linear issue slug or identifier (required)
+               Examples: docker-development-workflow, HEY-156
+  --path, -p   Path for the worktree (default: worktrees/<branch-name>)
 
 ${colors.bold}Description:${colors.reset}
-  Creates a new git worktree with heycat-specific setup:
-  - Creates the worktree with a new branch
+  Creates a new git worktree linked to a Linear issue:
+  - Validates the issue exists in Linear
+  - Creates branch with format: HEY-###-<issue-slug>
   - Generates a unique hotkey based on the worktree name
   - Creates a settings file with the unique hotkey
 
 ${colors.bold}Example:${colors.reset}
-  bun scripts/create-worktree.ts feature-audio-improvements
-  bun scripts/create-worktree.ts bugfix-123 worktrees/my-bugfix
+  bun scripts/create-worktree.ts --issue docker-development-workflow
+  bun scripts/create-worktree.ts -i HEY-156 -p worktrees/my-feature
+
+${colors.bold}Note:${colors.reset}
+  All development must go through Linear. Freeform branch names are not allowed.
+  This ensures PRs are automatically linked to Linear issues.
 `);
-    process.exit(0);
+    process.exit(help ? 0 : 1);
   }
 
   // Validate we're in the main repository
@@ -206,8 +241,24 @@ ${colors.bold}Example:${colors.reset}
     process.exit(1);
   }
 
-  const branchName = args[0];
-  const worktreePath = args[1] || resolve(process.cwd(), "worktrees", branchName);
+  // Validate issue exists in Linear
+  info(`\nValidating issue in Linear: ${issueSlug}`);
+  const issueInfo = await validateLinearIssue(issueSlug);
+  if (!issueInfo) {
+    error(`Issue not found in Linear: ${issueSlug}`);
+    warn("Make sure the issue exists and LINEAR_API_KEY is set.");
+    process.exit(1);
+  }
+
+  success(`Found issue: ${issueInfo.identifier} - ${issueInfo.title}`);
+
+  // Build branch name: HEY-###-<slug>
+  const issueSlugNormalized = issueInfo.title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  const branchName = `${issueInfo.identifier}-${issueSlugNormalized}`;
+  const worktreePath = customPath || resolve(process.cwd(), "worktrees", branchName);
 
   log(`\n${colors.bold}Creating heycat worktree${colors.reset}\n`);
   info(`Branch: ${branchName}`);
