@@ -471,3 +471,64 @@ fn test_complete_match_only_with_disable_suffix() {
     // Partial match does NOT expand (complete_match_only takes effect)
     assert_eq!(expander.expand("I'll brb").expanded_text, "I'll brb");
 }
+
+#[test]
+fn test_complete_match_only_disable_suffix_strips_punctuation() {
+    // Bug fix: complete_match_only + disable_suffix should strip trailing punctuation before matching
+    // This allows speech-to-text transcriptions like "Yes." to match trigger "yes"
+    let entry = DictionaryEntry {
+        id: "test".to_string(),
+        trigger: "yes".to_string(),
+        expansion: "affirmative".to_string(),
+        suffix: None,
+        auto_enter: true,
+        disable_suffix: true,
+        complete_match_only: true,
+    };
+    let expander = DictionaryExpander::new(&[entry]);
+
+    // Should match and expand when trailing punctuation is present
+    let result = expander.expand("Yes.");
+    assert_eq!(result.expanded_text, "affirmative");
+    assert!(result.should_press_enter);
+
+    // Various punctuation marks
+    assert_eq!(expander.expand("yes!").expanded_text, "affirmative");
+    assert_eq!(expander.expand("yes?").expanded_text, "affirmative");
+    assert_eq!(expander.expand("yes,").expanded_text, "affirmative");
+    assert_eq!(expander.expand("yes;").expanded_text, "affirmative");
+    assert_eq!(expander.expand("yes:").expanded_text, "affirmative");
+
+    // Multiple punctuation marks stripped
+    assert_eq!(expander.expand("yes...").expanded_text, "affirmative");
+    assert_eq!(expander.expand("yes!?").expanded_text, "affirmative");
+
+    // Without punctuation still works
+    assert_eq!(expander.expand("yes").expanded_text, "affirmative");
+
+    // Partial matches still don't expand (complete_match_only enforced)
+    assert_eq!(expander.expand("say yes.").expanded_text, "say yes.");
+}
+
+#[test]
+fn test_complete_match_only_without_disable_suffix_keeps_punctuation() {
+    // When disable_suffix is false, punctuation should NOT be stripped
+    // This preserves the original behavior documented in test_complete_match_only_punctuation_no_match
+    let entry = DictionaryEntry {
+        id: "test".to_string(),
+        trigger: "yes".to_string(),
+        expansion: "affirmative".to_string(),
+        suffix: None,
+        auto_enter: false,
+        disable_suffix: false,
+        complete_match_only: true,
+    };
+    let expander = DictionaryExpander::new(&[entry]);
+
+    // With disable_suffix=false, punctuation is part of the input and prevents matching
+    assert_eq!(expander.expand("yes.").expanded_text, "yes.");
+    assert_eq!(expander.expand("yes!").expanded_text, "yes!");
+
+    // Without punctuation, it matches
+    assert_eq!(expander.expand("yes").expanded_text, "affirmative");
+}

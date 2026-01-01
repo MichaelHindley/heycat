@@ -85,11 +85,18 @@ impl DictionaryExpander {
     /// Otherwise, fall through to partial matching.
     pub fn expand(&self, text: &str) -> ExpansionResult {
         let trimmed = text.trim();
-        let trimmed_lowercase = trimmed.to_lowercase();
 
         // Check complete-match entries FIRST
         for complete_entry in &self.complete_match_entries {
-            if trimmed_lowercase == complete_entry.trigger_lowercase {
+            // For entries with disable_suffix, strip trailing punctuation before comparing
+            let text_to_compare = if complete_entry.entry.disable_suffix {
+                trimmed.trim_end_matches(|c: char| matches!(c, '.' | '!' | '?' | ',' | ';' | ':'))
+            } else {
+                trimmed
+            };
+            let text_to_compare_lowercase = text_to_compare.to_lowercase();
+
+            if text_to_compare_lowercase == complete_entry.trigger_lowercase {
                 // Exact match found - build replacement
                 let replacement = if complete_entry.entry.disable_suffix {
                     complete_entry.entry.expansion.clone()
