@@ -28,22 +28,6 @@ fn test_transcribe_file_returns_error_for_empty_path() {
 }
 
 #[test]
-fn test_transcribe_samples_returns_error_when_model_not_loaded() {
-    let model = SharedTranscriptionModel::new();
-    let result = model.transcribe_samples(vec![0.1, 0.2, 0.3], 16000, 1);
-    assert!(result.is_err());
-    assert!(matches!(result, Err(TranscriptionError::ModelNotLoaded)));
-}
-
-#[test]
-fn test_transcribe_samples_returns_error_for_empty_samples() {
-    let model = SharedTranscriptionModel::new();
-    let result = model.transcribe_samples(vec![], 16000, 1);
-    assert!(result.is_err());
-    assert!(matches!(result, Err(TranscriptionError::InvalidAudio(_))));
-}
-
-#[test]
 fn test_load_fails_with_invalid_path() {
     let model = SharedTranscriptionModel::new();
     let result = model.load(Path::new("/nonexistent/path/to/model"));
@@ -191,7 +175,7 @@ fn test_transcription_lock_released_on_error_paths() {
     let model = SharedTranscriptionModel::new();
 
     // Error should release lock
-    let _ = model.transcribe_samples(vec![], 16000, 1);
+    let _ = model.transcribe_file("/nonexistent/file.wav");
 
     // Lock should be acquirable again - with parking_lot, this always succeeds
     let _guard = model.acquire_transcription_lock();
@@ -427,7 +411,7 @@ fn test_model_remains_usable_after_state_guard_panic() {
 
     // Can still attempt operations (will fail for other reasons, but not due to poison)
     // This verifies the full transcription path works after a panic
-    let result = model.transcribe_samples(vec![0.1], 16000, 1);
-    // Should fail with ModelNotLoaded (state is Idle but no model), not a lock error
-    assert!(matches!(result, Err(TranscriptionError::ModelNotLoaded)));
+    let result = model.transcribe_file("/nonexistent/file.wav");
+    // Should fail with InvalidAudio (file doesn't exist), not a lock error
+    assert!(matches!(result, Err(TranscriptionError::InvalidAudio(_))));
 }

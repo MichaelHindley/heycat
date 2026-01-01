@@ -20,23 +20,6 @@ fn test_chunk_sizes_match_formula() {
 }
 
 #[test]
-fn test_min_partial_vad_chunk_is_half_of_full_chunk() {
-    // MIN_PARTIAL_VAD_CHUNK should be exactly half of VAD_CHUNK_SIZE_16KHZ
-    assert_eq!(MIN_PARTIAL_VAD_CHUNK, VAD_CHUNK_SIZE_16KHZ / 2);
-    assert_eq!(MIN_PARTIAL_VAD_CHUNK, 256);
-}
-
-#[test]
-fn test_threshold_ordering() {
-    // Wake word threshold should be lowest (most sensitive)
-    assert!(VAD_THRESHOLD_WAKE_WORD < VAD_THRESHOLD_BALANCED);
-    // Balanced should be in the middle
-    assert!(VAD_THRESHOLD_BALANCED < VAD_THRESHOLD_SILENCE);
-    // Silence threshold should be below aggressive
-    assert!(VAD_THRESHOLD_SILENCE < VAD_THRESHOLD_AGGRESSIVE);
-}
-
-#[test]
 fn test_sample_rate_valid_for_silero() {
     // Silero VAD only supports 8000 or 16000 Hz
     assert!(DEFAULT_SAMPLE_RATE == 16000 || DEFAULT_SAMPLE_RATE == 8000);

@@ -1305,14 +1305,6 @@ fn test_recording_mode_default() {
 }
 
 #[test]
-fn test_recording_mode_builder() {
-    let emitter = MockEmitter::new();
-    let integration: TestIntegration = HotkeyIntegration::new(emitter)
-        .with_recording_mode(crate::hotkey::RecordingMode::PushToTalk);
-    assert_eq!(integration.recording_mode(), crate::hotkey::RecordingMode::PushToTalk);
-}
-
-#[test]
 fn test_set_recording_mode() {
     let emitter = MockEmitter::new();
     let mut integration: TestIntegration = HotkeyIntegration::new(emitter);
@@ -1330,8 +1322,8 @@ fn test_ptt_press_starts_recording() {
     ensure_test_model_files();
 
     let emitter = MockEmitter::new();
-    let mut integration: TestIntegration = HotkeyIntegration::with_debounce(emitter.clone(), 0)
-        .with_recording_mode(crate::hotkey::RecordingMode::PushToTalk);
+    let mut integration: TestIntegration = HotkeyIntegration::with_debounce(emitter.clone(), 0);
+    integration.set_recording_mode(crate::hotkey::RecordingMode::PushToTalk);
     let state = Mutex::new(RecordingManager::new());
 
     // Initially Idle
@@ -1349,8 +1341,8 @@ fn test_ptt_release_stops_recording() {
     ensure_test_model_files();
 
     let emitter = MockEmitter::new();
-    let mut integration: TestIntegration = HotkeyIntegration::with_debounce(emitter.clone(), 0)
-        .with_recording_mode(crate::hotkey::RecordingMode::PushToTalk);
+    let mut integration: TestIntegration = HotkeyIntegration::with_debounce(emitter.clone(), 0);
+    integration.set_recording_mode(crate::hotkey::RecordingMode::PushToTalk);
     let state = Mutex::new(RecordingManager::new());
 
     // Start recording via press
@@ -1369,8 +1361,8 @@ fn test_ptt_press_ignored_when_already_recording() {
     ensure_test_model_files();
 
     let emitter = MockEmitter::new();
-    let mut integration: TestIntegration = HotkeyIntegration::with_debounce(emitter.clone(), 0)
-        .with_recording_mode(crate::hotkey::RecordingMode::PushToTalk);
+    let mut integration: TestIntegration = HotkeyIntegration::with_debounce(emitter.clone(), 0);
+    integration.set_recording_mode(crate::hotkey::RecordingMode::PushToTalk);
     let state = Mutex::new(RecordingManager::new());
 
     // First press starts recording
@@ -1386,8 +1378,8 @@ fn test_ptt_press_ignored_when_already_recording() {
 #[test]
 fn test_ptt_release_ignored_when_not_recording() {
     let emitter = MockEmitter::new();
-    let mut integration: TestIntegration = HotkeyIntegration::with_debounce(emitter.clone(), 0)
-        .with_recording_mode(crate::hotkey::RecordingMode::PushToTalk);
+    let mut integration: TestIntegration = HotkeyIntegration::with_debounce(emitter.clone(), 0);
+    integration.set_recording_mode(crate::hotkey::RecordingMode::PushToTalk);
     let state = Mutex::new(RecordingManager::new());
 
     // Release without prior press should be ignored

@@ -375,16 +375,6 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
         self.recording_mode
     }
 
-    /// Set the recording mode (builder pattern)
-    ///
-    /// When set to PushToTalk, the hotkey will start recording on press and
-    /// stop on release. When set to Toggle (default), the hotkey toggles
-    /// recording state on each press.
-    pub fn with_recording_mode(mut self, mode: RecordingMode) -> Self {
-        self.recording_mode = mode;
-        self
-    }
-
     /// Update the recording mode at runtime
     ///
     /// This allows changing the mode after construction, typically used when
