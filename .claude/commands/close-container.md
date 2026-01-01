@@ -9,11 +9,13 @@ You are stopping and removing a Docker development container. This should be don
 ## Prerequisites Check
 
 1. Verify Docker is running:
+
    ```bash
    docker info >/dev/null 2>&1 && echo "Docker is running" || echo "Docker is not running"
    ```
 
 2. List running heycat containers:
+
    ```bash
    docker ps --filter name=heycat-dev --format "table {{.Names}}\t{{.Status}}\t{{.CreatedAt}}"
    ```
@@ -65,11 +67,13 @@ bun scripts/docker/close-container.ts <container-id>
 ```
 
 Or with volume cleanup:
+
 ```bash
 bun scripts/docker/close-container.ts <container-id> --clean-volumes
 ```
 
 Use `--force` flag to skip confirmation:
+
 ```bash
 bun scripts/docker/close-container.ts <container-id> --force
 ```
@@ -83,6 +87,7 @@ This script will:
 ### Step 5: Verify cleanup
 
 Check that container is removed:
+
 ```bash
 docker ps -a --filter name=heycat-dev-<id>
 ```
