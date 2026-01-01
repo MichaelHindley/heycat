@@ -75,8 +75,8 @@ RUN if ! getent group ${GROUP_ID} > /dev/null; then groupadd -g ${GROUP_ID} dev;
 # Create workspace directory
 WORKDIR /workspace
 
-# Set ownership
-RUN chown -R dev:dev /workspace
+# Set ownership (use numeric IDs since group name may vary)
+RUN chown -R ${USER_ID}:${GROUP_ID} /workspace
 
 # Switch to non-root user
 USER dev
