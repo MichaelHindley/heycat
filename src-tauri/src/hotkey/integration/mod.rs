@@ -1,28 +1,42 @@
-// Hotkey-to-recording integration module
-// Connects global hotkey to recording state with debouncing
-// Uses unified command implementations for start/stop logic
+//! Hotkey-to-recording integration module
+//!
+//! Connects global hotkey to recording state with debouncing.
+//! Uses unified command implementations for start/stop logic.
+//!
+//! ## Module Organization
+//!
+//! - `config`: Configuration structs for transcription, silence detection, voice commands, etc.
+//! - `toggle_handler`: Handle toggle mode (press once to start, again to stop)
+//! - `ptt_handler`: Handle push-to-talk mode (hold to record, release to stop)
+//! - `cancel_handler`: Handle recording cancellation via double-tap Escape
+
+mod cancel_handler;
+pub mod config;
+mod ptt_handler;
+mod toggle_handler;
+
+pub use config::{
+    EscapeKeyConfig, SilenceDetectionConfig, TranscriptionConfig, TranscriptionResult,
+    VoiceCommandConfig, DEBOUNCE_DURATION_MS, DEFAULT_TRANSCRIPTION_TIMEOUT_SECS,
+    MAX_CONCURRENT_TRANSCRIPTIONS,
+};
 
 use crate::audio::{AudioMonitorHandle, AudioThreadHandle};
-use crate::commands::logic::{start_recording_impl, stop_recording_impl};
-use crate::keyboard_capture::cgeventtap::set_consume_escape;
 use crate::events::{
     current_timestamp, hotkey_events, CommandAmbiguousPayload, CommandCandidate,
     CommandEventEmitter, CommandExecutedPayload, CommandFailedPayload, CommandMatchedPayload,
-    HotkeyEventEmitter, RecordingCancelledPayload, RecordingErrorPayload,
-    RecordingEventEmitter, RecordingStartedPayload, RecordingStoppedPayload,
-    TranscriptionCompletedPayload, TranscriptionErrorPayload, TranscriptionEventEmitter,
-    TranscriptionStartedPayload,
+    HotkeyEventEmitter, RecordingEventEmitter, TranscriptionCompletedPayload,
+    TranscriptionErrorPayload, TranscriptionEventEmitter, TranscriptionStartedPayload,
 };
-use crate::turso::TursoClient;
 use crate::hotkey::double_tap::{DoubleTapDetector, DEFAULT_DOUBLE_TAP_WINDOW_MS};
 use crate::hotkey::{RecordingMode, ShortcutBackend};
-use crate::recording::{RecordingDetectors, SilenceConfig};
-use crate::model::{check_model_exists_for_type, ModelType};
-use crate::recording::{RecordingManager, RecordingState};
+use crate::parakeet::TranscriptionService;
+use crate::parakeet::SharedTranscriptionModel;
+use crate::recording::{RecordingDetectors, RecordingManager, SilenceConfig};
+use crate::turso::TursoClient;
 use crate::voice_commands::executor::ActionDispatcher;
 use crate::voice_commands::matcher::{CommandMatcher, MatchResult};
 use crate::voice_commands::registry::CommandDefinition;
-use crate::parakeet::{SharedTranscriptionModel, TranscriptionService};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -32,16 +46,6 @@ use tokio::sync::Semaphore;
 
 /// Type alias for the double-tap detector with callback
 type DoubleTapDetectorState = Option<Arc<Mutex<DoubleTapDetector<Box<dyn Fn() + Send + Sync>>>>>;
-
-/// Maximum concurrent transcriptions allowed
-const MAX_CONCURRENT_TRANSCRIPTIONS: usize = 2;
-
-/// Default transcription timeout in seconds
-/// If transcription takes longer than this, it will be cancelled and an error emitted
-pub const DEFAULT_TRANSCRIPTION_TIMEOUT_SECS: u64 = 60;
-
-/// Debounce duration for hotkey presses (200ms)
-pub const DEBOUNCE_DURATION_MS: u64 = 200;
 
 /// Simulate Cmd+V paste keystroke on macOS using CoreGraphics
 #[cfg(target_os = "macos")]
@@ -61,92 +65,6 @@ fn simulate_paste() -> Result<(), String> {
 #[cfg(not(target_os = "macos"))]
 fn simulate_paste() -> Result<(), String> {
     Err("Paste simulation only supported on macOS".to_string())
-}
-
-/// Result of executing a transcription task
-pub struct TranscriptionResult {
-    /// The transcribed text
-    pub text: String,
-    /// Duration of transcription in milliseconds
-    pub duration_ms: u64,
-}
-
-// === Configuration Sub-Structs ===
-// These group related fields from HotkeyIntegration for improved maintainability.
-// Each config struct represents a logical capability that can be optionally enabled.
-
-/// Configuration for transcription capabilities
-///
-/// Groups all fields needed for automatic transcription after recording stops.
-/// When present, recordings will be automatically transcribed and events emitted.
-///
-/// Note: Both `shared_model` and `emitter` must be Some for transcription to work.
-/// The Option wrappers allow incremental builder pattern configuration.
-pub struct TranscriptionConfig<T: TranscriptionEventEmitter> {
-    /// Shared transcription model for performing transcriptions
-    pub shared_model: Option<Arc<SharedTranscriptionModel>>,
-    /// Event emitter for transcription events (started, completed, error)
-    pub emitter: Option<Arc<T>>,
-    /// Semaphore to limit concurrent transcriptions
-    pub semaphore: Arc<Semaphore>,
-    /// Maximum time allowed for transcription before timeout
-    pub timeout: Duration,
-    /// Optional callback for delegating transcription to external service
-    pub callback: Option<Arc<dyn Fn(String) + Send + Sync>>,
-}
-
-/// Configuration for silence detection during recording
-///
-/// Controls whether and how silence detection triggers auto-stop.
-#[derive(Clone)]
-pub struct SilenceDetectionConfig {
-    /// Whether silence detection is enabled (default: true)
-    pub enabled: bool,
-    /// Custom silence configuration (optional, uses defaults if None)
-    pub config: Option<SilenceConfig>,
-}
-
-impl Default for SilenceDetectionConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            config: None,
-        }
-    }
-}
-
-/// Configuration for voice command matching and execution
-///
-/// Groups all fields needed for matching transcribed text to commands
-/// and executing the matched actions.
-///
-/// Note: All fields except `emitter` have default implementations.
-/// The `emitter` must be set for command events to be emitted.
-pub struct VoiceCommandConfig<C: CommandEventEmitter> {
-    /// Turso client for fetching voice commands
-    pub turso_client: Arc<TursoClient>,
-    /// Matcher for finding commands from transcribed text
-    pub matcher: Arc<CommandMatcher>,
-    /// Dispatcher for executing matched command actions
-    pub dispatcher: Arc<ActionDispatcher>,
-    /// Event emitter for command events (matched, executed, failed, ambiguous)
-    /// Optional to support incremental builder pattern
-    pub emitter: Option<Arc<C>>,
-}
-
-/// Configuration for Escape key cancel functionality
-///
-/// Groups fields for double-tap Escape key detection to cancel recording.
-///
-/// Note: Both `backend` and `callback` must be Some for escape handling to work.
-/// The Option wrappers on callback allow incremental builder pattern configuration.
-pub struct EscapeKeyConfig {
-    /// Backend for registering/unregistering global shortcuts
-    pub backend: Arc<dyn ShortcutBackend + Send + Sync>,
-    /// Callback invoked when double-tap Escape is detected (optional for incremental config)
-    pub callback: Option<Arc<dyn Fn() + Send + Sync>>,
-    /// Time window for double-tap detection in milliseconds (default: 300ms)
-    pub double_tap_window_ms: u64,
 }
 
 /// Execute transcription with semaphore-limited concurrency, timeout, and error handling.
@@ -289,57 +207,66 @@ fn copy_and_paste(app_handle: &Option<AppHandle>, text: &str) {
 /// - `silence`: Silence detection configuration
 ///
 /// Top-level fields handle debouncing, listening state, and app integration.
-pub struct HotkeyIntegration<R: RecordingEventEmitter, T: TranscriptionEventEmitter, C: CommandEventEmitter> {
+pub struct HotkeyIntegration<
+    R: RecordingEventEmitter,
+    T: TranscriptionEventEmitter,
+    C: CommandEventEmitter,
+> {
     // === Debounce/Timing ===
-    last_toggle_time: Option<Instant>,
-    debounce_duration: Duration,
+    pub(crate) last_toggle_time: Option<Instant>,
+    pub(crate) debounce_duration: Duration,
 
     // === Recording Mode ===
     /// Current recording mode (Toggle or PushToTalk)
     recording_mode: RecordingMode,
 
     // === Recording (required) ===
-    recording_emitter: R,
+    pub(crate) recording_emitter: R,
 
     // === Grouped Configurations ===
     /// Transcription configuration (model, emitter, semaphore, timeout)
-    transcription: Option<TranscriptionConfig<T>>,
+    pub(crate) transcription: Option<TranscriptionConfig<T>>,
     /// Voice command configuration (registry, matcher, dispatcher, emitter)
-    voice_commands: Option<VoiceCommandConfig<C>>,
+    pub(crate) voice_commands: Option<VoiceCommandConfig<C>>,
     /// Escape key configuration (backend, callback, double-tap window)
-    escape: Option<EscapeKeyConfig>,
+    pub(crate) escape: Option<EscapeKeyConfig>,
     /// Silence detection configuration (public for test assertions)
     pub(crate) silence: SilenceDetectionConfig,
 
     // === Audio (partially grouped - thread is optional, state may be separate) ===
     /// Optional audio thread handle - when present, starts/stops capture on toggle
-    audio_thread: Option<Arc<AudioThreadHandle>>,
+    pub(crate) audio_thread: Option<Arc<AudioThreadHandle>>,
     /// Optional audio monitor handle - stopped before recording to prevent device conflict
-    audio_monitor: Option<Arc<AudioMonitorHandle>>,
+    pub(crate) audio_monitor: Option<Arc<AudioMonitorHandle>>,
     /// Reference to recording state for getting audio buffer in transcription thread
-    recording_state: Option<Arc<Mutex<RecordingManager>>>,
+    pub(crate) recording_state: Option<Arc<Mutex<RecordingManager>>>,
     /// Recording detectors for silence-based auto-stop
-    recording_detectors: Option<Arc<Mutex<RecordingDetectors>>>,
+    pub(crate) recording_detectors: Option<Arc<Mutex<RecordingDetectors>>>,
 
     // === App Integration ===
     /// Optional app handle for clipboard access
-    app_handle: Option<AppHandle>,
+    pub(crate) app_handle: Option<AppHandle>,
     /// Directory for saving recordings (supports worktree isolation)
-    recordings_dir: std::path::PathBuf,
+    pub(crate) recordings_dir: std::path::PathBuf,
 
     // === Escape Key Runtime State ===
     /// Whether Escape key is currently registered (to track cleanup)
     /// Uses Arc<AtomicBool> for thread-safe updates from spawned registration thread
-    escape_registered: Arc<AtomicBool>,
+    pub(crate) escape_registered: Arc<AtomicBool>,
     /// Double-tap detector for Escape key (created on recording start)
-    double_tap_detector: DoubleTapDetectorState,
+    pub(crate) double_tap_detector: DoubleTapDetectorState,
 
     // === Hotkey Events ===
     /// Optional emitter for hotkey-related events (e.g., key blocking unavailable)
-    hotkey_emitter: Option<Arc<dyn HotkeyEventEmitter>>,
+    pub(crate) hotkey_emitter: Option<Arc<dyn HotkeyEventEmitter>>,
 }
 
-impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: CommandEventEmitter + 'static> HotkeyIntegration<R, T, C> {
+impl<
+        R: RecordingEventEmitter,
+        T: TranscriptionEventEmitter + 'static,
+        C: CommandEventEmitter + 'static,
+    > HotkeyIntegration<R, T, C>
+{
     /// Create a new HotkeyIntegration with default debounce duration
     pub fn new(recording_emitter: R) -> Self {
         Self {
@@ -396,12 +323,12 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
     }
 
     /// Get the selected audio device from persistent settings store
-    fn get_selected_audio_device(&self) -> Option<String> {
+    pub(crate) fn get_selected_audio_device(&self) -> Option<String> {
         use crate::util::SettingsAccess;
 
         // Create a wrapper struct that implements SettingsAccess
         struct OptionalAppHandle<'a>(&'a Option<AppHandle>);
-        impl<'a> SettingsAccess for OptionalAppHandle<'a> {
+        impl SettingsAccess for OptionalAppHandle<'_> {
             fn app_handle(&self) -> Option<&AppHandle> {
                 self.0.as_ref()
             }
@@ -424,7 +351,10 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
     }
 
     /// Add SharedTranscriptionModel for auto-transcription (builder pattern)
-    pub fn with_shared_transcription_model(mut self, model: Arc<SharedTranscriptionModel>) -> Self {
+    pub fn with_shared_transcription_model(
+        mut self,
+        model: Arc<SharedTranscriptionModel>,
+    ) -> Self {
         // Update the transcription config's shared_model field
         if let Some(ref mut config) = self.transcription {
             config.shared_model = Some(model);
@@ -562,7 +492,10 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
     /// When configured, hotkey recordings will automatically stop when silence is
     /// detected (after speech ends). This shares the same RecordingDetectors state
     /// used by the wake word flow for consistency.
-    pub fn with_recording_detectors(mut self, detectors: Arc<Mutex<RecordingDetectors>>) -> Self {
+    pub fn with_recording_detectors(
+        mut self,
+        detectors: Arc<Mutex<RecordingDetectors>>,
+    ) -> Self {
         self.recording_detectors = Some(detectors);
         self
     }
@@ -603,7 +536,10 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
     /// When configured with an escape callback, the Escape key listener will be
     /// automatically registered when recording starts and unregistered when
     /// recording stops. This enables cancel functionality via Escape key.
-    pub fn with_shortcut_backend(mut self, backend: Arc<dyn ShortcutBackend + Send + Sync>) -> Self {
+    pub fn with_shortcut_backend(
+        mut self,
+        backend: Arc<dyn ShortcutBackend + Send + Sync>,
+    ) -> Self {
         if let Some(ref mut config) = self.escape {
             config.backend = backend;
         } else {
@@ -742,290 +678,6 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
         }
     }
 
-    /// Handle hotkey toggle - debounces rapid presses
-    ///
-    /// Toggles recording state (Idle → Recording → Idle) and emits events.
-    /// Delegates to unified command implementations for start/stop logic.
-    ///
-    /// Returns true if the toggle was accepted, false if debounced or busy
-    ///
-    /// Coverage exclusion: Error paths (lock poisoning, command failures) cannot
-    /// be triggered without mocking std::sync primitives. The happy path is tested
-    /// via integration_test.rs with mock emitters.
-    #[cfg_attr(coverage_nightly, coverage(off))]
-    pub fn handle_toggle(&mut self, state: &Mutex<RecordingManager>) -> bool {
-        let now = Instant::now();
-
-        // Check debounce
-        if let Some(last) = self.last_toggle_time {
-            if now.duration_since(last) < self.debounce_duration {
-                crate::trace!("Toggle debounced");
-                return false;
-            }
-        }
-
-        self.last_toggle_time = Some(now);
-
-        // Check current state to decide action
-        let current_state = match state.lock() {
-            Ok(guard) => guard.get_state(),
-            Err(e) => {
-                crate::error!("Failed to acquire lock: {}", e);
-                self.recording_emitter.emit_recording_error(RecordingErrorPayload {
-                    message: "Internal error: state lock poisoned".to_string(),
-                });
-                return false;
-            }
-        };
-
-        crate::debug!("Toggle received, current state: {:?}", current_state);
-
-        match current_state {
-            RecordingState::Idle => {
-                crate::info!("Starting recording from Idle state...");
-
-                // Check model availability (TDT for batch transcription)
-                let model_available = check_model_exists_for_type(ModelType::ParakeetTDT).unwrap_or(false);
-
-                // Note: Audio monitor uses unified SharedAudioEngine with capture, so no need to stop it.
-                // Level monitoring continues during recording via the shared engine.
-
-                // Use unified command implementation
-                // Read selected device from persistent settings store
-                let device_name = self.get_selected_audio_device();
-                match start_recording_impl(state, self.audio_thread.as_deref(), model_available, device_name) {
-                    Ok(()) => {
-                        self.recording_emitter
-                            .emit_recording_started(RecordingStartedPayload {
-                                timestamp: current_timestamp(),
-                            });
-                        crate::info!("Recording started, emitted recording_started event");
-
-                        // Register Escape key listener for cancel functionality
-                        self.register_escape_listener();
-
-                        // Enable Escape key consumption to prevent propagation to other apps
-                        set_consume_escape(true);
-
-                        // Start silence detection if enabled and configured
-                        self.start_silence_detection(state);
-
-                        true
-                    }
-                    Err(e) => {
-                        crate::error!("Failed to start recording: {}", e);
-                        self.recording_emitter.emit_recording_error(RecordingErrorPayload {
-                            message: e,
-                        });
-                        false
-                    }
-                }
-            }
-            RecordingState::Recording => {
-                crate::info!("Stopping recording (manual stop via hotkey)...");
-
-                // Unregister Escape key listener first
-                self.unregister_escape_listener();
-
-                // Disable Escape key consumption since recording is stopping
-                set_consume_escape(false);
-
-                // Stop silence detection first to prevent it from interfering
-                // Manual stop takes precedence over auto-stop
-                self.stop_silence_detection();
-
-                // Use unified command implementation (always return to Idle)
-                match stop_recording_impl(state, self.audio_thread.as_deref(), false, self.recordings_dir.clone()) {
-                    Ok(metadata) => {
-                        crate::info!(
-                            "Recording stopped: {} samples, {:.2}s duration",
-                            metadata.sample_count, metadata.duration_secs
-                        );
-
-                        // Store recording metadata in Turso using storage abstraction
-                        if let Some(ref app_handle) = self.app_handle {
-                            if !metadata.file_path.is_empty() {
-                                crate::storage::store_recording(app_handle, &metadata, "hotkey");
-                            }
-                        }
-
-                        // Clone file_path before metadata is moved
-                        let file_path_for_transcription = metadata.file_path.clone();
-                        self.recording_emitter
-                            .emit_recording_stopped(RecordingStoppedPayload { metadata });
-                        crate::debug!("Emitted recording_stopped event");
-
-                        // Auto-transcribe if transcription manager is configured
-                        self.spawn_transcription(file_path_for_transcription);
-
-                        true
-                    }
-                    Err(e) => {
-                        crate::error!("Failed to stop recording: {}", e);
-                        self.recording_emitter.emit_recording_error(RecordingErrorPayload {
-                            message: e,
-                        });
-                        false
-                    }
-                }
-            }
-            RecordingState::Processing => {
-                // In Processing state - ignore toggle (busy)
-                crate::debug!("Toggle ignored - already processing");
-                false
-            }
-        }
-    }
-
-    /// Handle hotkey press event for push-to-talk mode
-    ///
-    /// In PTT mode, pressing the hotkey starts recording immediately (no debounce).
-    /// This is called when the hotkey key is pressed down.
-    ///
-    /// Returns true if recording was started, false otherwise.
-    #[cfg_attr(coverage_nightly, coverage(off))]
-    pub fn handle_hotkey_press(&mut self, state: &Mutex<RecordingManager>) -> bool {
-        // PTT mode skips debounce for immediate response
-        let current_state = match state.lock() {
-            Ok(guard) => guard.get_state(),
-            Err(e) => {
-                crate::error!("Failed to acquire lock: {}", e);
-                self.recording_emitter.emit_recording_error(RecordingErrorPayload {
-                    message: "Internal error: state lock poisoned".to_string(),
-                });
-                return false;
-            }
-        };
-
-        crate::debug!("PTT press received, current state: {:?}", current_state);
-
-        match current_state {
-            RecordingState::Idle => {
-                crate::info!("PTT: Starting recording on key press...");
-
-                // Check model availability
-                let model_available = check_model_exists_for_type(ModelType::ParakeetTDT).unwrap_or(false);
-
-                let device_name = self.get_selected_audio_device();
-                match start_recording_impl(state, self.audio_thread.as_deref(), model_available, device_name) {
-                    Ok(()) => {
-                        self.recording_emitter
-                            .emit_recording_started(RecordingStartedPayload {
-                                timestamp: current_timestamp(),
-                            });
-                        crate::info!("PTT: Recording started");
-
-                        // Register Escape key listener for emergency cancel
-                        self.register_escape_listener();
-
-                        // Enable Escape key consumption
-                        set_consume_escape(true);
-
-                        // Note: PTT mode does NOT start silence detection
-                        // Recording stops on key release, not on silence
-
-                        true
-                    }
-                    Err(e) => {
-                        crate::error!("PTT: Failed to start recording: {}", e);
-                        self.recording_emitter.emit_recording_error(RecordingErrorPayload {
-                            message: e,
-                        });
-                        false
-                    }
-                }
-            }
-            RecordingState::Recording => {
-                // Already recording - ignore (user might have double-pressed)
-                crate::debug!("PTT press ignored - already recording");
-                false
-            }
-            RecordingState::Processing => {
-                // Busy - ignore
-                crate::debug!("PTT press ignored - processing");
-                false
-            }
-        }
-    }
-
-    /// Handle hotkey release event for push-to-talk mode
-    ///
-    /// In PTT mode, releasing the hotkey stops recording immediately.
-    /// This is called when the hotkey key is released.
-    ///
-    /// Returns true if recording was stopped, false otherwise.
-    #[cfg_attr(coverage_nightly, coverage(off))]
-    pub fn handle_hotkey_release(&mut self, state: &Mutex<RecordingManager>) -> bool {
-        let current_state = match state.lock() {
-            Ok(guard) => guard.get_state(),
-            Err(e) => {
-                crate::error!("Failed to acquire lock: {}", e);
-                self.recording_emitter.emit_recording_error(RecordingErrorPayload {
-                    message: "Internal error: state lock poisoned".to_string(),
-                });
-                return false;
-            }
-        };
-
-        crate::debug!("PTT release received, current state: {:?}", current_state);
-
-        match current_state {
-            RecordingState::Recording => {
-                crate::info!("PTT: Stopping recording on key release...");
-
-                // Unregister Escape key listener
-                self.unregister_escape_listener();
-
-                // Disable Escape key consumption
-                set_consume_escape(false);
-
-                // Stop recording and process
-                match stop_recording_impl(state, self.audio_thread.as_deref(), false, self.recordings_dir.clone()) {
-                    Ok(metadata) => {
-                        crate::info!(
-                            "PTT: Recording stopped: {} samples, {:.2}s duration",
-                            metadata.sample_count, metadata.duration_secs
-                        );
-
-                        // Store recording metadata in Turso using storage abstraction
-                        if let Some(ref app_handle) = self.app_handle {
-                            if !metadata.file_path.is_empty() {
-                                crate::storage::store_recording(app_handle, &metadata, "PTT");
-                            }
-                        }
-
-                        let file_path_for_transcription = metadata.file_path.clone();
-                        self.recording_emitter
-                            .emit_recording_stopped(RecordingStoppedPayload { metadata });
-                        crate::debug!("PTT: Emitted recording_stopped event");
-
-                        // Auto-transcribe
-                        self.spawn_transcription(file_path_for_transcription);
-
-                        true
-                    }
-                    Err(e) => {
-                        crate::error!("PTT: Failed to stop recording: {}", e);
-                        self.recording_emitter.emit_recording_error(RecordingErrorPayload {
-                            message: e,
-                        });
-                        false
-                    }
-                }
-            }
-            RecordingState::Idle => {
-                // Not recording - ignore (user might have released after cancel)
-                crate::debug!("PTT release ignored - not recording");
-                false
-            }
-            RecordingState::Processing => {
-                // Busy - ignore
-                crate::debug!("PTT release ignored - processing");
-                false
-            }
-        }
-    }
-
     /// Spawn transcription as an async task
     ///
     /// Transcribes the WAV file, tries command matching, then fallback to clipboard.
@@ -1044,7 +696,10 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
         // This enables HotkeyIntegration to use TranscriptionService without duplication
         if let Some(ref config) = self.transcription {
             if let Some(ref callback) = config.callback {
-                crate::info!("Delegating transcription to external service for: {}", file_path);
+                crate::info!(
+                    "Delegating transcription to external service for: {}",
+                    file_path
+                );
                 callback(file_path);
                 return;
             }
@@ -1132,8 +787,14 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
 
             // Try voice command matching if configured
             enum MatchOutcome {
-                Matched { cmd: CommandDefinition, trigger: String, confidence: f64 },
-                Ambiguous { candidates: Vec<CommandCandidate> },
+                Matched {
+                    cmd: CommandDefinition,
+                    trigger: String,
+                    confidence: f64,
+                },
+                Ambiguous {
+                    candidates: Vec<CommandCandidate>,
+                },
                 NoMatch,
             }
 
@@ -1147,7 +808,12 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
                 }
             };
 
-            let command_handled = if let (Some(client), Some(matcher), Some(dispatcher), Some(emitter)) =
+            let command_handled = if let (
+                Some(client),
+                Some(matcher),
+                Some(dispatcher),
+                Some(emitter),
+            ) =
                 (&turso_client, &command_matcher, &action_dispatcher, &command_emitter)
             {
                 // Fetch all commands from Turso
@@ -1170,26 +836,29 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
                 let match_result = matcher.match_commands(&text, &all_commands);
 
                 let outcome = match match_result {
-                    MatchResult::Exact { command: matched_cmd, .. } => {
-                        match commands_by_id.get(&matched_cmd.id) {
-                            Some(cmd) => MatchOutcome::Matched {
-                                cmd: (*cmd).clone(),
-                                trigger: matched_cmd.trigger.clone(),
-                                confidence: 1.0
-                            },
-                            None => MatchOutcome::NoMatch,
-                        }
-                    }
-                    MatchResult::Fuzzy { command: matched_cmd, score, .. } => {
-                        match commands_by_id.get(&matched_cmd.id) {
-                            Some(cmd) => MatchOutcome::Matched {
-                                cmd: (*cmd).clone(),
-                                trigger: matched_cmd.trigger.clone(),
-                                confidence: score
-                            },
-                            None => MatchOutcome::NoMatch,
-                        }
-                    }
+                    MatchResult::Exact {
+                        command: matched_cmd,
+                        ..
+                    } => match commands_by_id.get(&matched_cmd.id) {
+                        Some(cmd) => MatchOutcome::Matched {
+                            cmd: (*cmd).clone(),
+                            trigger: matched_cmd.trigger.clone(),
+                            confidence: 1.0,
+                        },
+                        None => MatchOutcome::NoMatch,
+                    },
+                    MatchResult::Fuzzy {
+                        command: matched_cmd,
+                        score,
+                        ..
+                    } => match commands_by_id.get(&matched_cmd.id) {
+                        Some(cmd) => MatchOutcome::Matched {
+                            cmd: (*cmd).clone(),
+                            trigger: matched_cmd.trigger.clone(),
+                            confidence: score,
+                        },
+                        None => MatchOutcome::NoMatch,
+                    },
                     MatchResult::Ambiguous { candidates } => {
                         let candidate_data: Vec<_> = candidates
                             .iter()
@@ -1199,14 +868,24 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
                                 confidence: c.score,
                             })
                             .collect();
-                        MatchOutcome::Ambiguous { candidates: candidate_data }
+                        MatchOutcome::Ambiguous {
+                            candidates: candidate_data,
+                        }
                     }
                     MatchResult::NoMatch => MatchOutcome::NoMatch,
                 };
 
                 match outcome {
-                    MatchOutcome::Matched { cmd, trigger, confidence } => {
-                        crate::info!("Command matched: {} (confidence: {:.2})", trigger, confidence);
+                    MatchOutcome::Matched {
+                        cmd,
+                        trigger,
+                        confidence,
+                    } => {
+                        crate::info!(
+                            "Command matched: {} (confidence: {:.2})",
+                            trigger,
+                            confidence
+                        );
 
                         // Emit command_matched event
                         emitter.emit_command_matched(CommandMatchedPayload {
@@ -1291,7 +970,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
     ///
     /// This method is called after recording starts successfully. The detection runs
     /// in a separate thread and will handle saving/transcription when silence triggers.
-    fn start_silence_detection(&self, recording_state: &Mutex<RecordingManager>) {
+    pub(crate) fn start_silence_detection(&self, recording_state: &Mutex<RecordingManager>) {
         // Check if silence detection is enabled (from silence config)
         if !self.silence.enabled {
             crate::debug!("Silence detection disabled for hotkey recordings");
@@ -1381,7 +1060,10 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
                     let app_handle = app_handle_for_callback.clone();
                     let recording_state = recording_state_for_callback.clone();
 
-                    crate::info!("[silence_detection] Spawning transcription task for: {}", file_path);
+                    crate::info!(
+                        "[silence_detection] Spawning transcription task for: {}",
+                        file_path
+                    );
 
                     tauri::async_runtime::spawn(async move {
                         // Execute transcription using shared helper
@@ -1408,10 +1090,11 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
                         copy_and_paste(&app_handle, &text);
 
                         // Emit completed
-                        transcription_emitter.emit_transcription_completed(TranscriptionCompletedPayload {
-                            text,
-                            duration_ms,
-                        });
+                        transcription_emitter
+                            .emit_transcription_completed(TranscriptionCompletedPayload {
+                                text,
+                                duration_ms,
+                            });
 
                         // Reset model and clear buffer
                         let _ = shared_model.reset_to_idle();
@@ -1452,7 +1135,9 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
         let recording_emitter_for_detectors = match &self.app_handle {
             Some(handle) => Arc::new(crate::commands::TauriEventEmitter::new(handle.clone())),
             None => {
-                crate::warn!("No app handle configured, cannot create emitter for silence detection");
+                crate::warn!(
+                    "No app handle configured, cannot create emitter for silence detection"
+                );
                 return;
             }
         };
@@ -1476,7 +1161,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
     /// Called when the user manually stops recording via hotkey. This ensures
     /// the silence detection thread is stopped before processing the recording,
     /// allowing manual stop to take precedence over auto-stop.
-    fn stop_silence_detection(&self) {
+    pub(crate) fn stop_silence_detection(&self) {
         let detectors = match &self.recording_detectors {
             Some(d) => d,
             None => return,
@@ -1503,7 +1188,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
     /// re-entrancy deadlock. When this function is called from within a global shortcut
     /// callback (e.g., the recording hotkey), calling backend.register() synchronously
     /// would deadlock because the shortcut manager's lock is already held.
-    fn register_escape_listener(&mut self) {
+    pub(crate) fn register_escape_listener(&mut self) {
         // Skip if already registered or not configured
         if self.escape_registered.load(Ordering::SeqCst) {
             crate::debug!("Escape listener already registered, skipping");
@@ -1542,22 +1227,27 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
         // In production, spawn registration on a separate thread to avoid re-entrancy deadlock
         #[cfg(test)]
         {
-            match backend.register(super::ESCAPE_SHORTCUT, Box::new(move || {
-                // Use try_lock to avoid blocking the CGEventTap callback
-                // If lock is contended, skip this escape tap rather than freezing keyboard
-                if let Ok(mut det) = detector.try_lock() {
-                    if det.on_tap() {
-                        crate::debug!("Double-tap Escape detected, cancel triggered");
+            match backend.register(
+                super::ESCAPE_SHORTCUT,
+                Box::new(move || {
+                    // Use try_lock to avoid blocking the CGEventTap callback
+                    // If lock is contended, skip this escape tap rather than freezing keyboard
+                    if let Ok(mut det) = detector.try_lock() {
+                        if det.on_tap() {
+                            crate::debug!("Double-tap Escape detected, cancel triggered");
+                        } else {
+                            crate::trace!("Single Escape tap recorded, waiting for double-tap");
+                        }
                     } else {
-                        crate::trace!("Single Escape tap recorded, waiting for double-tap");
+                        crate::trace!("Skipping escape tap - detector lock contended");
                     }
-                } else {
-                    crate::trace!("Skipping escape tap - detector lock contended");
-                }
-            })) {
+                }),
+            ) {
                 Ok(()) => {
                     self.escape_registered.store(true, Ordering::SeqCst);
-                    crate::info!("Escape key listener registered for recording cancel (double-tap required)");
+                    crate::info!(
+                        "Escape key listener registered for recording cancel (double-tap required)"
+                    );
                 }
                 Err(e) => {
                     crate::warn!("Failed to register Escape key listener: {}", e);
@@ -1589,23 +1279,28 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
                 // Small delay to ensure the calling shortcut callback has completed
                 std::thread::sleep(std::time::Duration::from_millis(10));
 
-                match backend.register(super::ESCAPE_SHORTCUT, Box::new(move || {
-                    // Use try_lock to avoid blocking the CGEventTap callback
-                    // If lock is contended, skip this escape tap rather than freezing keyboard
-                    if let Ok(mut det) = detector.try_lock() {
-                        if det.on_tap() {
-                            crate::debug!("Double-tap Escape detected, cancel triggered");
+                match backend.register(
+                    super::ESCAPE_SHORTCUT,
+                    Box::new(move || {
+                        // Use try_lock to avoid blocking the CGEventTap callback
+                        // If lock is contended, skip this escape tap rather than freezing keyboard
+                        if let Ok(mut det) = detector.try_lock() {
+                            if det.on_tap() {
+                                crate::debug!("Double-tap Escape detected, cancel triggered");
+                            } else {
+                                crate::trace!("Single Escape tap recorded, waiting for double-tap");
+                            }
                         } else {
-                            crate::trace!("Single Escape tap recorded, waiting for double-tap");
+                            crate::trace!("Skipping escape tap - detector lock contended");
                         }
-                    } else {
-                        crate::trace!("Skipping escape tap - detector lock contended");
-                    }
-                })) {
+                    }),
+                ) {
                     Ok(()) => {
                         // Only set escape_registered to true AFTER successful registration
                         escape_registered.store(true, Ordering::SeqCst);
-                        crate::info!("Escape key listener registered for recording cancel (double-tap required)");
+                        crate::info!(
+                            "Escape key listener registered for recording cancel (double-tap required)"
+                        );
                     }
                     Err(e) => {
                         crate::warn!("Failed to register Escape key listener: {}", e);
@@ -1614,7 +1309,10 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
                         if let Some(ref emitter) = hotkey_emitter {
                             emitter.emit_key_blocking_unavailable(
                                 hotkey_events::KeyBlockingUnavailablePayload {
-                                    reason: format!("Failed to register Escape key listener: {}", e),
+                                    reason: format!(
+                                        "Failed to register Escape key listener: {}",
+                                        e
+                                    ),
                                     timestamp: current_timestamp(),
                                 },
                             );
@@ -1634,7 +1332,7 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
     /// IMPORTANT: Like register_escape_listener, the actual unregistration is deferred
     /// to a spawned thread to avoid re-entrancy deadlock when called from within a
     /// global shortcut callback (e.g., the recording hotkey or Escape key itself).
-    fn unregister_escape_listener(&mut self) {
+    pub(crate) fn unregister_escape_listener(&mut self) {
         // Reset double-tap detector state - use try_lock to avoid deadlock when called
         // from within the escape callback (which already holds this lock)
         if let Some(ref detector) = self.double_tap_detector {
@@ -1694,91 +1392,6 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
         }
     }
 
-    /// Cancel recording without transcription
-    ///
-    /// This method is called when the user double-taps Escape during recording.
-    /// It stops the recording immediately, discards the audio buffer (no WAV file
-    /// created, no transcription triggered), and transitions directly to Idle state.
-    ///
-    /// # Arguments
-    /// * `state` - The recording state mutex
-    /// * `reason` - The reason for cancellation (e.g., "double-tap-escape")
-    ///
-    /// # Returns
-    /// * `true` if cancellation was successful
-    /// * `false` if not in recording state or an error occurred
-    pub fn cancel_recording(&mut self, state: &Mutex<RecordingManager>, reason: &str) -> bool {
-        // Check current state - can only cancel from Recording state
-        let current_state = match state.lock() {
-            Ok(guard) => guard.get_state(),
-            Err(e) => {
-                crate::error!("Failed to acquire lock for cancel: {}", e);
-                self.recording_emitter.emit_recording_error(RecordingErrorPayload {
-                    message: "Internal error: state lock poisoned".to_string(),
-                });
-                return false;
-            }
-        };
-
-        if current_state != RecordingState::Recording {
-            crate::debug!("Cancel ignored - not in recording state (current: {:?})", current_state);
-            return false;
-        }
-
-        crate::info!("Cancelling recording (reason: {})", reason);
-
-        // 1. Unregister Escape key listener first
-        self.unregister_escape_listener();
-
-        // 2. Disable Escape key consumption since recording is being cancelled
-        set_consume_escape(false);
-
-        // 3. Stop silence detection if active
-        self.stop_silence_detection();
-
-        // 4. Stop audio capture (discard result - we don't want the audio)
-        if let Some(ref audio_thread) = self.audio_thread {
-            // Stop the audio thread to halt capture
-            if let Err(e) = audio_thread.stop() {
-                crate::warn!("Failed to stop audio thread during cancel: {:?}", e);
-                // Continue anyway - the buffer will be discarded
-            }
-        }
-
-        // 5. Abort recording - this clears the buffer and transitions directly to Idle
-        //    (bypassing Processing state, so no transcription will be triggered)
-        let abort_result = match state.lock() {
-            Ok(mut guard) => guard.abort_recording(RecordingState::Idle),
-            Err(e) => {
-                crate::error!("Failed to acquire lock for abort: {}", e);
-                self.recording_emitter.emit_recording_error(RecordingErrorPayload {
-                    message: "Internal error: state lock poisoned".to_string(),
-                });
-                return false;
-            }
-        };
-
-        match abort_result {
-            Ok(()) => {
-                // 6. Emit recording_cancelled event
-                self.recording_emitter.emit_recording_cancelled(RecordingCancelledPayload {
-                    reason: reason.to_string(),
-                    timestamp: current_timestamp(),
-                });
-
-                crate::info!("Recording cancelled successfully");
-                true
-            }
-            Err(e) => {
-                crate::error!("Failed to abort recording: {}", e);
-                self.recording_emitter.emit_recording_error(RecordingErrorPayload {
-                    message: format!("Failed to cancel recording: {}", e),
-                });
-                false
-            }
-        }
-    }
-
     /// Check if currently in debounce window (for testing)
     #[cfg(test)]
     pub fn is_debouncing(&self) -> bool {
@@ -1787,5 +1400,24 @@ impl<R: RecordingEventEmitter, T: TranscriptionEventEmitter + 'static, C: Comman
         } else {
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_silence_detection_config_default() {
+        let config = SilenceDetectionConfig::default();
+        assert!(config.enabled);
+        assert!(config.config.is_none());
+    }
+
+    #[test]
+    fn test_constants() {
+        assert_eq!(MAX_CONCURRENT_TRANSCRIPTIONS, 2);
+        assert_eq!(DEFAULT_TRANSCRIPTION_TIMEOUT_SECS, 60);
+        assert_eq!(DEBOUNCE_DURATION_MS, 200);
     }
 }
