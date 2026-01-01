@@ -11,12 +11,15 @@ You are creating a new Docker development container for developing a feature. Th
 ## Prerequisites Check
 
 1. Verify Docker is running:
+
    ```bash
    docker info >/dev/null 2>&1 && echo "Docker is running" || echo "Docker is not running"
    ```
+
    - If not running, ask user to start Docker Desktop or Docker daemon
 
 2. Verify you are in the project root (docker-compose.yml exists):
+
    ```bash
    test -f docker-compose.yml && echo "Found docker-compose.yml" || echo "Not in project root"
    ```
@@ -34,6 +37,7 @@ If the user doesn't have a Linear issue yet, direct them to create one first usi
 ### Step 2: Verify SSH agent
 
 For git operations inside the container, SSH agent forwarding should work:
+
 ```bash
 ssh-add -l || echo "No SSH keys loaded"
 ```
@@ -56,6 +60,7 @@ This script will:
 7. Print access instructions
 
 Example:
+
 ```bash
 bun scripts/docker/create-container.ts --issue docker-development-workflow
 # Creates branch: HEY-156-docker-development-workflow
@@ -70,6 +75,7 @@ docker exec -it heycat-dev-<container-id> bash
 ```
 
 Or start Claude Code inside:
+
 ```bash
 docker exec -it heycat-dev-<container-id> claude
 ```
@@ -113,21 +119,21 @@ This is why all branches MUST be created through a Linear issue - it ensures pro
 
 ## Troubleshooting
 
-**"Docker is not running"**
+#### "Docker is not running"
 - Start Docker Desktop or run `sudo systemctl start docker`
 
-**"Issue not found in Linear"**
+#### "Issue not found in Linear"
 - Verify the issue slug or identifier is correct
 - Check that LINEAR_API_KEY is set in your environment
 
-**"Failed to build Docker image"**
+#### "Failed to build Docker image"
 - Check Dockerfile.dev for errors
 - Ensure you have enough disk space
 
-**"Container already exists"**
+#### "Container already exists"
 - Remove the existing container: `docker rm -f heycat-dev-<id>`
 - Or the branch was already created for this issue
 
-**"SSH agent not forwarded"**
+#### "SSH agent not forwarded"
 - Ensure `SSH_AUTH_SOCK` is set
 - On macOS, the docker-compose.yml should handle this automatically

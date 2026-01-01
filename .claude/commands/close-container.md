@@ -106,11 +106,13 @@ Volumes are named:
 - `heycat-cargo-git-<id>`
 
 To list volumes for a container:
+
 ```bash
 docker volume ls --filter name=heycat-*-<container-id>
 ```
 
 To manually remove volumes:
+
 ```bash
 docker volume rm heycat-bun-cache-<id> heycat-cargo-registry-<id> heycat-cargo-git-<id>
 ```
@@ -142,6 +144,7 @@ docker volume rm heycat-bun-cache-<id> heycat-cargo-registry-<id> heycat-cargo-g
 ## Quick Cleanup
 
 To remove ALL heycat development containers and volumes:
+
 ```bash
 # Remove all heycat containers
 docker ps -a --filter name=heycat-dev -q | xargs -r docker rm -f

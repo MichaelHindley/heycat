@@ -87,6 +87,7 @@ See "⚠️ Required: Isolated Development Environment" section above. Additiona
 
 **Starting Claude in a worktree:**
 To ensure subagents (like `/devloop:agile:review`) operate in the correct directory, use:
+
 ```bash
 # Create new worktree and start Claude there
 ./scripts/start-worktree-session.sh feature/my-feature
