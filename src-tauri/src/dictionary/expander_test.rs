@@ -450,3 +450,24 @@ fn test_complete_match_only_with_auto_enter() {
     assert_eq!(result.expanded_text, "Sending now");
     assert!(result.should_press_enter);
 }
+
+#[test]
+fn test_complete_match_only_with_disable_suffix() {
+    // Test interaction: complete_match_only + disable_suffix both enabled
+    let entry = DictionaryEntry {
+        id: "test".to_string(),
+        trigger: "brb".to_string(),
+        expansion: "be right back".to_string(),
+        suffix: None,
+        auto_enter: false,
+        disable_suffix: true,
+        complete_match_only: true,
+    };
+    let expander = DictionaryExpander::new(&[entry]);
+
+    // Complete match works
+    assert_eq!(expander.expand("brb").expanded_text, "be right back");
+
+    // Partial match does NOT expand (complete_match_only takes effect)
+    assert_eq!(expander.expand("I'll brb").expanded_text, "I'll brb");
+}
