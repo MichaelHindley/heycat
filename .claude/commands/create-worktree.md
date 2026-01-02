@@ -6,7 +6,7 @@ description: Create a new ephemeral worktree for feature development
 
 You are creating a new ephemeral worktree for developing a feature. This is part of the "cattle" worktree model - worktrees are created per-feature and deleted after the PR is merged.
 
-**IMPORTANT**: All development must go through Linear. Freeform branch names are not allowed.
+**IMPORTANT**: All worktrees MUST be associated with a Linear issue (format: `HEY-xxx`). This is enforced by the creation scripts.
 
 ## Prerequisites Check
 
@@ -22,13 +22,22 @@ You are creating a new ephemeral worktree for developing a feature. This is part
 
 ## Execution Flow
 
-### Step 1: Identify the Linear issue
+### Step 1: Get Linear issue ID (REQUIRED)
 
-**Ask the user for the Linear issue slug or identifier.** Examples:
-- Issue slug: `docker-development-workflow`
-- Issue identifier: `HEY-156`
+1. **Ask for Linear issue ID**: Request the Linear issue ID from the user
+   - Format: `HEY-<number>` (e.g., `HEY-123`)
+   - This is MANDATORY - do not proceed without a valid issue ID
 
-If the user doesn't have a Linear issue yet, direct them to create one first using `/devloop:agile:issue` or `/devloop:agile:quick`.
+2. **Ask for description**: Request a short description (2-3 words, kebab-case)
+   - Examples: `fix-audio`, `add-dark-mode`, `improve-performance`
+
+3. **Construct branch name**: `HEY-<number>-<description>`
+   - Example: `HEY-42-audio-improvements`
+
+**Why Linear issue is required**: This enables:
+- Automatic PR linking with Linear
+- Issue auto-closing when PR merges
+- Proper tracking of work items
 
 ### Step 2: Fetch latest main
 
@@ -90,6 +99,7 @@ Remind the user of the full workflow:
 
 ## Notes
 
+- **Linear issue required**: Every worktree must have a Linear issue ID (HEY-xxx)
 - Each worktree gets a unique dev port (1421-1429) so multiple instances can run simultaneously
 - Each worktree gets a unique recording hotkey to avoid conflicts
 - Data is stored in isolated directories (`~/.local/share/heycat-<id>/`)
@@ -123,3 +133,8 @@ This is why all branches MUST be created through a Linear issue - it ensures pro
 
 **"Working directory is not clean"**
 - Commit or stash your changes before creating a worktree.
+
+**"Branch name must start with a Linear issue ID"**
+- You need a Linear issue before creating a worktree
+- Create an issue in Linear first: `bun <plugin-path>/agile.ts issue create`
+- Then use the issue ID: `--issue HEY-123`

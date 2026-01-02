@@ -1,12 +1,19 @@
 // Global hotkey registration module
 
+use serde::{Deserialize, Serialize};
+
 mod tauri_backend;
 // TauriShortcutBackend is used internally by create_shortcut_backend on non-macOS platforms
 #[allow(unused_imports)]
 pub use tauri_backend::TauriShortcutBackend;
 
 #[cfg(target_os = "macos")]
-mod cgeventtap_backend;
+pub mod cgeventtap_backend;
+
+#[cfg(not(target_os = "macos"))]
+mod rdev_backend;
+#[cfg(not(target_os = "macos"))]
+pub use rdev_backend::RdevShortcutBackend;
 
 pub mod double_tap;
 
@@ -47,6 +54,19 @@ impl std::fmt::Display for HotkeyError {
 
 impl std::error::Error for HotkeyError {}
 
+/// Recording mode determines how the hotkey triggers recording
+///
+/// Used by HotkeyIntegration and settings commands to support push-to-talk mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum RecordingMode {
+    /// Press once to start, press again to stop (default)
+    #[default]
+    Toggle,
+    /// Hold to record, release to stop
+    PushToTalk,
+}
+
 /// Map backend error messages to HotkeyError variants
 pub fn map_backend_error(msg: &str) -> HotkeyError {
     let lower = msg.to_lowercase();
@@ -63,6 +83,33 @@ pub fn map_backend_error(msg: &str) -> HotkeyError {
 pub trait ShortcutBackend {
     fn register(&self, shortcut: &str, callback: Box<dyn Fn() + Send + Sync>) -> Result<(), String>;
     fn unregister(&self, shortcut: &str) -> Result<(), String>;
+
+    /// Returns a reference to Any for downcasting to concrete types
+    ///
+    /// This enables checking if a backend implements ShortcutBackendExt
+    /// for push-to-talk mode support.
+    fn as_any(&self) -> &dyn std::any::Any;
+}
+
+/// Extended trait for shortcut backends that support key release detection
+///
+/// This trait adds support for push-to-talk mode where we need separate
+/// callbacks for key press and key release events.
+///
+/// Implemented by CGEventTapHotkeyBackend (macOS) and RdevShortcutBackend (Windows/Linux).
+pub trait ShortcutBackendExt: ShortcutBackend {
+    /// Register a shortcut with separate press and release callbacks
+    ///
+    /// - `on_press`: Called when the key is pressed down
+    /// - `on_release`: Called when the key is released
+    ///
+    /// Returns an error if registration fails.
+    fn register_with_release(
+        &self,
+        shortcut: &str,
+        on_press: Box<dyn Fn() + Send + Sync>,
+        on_release: Box<dyn Fn() + Send + Sync>,
+    ) -> Result<(), String>;
 }
 
 /// Null implementation of ShortcutBackend for placeholder configs
@@ -78,6 +125,10 @@ impl ShortcutBackend for NullShortcutBackend {
 
     fn unregister(&self, _shortcut: &str) -> Result<(), String> {
         Err("NullShortcutBackend: unregistration not supported".to_string())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -144,9 +195,9 @@ impl HotkeyServiceDyn {
 /// Create the appropriate shortcut backend for the current platform
 ///
 /// - **macOS**: Uses CGEventTapHotkeyBackend (supports fn key, media keys, requires Accessibility permission)
-/// - **Windows/Linux**: Uses TauriShortcutBackend (standard Tauri global shortcut plugin)
+/// - **Windows/Linux**: Uses RdevShortcutBackend (supports push-to-talk with key release detection)
 ///
-/// Both backends implement the `ShortcutBackend` trait, so they can be used interchangeably.
+/// Both backends implement the `ShortcutBackend` trait and `ShortcutBackendExt` for PTT support.
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub fn create_shortcut_backend(app: tauri::AppHandle) -> Arc<dyn ShortcutBackend + Send + Sync> {
     #[cfg(target_os = "macos")]
@@ -157,6 +208,8 @@ pub fn create_shortcut_backend(app: tauri::AppHandle) -> Arc<dyn ShortcutBackend
     }
     #[cfg(not(target_os = "macos"))]
     {
-        Arc::new(TauriShortcutBackend::new(app))
+        // Suppress unused variable warning since RdevShortcutBackend doesn't need the app handle
+        let _ = app;
+        Arc::new(RdevShortcutBackend::new())
     }
 }

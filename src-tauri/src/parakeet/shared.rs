@@ -170,20 +170,10 @@ impl Drop for TranscribingGuard {
 /// that can be shared between all transcription consumers and WakeWordDetector.
 /// Previously, each component loaded its own ~3GB model, wasting memory.
 ///
-/// ## Mutual Exclusion
-///
-/// The `transcription_lock` ensures that batch transcription (`transcribe_file`)
-/// and streaming transcription (`transcribe_samples`) cannot run concurrently.
-/// This prevents latency spikes and unpredictable behavior when both modes
-/// try to use the model simultaneously.
-///
 /// Usage:
 /// ```ignore
 /// let shared_model = SharedTranscriptionModel::new();
 /// shared_model.load(model_path)?;
-///
-/// // Both can share the same model:
-/// let detector = WakeWordDetector::with_shared_model(shared_model.clone());
 /// ```
 #[derive(Clone)]
 pub struct SharedTranscriptionModel {
@@ -191,9 +181,7 @@ pub struct SharedTranscriptionModel {
     model: Arc<Mutex<Option<ParakeetTDT>>>,
     /// Current transcription state
     state: Arc<Mutex<TranscriptionState>>,
-    /// Transcription lock: ensures mutual exclusion between batch and streaming
-    /// transcription. Only one transcription operation can proceed at a time.
-    /// This prevents race conditions between `transcribe_file()` and `transcribe_samples()`.
+    /// Transcription lock: ensures only one transcription operation at a time.
     transcription_lock: Arc<Mutex<()>>,
 }
 
@@ -215,9 +203,8 @@ impl SharedTranscriptionModel {
 
     /// Acquire exclusive access for transcription operations.
     ///
-    /// This must be called before any transcription to ensure mutual exclusion
-    /// between batch (`transcribe_file`) and streaming (`transcribe_samples`) modes.
-    /// The returned guard holds the lock until dropped.
+    /// The returned guard holds the lock until dropped, ensuring only one
+    /// transcription runs at a time.
     ///
     /// Note: Uses parking_lot::Mutex which doesn't poison, so this always succeeds.
     fn acquire_transcription_lock(&self) -> MutexGuard<'_, ()> {
@@ -359,12 +346,6 @@ impl SharedTranscriptionModel {
     /// - State becomes Completed/Error when guard completes
     /// - State resets to Idle on panic
     ///
-    /// ## Mutual Exclusion
-    ///
-    /// Acquires `transcription_lock` before transcription to prevent concurrent
-    /// execution with `transcribe_samples()`. The lock is held for the duration
-    /// of the transcription and released when the guard is dropped.
-    ///
     /// ## Panic Resilience
     ///
     /// Uses parking_lot::Mutex which doesn't poison on panic. If parakeet-rs
@@ -412,58 +393,6 @@ impl SharedTranscriptionModel {
         }
 
         result
-    }
-
-    /// Transcribe audio samples directly (in-memory)
-    ///
-    /// This is the primary method for streaming transcription (wake word detection).
-    ///
-    /// # Arguments
-    /// * `samples` - Audio samples as f32 values
-    /// * `sample_rate` - Sample rate in Hz (typically 16000)
-    /// * `channels` - Number of audio channels (typically 1 for mono)
-    ///
-    /// ## Mutual Exclusion
-    ///
-    /// Acquires `transcription_lock` before transcription to prevent concurrent
-    /// execution with `transcribe_file()`. The lock is held for the duration
-    /// of the transcription and released when the method returns.
-    ///
-    /// ## Panic Resilience
-    ///
-    /// Uses parking_lot::Mutex which doesn't poison on panic. If parakeet-rs
-    /// panics during transcription, the lock is released and subsequent
-    /// transcriptions can proceed normally.
-    ///
-    /// Note: We don't set state to Transcribing for streaming use cases
-    /// to avoid state conflicts with batch transcription. The state machine
-    /// is primarily for the batch transcription flow.
-    pub fn transcribe_samples(
-        &self,
-        samples: Vec<f32>,
-        sample_rate: u32,
-        channels: u16,
-    ) -> TranscriptionResult<String> {
-        if samples.is_empty() {
-            return Err(TranscriptionError::InvalidAudio(
-                "Empty audio samples".to_string(),
-            ));
-        }
-
-        // Acquire exclusive transcription access - blocks if batch transcription is active
-        let _transcription_permit = self.acquire_transcription_lock();
-
-        let mut guard = self.model.lock();
-
-        let tdt = guard.as_mut().ok_or(TranscriptionError::ModelNotLoaded)?;
-
-        match tdt.transcribe_samples(samples, sample_rate, channels, None) {
-            Ok(transcribe_result) => {
-                let fixed_text = fix_parakeet_text(&transcribe_result.tokens);
-                Ok(fixed_text)
-            }
-            Err(e) => Err(TranscriptionError::TranscriptionFailed(e.to_string())),
-        }
     }
 }
 

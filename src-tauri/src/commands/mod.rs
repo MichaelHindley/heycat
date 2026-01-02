@@ -780,6 +780,74 @@ pub fn get_recording_shortcut(app_handle: AppHandle) -> String {
         .unwrap_or_default()
 }
 
+/// Get the current recording mode from settings
+///
+/// Returns the configured recording mode: "toggle" (default) or "push-to-talk".
+#[tauri::command]
+pub fn get_recording_mode(app_handle: AppHandle) -> crate::hotkey::RecordingMode {
+    use tauri_plugin_store::StoreExt;
+
+    let settings_file = get_settings_file(&app_handle);
+    app_handle
+        .store(&settings_file)
+        .ok()
+        .and_then(|store| store.get("shortcuts.recordingMode"))
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default()
+}
+
+/// Set the recording mode in settings
+///
+/// Persists the recording mode to settings. Rejects if recording is currently active.
+///
+/// # Arguments
+/// * `mode` - The new recording mode: "toggle" or "push-to-talk"
+///
+/// # Errors
+/// Returns an error if recording is currently active (not Idle state).
+#[tauri::command]
+pub fn set_recording_mode(
+    app_handle: AppHandle,
+    state: State<'_, ProductionState>,
+    integration: State<'_, HotkeyIntegrationState>,
+    mode: crate::hotkey::RecordingMode,
+) -> Result<(), String> {
+    use tauri_plugin_store::StoreExt;
+
+    // Check if recording is active
+    let manager = state.lock().map_err(|_| {
+        "Unable to access recording state. Please try again or restart the application."
+    })?;
+
+    let current_state = manager.get_state();
+    if current_state != crate::recording::RecordingState::Idle {
+        return Err("Cannot change recording mode while recording is active.".to_string());
+    }
+    drop(manager); // Release lock before saving
+
+    // Update HotkeyIntegration in memory for immediate effect
+    let mut integration_guard = integration.lock().map_err(|_| {
+        "Unable to access hotkey integration. Please try again or restart the application."
+    })?;
+    integration_guard.set_recording_mode(mode);
+    drop(integration_guard);
+
+    // Persist to settings for restart persistence
+    let settings_file = get_settings_file(&app_handle);
+    if let Ok(store) = app_handle.store(&settings_file) {
+        store.set("shortcuts.recordingMode", serde_json::to_value(&mode).unwrap_or_default());
+        if let Err(e) = store.save() {
+            crate::warn!("Failed to persist settings: {}", e);
+            return Err(format!("Failed to save settings: {}", e));
+        }
+    } else {
+        return Err("Failed to access settings store.".to_string());
+    }
+
+    crate::info!("Recording mode updated to: {:?}", mode);
+    Ok(())
+}
+
 // =============================================================================
 // Keyboard Capture Commands (for fn key and special key recording)
 // =============================================================================
@@ -937,6 +1005,61 @@ pub async fn get_transcriptions_by_recording(
 #[tauri::command]
 pub fn get_settings_file_name(worktree_state: State<'_, crate::worktree::WorktreeState>) -> String {
     worktree_state.settings_file_name()
+}
+
+/// Show the main window, close the splash window, and give main focus
+///
+/// Called by the frontend when the app is ready to be displayed (e.g., after
+/// initialization completes). This enables a seamless splash-to-app transition.
+///
+/// Includes error recovery with retry logic for splash window operations.
+#[tauri::command]
+pub fn show_main_window(app_handle: AppHandle) -> Result<(), String> {
+    // Show the main window first (before closing splash) for smoother UX
+    let window = app_handle
+        .get_webview_window("main")
+        .ok_or_else(|| "Main window not found".to_string())?;
+
+    window.show().map_err(|e| format!("Failed to show window: {}", e))?;
+    window.set_focus().map_err(|e| format!("Failed to focus window: {}", e))?;
+
+    crate::info!("Main window shown and focused");
+
+    // Close the splash window with retry logic
+    if let Some(splash) = app_handle.get_webview_window("splash") {
+        let mut attempts = 0;
+        const MAX_ATTEMPTS: u32 = 3;
+        const RETRY_DELAY_MS: u64 = 50;
+
+        loop {
+            attempts += 1;
+            match splash.close() {
+                Ok(()) => {
+                    crate::debug!("Splash window closed");
+                    break;
+                }
+                Err(e) => {
+                    if attempts >= MAX_ATTEMPTS {
+                        // Log warning but don't fail - main window is already visible
+                        crate::warn!(
+                            "Failed to close splash window after {} attempts: {}",
+                            attempts,
+                            e
+                        );
+                        break;
+                    }
+                    crate::debug!(
+                        "Splash close attempt {} failed, retrying: {}",
+                        attempts,
+                        e
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS));
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

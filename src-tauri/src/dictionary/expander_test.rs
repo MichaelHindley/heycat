@@ -8,6 +8,7 @@ fn make_entry(trigger: &str, expansion: &str) -> DictionaryEntry {
         suffix: None,
         auto_enter: false,
         disable_suffix: false,
+        complete_match_only: false,
     }
 }
 
@@ -19,6 +20,7 @@ fn make_entry_with_suffix(trigger: &str, expansion: &str, suffix: &str) -> Dicti
         suffix: Some(suffix.to_string()),
         auto_enter: false,
         disable_suffix: false,
+        complete_match_only: false,
     }
 }
 
@@ -30,6 +32,7 @@ fn make_entry_with_auto_enter(trigger: &str, expansion: &str) -> DictionaryEntry
         suffix: None,
         auto_enter: true,
         disable_suffix: false,
+        complete_match_only: false,
     }
 }
 
@@ -185,6 +188,7 @@ fn make_entry_with_disable_suffix(trigger: &str, expansion: &str) -> DictionaryE
         suffix: None,
         auto_enter: false,
         disable_suffix: true,
+        complete_match_only: false,
     }
 }
 
@@ -246,6 +250,7 @@ fn test_expand_disable_suffix_ignores_explicit_suffix() {
         suffix: Some(".".to_string()), // This should be ignored
         auto_enter: false,
         disable_suffix: true, // This takes precedence
+        complete_match_only: false,
     };
     let expander = DictionaryExpander::new(&[entry]);
 
@@ -263,6 +268,7 @@ fn test_expand_with_suffix_and_disable_suffix_false() {
         suffix: Some(".".to_string()),
         auto_enter: false,
         disable_suffix: false,
+        complete_match_only: false,
     };
     let expander = DictionaryExpander::new(&[entry]);
 
@@ -296,4 +302,233 @@ fn test_expand_disable_suffix_case_insensitive() {
     assert_eq!(expander.expand("CLEAR?").expanded_text, "/clear");
     assert_eq!(expander.expand("Clear.").expanded_text, "/clear");
     assert_eq!(expander.expand("Clear!").expanded_text, "/clear");
+}
+
+// ============================================================================
+// complete_match_only tests
+// ============================================================================
+
+fn make_entry_with_complete_match_only(trigger: &str, expansion: &str) -> DictionaryEntry {
+    DictionaryEntry {
+        id: format!("test-{}", trigger),
+        trigger: trigger.to_string(),
+        expansion: expansion.to_string(),
+        suffix: None,
+        auto_enter: false,
+        disable_suffix: false,
+        complete_match_only: true,
+    }
+}
+
+#[test]
+fn test_complete_match_only_exact_match() {
+    // Test case: "brb" as complete input → "be right back"
+    let entries = vec![make_entry_with_complete_match_only("brb", "be right back")];
+    let expander = DictionaryExpander::new(&entries);
+
+    assert_eq!(expander.expand("brb").expanded_text, "be right back");
+}
+
+#[test]
+fn test_complete_match_only_case_insensitive() {
+    // Test case: "BRB" (uppercase) → "be right back"
+    let entries = vec![make_entry_with_complete_match_only("brb", "be right back")];
+    let expander = DictionaryExpander::new(&entries);
+
+    assert_eq!(expander.expand("BRB").expanded_text, "be right back");
+    assert_eq!(expander.expand("Brb").expanded_text, "be right back");
+    assert_eq!(expander.expand("bRb").expanded_text, "be right back");
+}
+
+#[test]
+fn test_complete_match_only_no_partial_match() {
+    // Test case: "I'll brb soon" → no expansion (trigger is not complete input)
+    let entries = vec![make_entry_with_complete_match_only("brb", "be right back")];
+    let expander = DictionaryExpander::new(&entries);
+
+    // Should NOT expand when trigger appears within longer text
+    assert_eq!(
+        expander.expand("I'll brb soon").expanded_text,
+        "I'll brb soon"
+    );
+    assert_eq!(expander.expand("brb soon").expanded_text, "brb soon");
+    assert_eq!(expander.expand("i brb").expanded_text, "i brb");
+}
+
+#[test]
+fn test_complete_match_only_with_suffix() {
+    // Test case: suffix appended correctly for complete-match entries
+    let entry = DictionaryEntry {
+        id: "test".to_string(),
+        trigger: "sig".to_string(),
+        expansion: "Best regards".to_string(),
+        suffix: Some(",".to_string()),
+        auto_enter: false,
+        disable_suffix: false,
+        complete_match_only: true,
+    };
+    let expander = DictionaryExpander::new(&[entry]);
+
+    assert_eq!(expander.expand("sig").expanded_text, "Best regards,");
+}
+
+#[test]
+fn test_mixed_complete_and_partial_entries() {
+    // Test case: both complete-match and partial entries work together
+    let entries = vec![
+        // Complete-match only: only expands when it's the entire input
+        make_entry_with_complete_match_only("brb", "be right back"),
+        // Partial match: expands anywhere in text
+        make_entry("api", "API"),
+    ];
+    let expander = DictionaryExpander::new(&entries);
+
+    // Complete-match entry works when alone
+    assert_eq!(expander.expand("brb").expanded_text, "be right back");
+
+    // Complete-match entry does NOT expand in longer text
+    assert_eq!(
+        expander.expand("brb check api").expanded_text,
+        "brb check API"
+    );
+
+    // Partial-match entry works in any context
+    assert_eq!(expander.expand("check the api").expanded_text, "check the API");
+    assert_eq!(expander.expand("api").expanded_text, "API");
+}
+
+#[test]
+fn test_complete_match_only_whitespace_handling() {
+    // Edge case: "  brb  " (with whitespace) → matches (trimmed)
+    let entries = vec![make_entry_with_complete_match_only("brb", "be right back")];
+    let expander = DictionaryExpander::new(&entries);
+
+    assert_eq!(expander.expand("  brb  ").expanded_text, "be right back");
+    assert_eq!(expander.expand("\tbrb\t").expanded_text, "be right back");
+    assert_eq!(expander.expand(" brb").expanded_text, "be right back");
+    assert_eq!(expander.expand("brb ").expanded_text, "be right back");
+}
+
+#[test]
+fn test_complete_match_only_punctuation_no_match() {
+    // Edge case: "brb." (with punctuation) → does NOT match
+    let entries = vec![make_entry_with_complete_match_only("brb", "be right back")];
+    let expander = DictionaryExpander::new(&entries);
+
+    // Punctuation is part of the input, so it doesn't match exactly
+    assert_eq!(expander.expand("brb.").expanded_text, "brb.");
+    assert_eq!(expander.expand("brb!").expanded_text, "brb!");
+    assert_eq!(expander.expand("brb?").expanded_text, "brb?");
+    assert_eq!(expander.expand("brb,").expanded_text, "brb,");
+}
+
+#[test]
+fn test_complete_match_only_empty_input() {
+    // Edge case: empty/whitespace input → no expansion
+    let entries = vec![make_entry_with_complete_match_only("brb", "be right back")];
+    let expander = DictionaryExpander::new(&entries);
+
+    assert_eq!(expander.expand("").expanded_text, "");
+    assert_eq!(expander.expand("   ").expanded_text, "   ");
+}
+
+#[test]
+fn test_complete_match_only_with_auto_enter() {
+    // Test auto_enter works with complete-match entries
+    let entry = DictionaryEntry {
+        id: "test".to_string(),
+        trigger: "send".to_string(),
+        expansion: "Sending now".to_string(),
+        suffix: None,
+        auto_enter: true,
+        disable_suffix: false,
+        complete_match_only: true,
+    };
+    let expander = DictionaryExpander::new(&[entry]);
+
+    let result = expander.expand("send");
+    assert_eq!(result.expanded_text, "Sending now");
+    assert!(result.should_press_enter);
+}
+
+#[test]
+fn test_complete_match_only_with_disable_suffix() {
+    // Test interaction: complete_match_only + disable_suffix both enabled
+    let entry = DictionaryEntry {
+        id: "test".to_string(),
+        trigger: "brb".to_string(),
+        expansion: "be right back".to_string(),
+        suffix: None,
+        auto_enter: false,
+        disable_suffix: true,
+        complete_match_only: true,
+    };
+    let expander = DictionaryExpander::new(&[entry]);
+
+    // Complete match works
+    assert_eq!(expander.expand("brb").expanded_text, "be right back");
+
+    // Partial match does NOT expand (complete_match_only takes effect)
+    assert_eq!(expander.expand("I'll brb").expanded_text, "I'll brb");
+}
+
+#[test]
+fn test_complete_match_only_disable_suffix_strips_punctuation() {
+    // Bug fix: complete_match_only + disable_suffix should strip trailing punctuation before matching
+    // This allows speech-to-text transcriptions like "Yes." to match trigger "yes"
+    let entry = DictionaryEntry {
+        id: "test".to_string(),
+        trigger: "yes".to_string(),
+        expansion: "affirmative".to_string(),
+        suffix: None,
+        auto_enter: true,
+        disable_suffix: true,
+        complete_match_only: true,
+    };
+    let expander = DictionaryExpander::new(&[entry]);
+
+    // Should match and expand when trailing punctuation is present
+    let result = expander.expand("Yes.");
+    assert_eq!(result.expanded_text, "affirmative");
+    assert!(result.should_press_enter);
+
+    // Various punctuation marks
+    assert_eq!(expander.expand("yes!").expanded_text, "affirmative");
+    assert_eq!(expander.expand("yes?").expanded_text, "affirmative");
+    assert_eq!(expander.expand("yes,").expanded_text, "affirmative");
+    assert_eq!(expander.expand("yes;").expanded_text, "affirmative");
+    assert_eq!(expander.expand("yes:").expanded_text, "affirmative");
+
+    // Multiple punctuation marks stripped
+    assert_eq!(expander.expand("yes...").expanded_text, "affirmative");
+    assert_eq!(expander.expand("yes!?").expanded_text, "affirmative");
+
+    // Without punctuation still works
+    assert_eq!(expander.expand("yes").expanded_text, "affirmative");
+
+    // Partial matches still don't expand (complete_match_only enforced)
+    assert_eq!(expander.expand("say yes.").expanded_text, "say yes.");
+}
+
+#[test]
+fn test_complete_match_only_without_disable_suffix_keeps_punctuation() {
+    // When disable_suffix is false, punctuation should NOT be stripped
+    // This preserves the original behavior documented in test_complete_match_only_punctuation_no_match
+    let entry = DictionaryEntry {
+        id: "test".to_string(),
+        trigger: "yes".to_string(),
+        expansion: "affirmative".to_string(),
+        suffix: None,
+        auto_enter: false,
+        disable_suffix: false,
+        complete_match_only: true,
+    };
+    let expander = DictionaryExpander::new(&[entry]);
+
+    // With disable_suffix=false, punctuation is part of the input and prevents matching
+    assert_eq!(expander.expand("yes.").expanded_text, "yes.");
+    assert_eq!(expander.expand("yes!").expanded_text, "yes!");
+
+    // Without punctuation, it matches
+    assert_eq!(expander.expand("yes").expanded_text, "affirmative");
 }

@@ -388,9 +388,11 @@ pub fn run() {
             // Create a wrapper to pass to HotkeyIntegration (it needs owned value, not Arc)
             let recording_emitter = commands::TauriEventEmitter::new(app.handle().clone());
 
-            // Create shortcut backend for Escape key registration (used by HotkeyIntegration)
+            // Create SINGLE shared shortcut backend for all hotkeys
             // Uses platform-specific backend: CGEventTap on macOS, Tauri on Windows/Linux
-            let escape_backend = hotkey::create_shortcut_backend(app.handle().clone());
+            // IMPORTANT: Both escape key (HotkeyIntegration) and main hotkey (HotkeyServiceDyn) share this
+            // to avoid multiple CGEventTaps which causes keyboard freezing when one stops
+            let shared_backend = hotkey::create_shortcut_backend(app.handle().clone());
 
             // Create transcription callback that delegates to TranscriptionService
             let transcription_service_for_callback = transcription_service.clone();
@@ -415,7 +417,7 @@ pub fn run() {
                 .with_recording_state(recording_state.clone())
                 .with_recording_detectors(recording_detectors.clone())
                 .with_recordings_dir(recordings_dir)
-                .with_shortcut_backend(escape_backend)
+                .with_shortcut_backend(shared_backend.clone())
                 .with_transcription_callback(transcription_callback)
                 .with_hotkey_emitter(hotkey_emitter)
                 .with_silence_detection_enabled(false); // Disable for push-to-talk
@@ -459,45 +461,206 @@ pub fn run() {
             // Manage integration state so it can be accessed from commands
             app.manage(integration.clone());
 
-            // Clone for callback
-            let integration_clone = integration.clone();
-            let state_clone = recording_state.clone();
-            let app_handle_clone = app.handle().clone();
-
-            // Register hotkey using platform-specific backend
-            // Uses CGEventTap on macOS (supports fn key, media keys), Tauri on Windows/Linux
-            // Load saved shortcut from settings - user must set one during onboarding
+            // Load saved shortcut and recording mode from settings
             let saved_shortcut = app
                 .store(&settings_file)
                 .ok()
                 .and_then(|store| store.get("hotkey.recordingShortcut"))
                 .and_then(|v| v.as_str().map(|s| s.to_string()));
 
-            let backend = hotkey::create_shortcut_backend(app.handle().clone());
-            let service = hotkey::HotkeyServiceDyn::new(backend);
+            let recording_mode: hotkey::RecordingMode = app
+                .store(&settings_file)
+                .ok()
+                .and_then(|store| store.get("shortcuts.recordingMode"))
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+
+            // Set recording mode on the integration
+            if let Ok(mut guard) = integration.lock() {
+                guard.set_recording_mode(recording_mode);
+            }
+
+            // Reuse shared_backend for main hotkey registration (same backend as escape key)
+            let service = hotkey::HotkeyServiceDyn::new(shared_backend.clone());
 
             if let Some(shortcut) = saved_shortcut {
-                info!("Registering global hotkey: {}...", shortcut);
-                if let Err(e) = service.backend.register(&shortcut, Box::new(move || {
-                    debug!("Hotkey pressed!");
-                    match integration_clone.lock() {
-                        Ok(mut guard) => {
-                            guard.handle_toggle(&state_clone);
-                        }
-                        Err(e) => {
-                            error!("Failed to acquire integration lock: {}", e);
-                            // Emit error event so frontend knows something went wrong
-                            let _ = app_handle_clone.emit(
-                                events::event_names::RECORDING_ERROR,
-                                events::RecordingErrorPayload {
-                                    message: "Internal error: please restart the application"
-                                        .to_string(),
-                                },
-                            );
+                info!("Registering global hotkey: {} (initial mode: {:?})...", shortcut, recording_mode);
+                use hotkey::ShortcutBackendExt;
+
+                // Always register with press + release callbacks for dynamic mode switching
+                // The callbacks check the current mode at runtime
+                let integration_press = integration.clone();
+                let state_press = recording_state.clone();
+                let app_handle_press = app.handle().clone();
+
+                let integration_release = integration.clone();
+                let state_release = recording_state.clone();
+                let app_handle_release = app.handle().clone();
+
+                let mut registered = false;
+
+                // Try CGEventTap backend (macOS)
+                #[cfg(target_os = "macos")]
+                if let Some(ext_backend) = service.backend.as_any().downcast_ref::<hotkey::cgeventtap_backend::CGEventTapHotkeyBackend>() {
+                    if let Err(e) = ext_backend.register_with_release(
+                        &shortcut,
+                        Box::new(move || {
+                            // Clone for the async task - the callback must return immediately
+                            // to avoid blocking the CGEventTap run loop (which would freeze ALL keyboard input)
+                            let integration = integration_press.clone();
+                            let state = state_press.clone();
+                            let app_handle = app_handle_press.clone();
+
+                            // Spawn the heavy work on Tauri's async runtime
+                            tauri::async_runtime::spawn(async move {
+                                match integration.lock() {
+                                    Ok(mut guard) => {
+                                        let mode = guard.recording_mode();
+                                        debug!("Hotkey pressed (mode: {:?})", mode);
+                                        match mode {
+                                            hotkey::RecordingMode::Toggle => { guard.handle_toggle(&state); }
+                                            hotkey::RecordingMode::PushToTalk => { guard.handle_hotkey_press(&state); }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to acquire integration lock: {}", e);
+                                        let _ = app_handle.emit(
+                                            events::event_names::RECORDING_ERROR,
+                                            events::RecordingErrorPayload {
+                                                message: "Internal error: please restart the application".to_string(),
+                                            },
+                                        );
+                                    }
+                                }
+                            });
+                        }),
+                        Box::new(move || {
+                            // Track timing to diagnose keyboard freezing issues
+                            let cb_start = std::time::Instant::now();
+
+                            // Clone for the async task - the callback must return immediately
+                            // to avoid blocking the CGEventTap run loop (which would freeze ALL keyboard input)
+                            let integration = integration_release.clone();
+                            let state = state_release.clone();
+                            let app_handle = app_handle_release.clone();
+
+                            let clone_elapsed = cb_start.elapsed();
+
+                            // Spawn the heavy work on Tauri's async runtime
+                            tauri::async_runtime::spawn(async move {
+                                match integration.lock() {
+                                    Ok(mut guard) => {
+                                        let mode = guard.recording_mode();
+                                        debug!("Hotkey released (mode: {:?})", mode);
+                                        // Only handle release in PTT mode
+                                        if mode == hotkey::RecordingMode::PushToTalk {
+                                            guard.handle_hotkey_release(&state);
+                                        }
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to acquire integration lock: {}", e);
+                                        let _ = app_handle.emit(
+                                            events::event_names::RECORDING_ERROR,
+                                            events::RecordingErrorPayload {
+                                                message: "Internal error: please restart the application".to_string(),
+                                            },
+                                        );
+                                    }
+                                }
+                            });
+
+                            let total_elapsed = cb_start.elapsed();
+                            if total_elapsed.as_millis() > 5 {
+                                warn!(
+                                    "Release callback took {:?} (clone: {:?}) - SLOW!",
+                                    total_elapsed,
+                                    clone_elapsed
+                                );
+                            }
+                        }),
+                    ) {
+                        warn!("Failed to register hotkey: {:?}", e);
+                    } else {
+                        registered = true;
+                    }
+                }
+
+                // Try rdev backend (Windows/Linux)
+                #[cfg(not(target_os = "macos"))]
+                if !registered {
+                    if let Some(ext_backend) = service.backend.as_any().downcast_ref::<hotkey::RdevShortcutBackend>() {
+                        if let Err(e) = ext_backend.register_with_release(
+                            &shortcut,
+                            Box::new(move || {
+                                // Clone for the async task - the callback must return immediately
+                                // to avoid blocking the rdev event loop
+                                let integration = integration_press.clone();
+                                let state = state_press.clone();
+                                let app_handle = app_handle_press.clone();
+
+                                // Spawn the heavy work on Tauri's async runtime
+                                tauri::async_runtime::spawn(async move {
+                                    match integration.lock() {
+                                        Ok(mut guard) => {
+                                            let mode = guard.recording_mode();
+                                            debug!("Hotkey pressed (mode: {:?})", mode);
+                                            match mode {
+                                                hotkey::RecordingMode::Toggle => { guard.handle_toggle(&state); }
+                                                hotkey::RecordingMode::PushToTalk => { guard.handle_hotkey_press(&state); }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!("Failed to acquire integration lock: {}", e);
+                                            let _ = app_handle.emit(
+                                                events::event_names::RECORDING_ERROR,
+                                                events::RecordingErrorPayload {
+                                                    message: "Internal error: please restart the application".to_string(),
+                                                },
+                                            );
+                                        }
+                                    }
+                                });
+                            }),
+                            Box::new(move || {
+                                // Clone for the async task - the callback must return immediately
+                                // to avoid blocking the rdev event loop
+                                let integration = integration_release.clone();
+                                let state = state_release.clone();
+                                let app_handle = app_handle_release.clone();
+
+                                // Spawn the heavy work on Tauri's async runtime
+                                tauri::async_runtime::spawn(async move {
+                                    match integration.lock() {
+                                        Ok(mut guard) => {
+                                            let mode = guard.recording_mode();
+                                            debug!("Hotkey released (mode: {:?})", mode);
+                                            // Only handle release in PTT mode
+                                            if mode == hotkey::RecordingMode::PushToTalk {
+                                                guard.handle_hotkey_release(&state);
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!("Failed to acquire integration lock: {}", e);
+                                            let _ = app_handle.emit(
+                                                events::event_names::RECORDING_ERROR,
+                                                events::RecordingErrorPayload {
+                                                    message: "Internal error: please restart the application".to_string(),
+                                                },
+                                            );
+                                        }
+                                    }
+                                });
+                            }),
+                        ) {
+                            warn!("Failed to register hotkey: {:?}", e);
+                        } else {
+                            registered = true;
                         }
                     }
-                })) {
-                    warn!("Failed to register recording hotkey: {:?}", e);
+                }
+
+                if !registered {
+                    warn!("Backend doesn't support key release detection");
                     warn!("Application will continue without global hotkey support");
                 }
             } else {
@@ -520,6 +683,7 @@ pub fn run() {
             activation::activate_app();
 
             info!("Setup complete! Ready to record.");
+
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -599,6 +763,8 @@ pub fn run() {
             commands::resume_recording_shortcut,
             commands::update_recording_shortcut,
             commands::get_recording_shortcut,
+            commands::get_recording_mode,
+            commands::set_recording_mode,
             commands::start_shortcut_recording,
             commands::stop_shortcut_recording,
             commands::open_accessibility_preferences,
@@ -614,7 +780,8 @@ pub fn run() {
             commands::window_context::update_window_context,
             commands::window_context::delete_window_context,
             commands::list_transcriptions,
-            commands::get_transcriptions_by_recording
+            commands::get_transcriptions_by_recording,
+            commands::show_main_window
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

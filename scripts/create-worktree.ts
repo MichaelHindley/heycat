@@ -128,6 +128,55 @@ function getWorktreeIdentifier(worktreePath: string): string {
 }
 
 /**
+ * Validate that the branch name follows the required Linear issue format.
+ * Required format: HEY-<number>-<description>
+ * Examples: HEY-123-fix-audio, HEY-42-add-dark-mode
+ */
+function validateBranchName(branchName: string): { valid: boolean; error?: string } {
+  const pattern = /^HEY-\d+-[a-z0-9-]+$/i;
+
+  if (!pattern.test(branchName)) {
+    if (!branchName.startsWith("HEY-")) {
+      return {
+        valid: false,
+        error: `Branch name must start with a Linear issue ID (HEY-xxx).\n` +
+               `  Received: "${branchName}"\n` +
+               `  Expected: HEY-<number>-<description> (e.g., HEY-123-fix-audio)`,
+      };
+    }
+
+    const issueMatch = branchName.match(/^HEY-(\d+)/);
+    if (!issueMatch) {
+      return {
+        valid: false,
+        error: `Invalid Linear issue format in branch name.\n` +
+               `  Received: "${branchName}"\n` +
+               `  Expected: HEY-<number>-<description> (e.g., HEY-123-fix-audio)`,
+      };
+    }
+
+    // Has valid issue ID but missing or invalid description
+    return {
+      valid: false,
+      error: `Branch name requires a kebab-case description after the issue ID.\n` +
+             `  Received: "${branchName}"\n` +
+             `  Expected: ${branchName.match(/^HEY-\d+/)?.[0] || "HEY-xxx"}-<description>`,
+    };
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Extract the Linear issue ID from a branch name.
+ * Returns null if no valid issue ID is found.
+ */
+function extractIssueId(branchName: string): string | null {
+  const match = branchName.match(/^(HEY-\d+)/);
+  return match ? match[1] : null;
+}
+
+/**
  * Get the heycat application support directory path.
  * Uses Tauri's bundle identifier for the directory name.
  * On macOS: ~/Library/Application Support/com.heycat.app
@@ -212,25 +261,24 @@ async function main(): Promise<void> {
     log(`
 ${colors.bold}Usage:${colors.reset} bun scripts/create-worktree.ts --issue <issue-slug> [--path <path>]
 
-${colors.bold}Options:${colors.reset}
-  --issue, -i  Linear issue slug or identifier (required)
-               Examples: docker-development-workflow, HEY-156
-  --path, -p   Path for the worktree (default: worktrees/<branch-name>)
+${colors.bold}Arguments:${colors.reset}
+  branch-name  Branch name in format: HEY-<number>-<description> (REQUIRED)
+               Examples: HEY-123-fix-audio, HEY-42-add-dark-mode
+  path         Path for the worktree (default: worktrees/<branch-name>)
 
 ${colors.bold}Description:${colors.reset}
-  Creates a new git worktree linked to a Linear issue:
-  - Validates the issue exists in Linear
-  - Creates branch with format: HEY-###-<issue-slug>
+  Creates a new git worktree with heycat-specific setup:
+  - Validates branch name follows Linear issue format (HEY-xxx-description)
+  - Creates the worktree with a new branch
   - Generates a unique hotkey based on the worktree name
   - Creates a settings file with the unique hotkey
 
 ${colors.bold}Example:${colors.reset}
-  bun scripts/create-worktree.ts --issue docker-development-workflow
-  bun scripts/create-worktree.ts -i HEY-156 -p worktrees/my-feature
+  bun scripts/create-worktree.ts HEY-123-audio-improvements
+  bun scripts/create-worktree.ts HEY-42-fix-memory-leak worktrees/memory-fix
 
 ${colors.bold}Note:${colors.reset}
-  All development must go through Linear. Freeform branch names are not allowed.
-  This ensures PRs are automatically linked to Linear issues.
+  A Linear issue ID is required. Create an issue in Linear first.
 `);
     process.exit(help ? 0 : 1);
   }
@@ -260,7 +308,19 @@ ${colors.bold}Note:${colors.reset}
   const branchName = `${issueInfo.identifier}-${issueSlugNormalized}`;
   const worktreePath = customPath || resolve(process.cwd(), "worktrees", branchName);
 
+  // Validate branch name format (Linear issue required)
+  const validation = validateBranchName(branchName);
+  if (!validation.valid) {
+    error(validation.error!);
+    log(`\n${colors.yellow}Hint:${colors.reset} All worktrees require a Linear issue ID.`);
+    log(`  Create an issue in Linear first, then use: bun scripts/create-worktree.ts HEY-<id>-<description>`);
+    process.exit(1);
+  }
+
+  const issueId = extractIssueId(branchName);
+
   log(`\n${colors.bold}Creating heycat worktree${colors.reset}\n`);
+  info(`Linear issue: ${issueId}`);
   info(`Branch: ${branchName}`);
   info(`Path: ${worktreePath}`);
 
