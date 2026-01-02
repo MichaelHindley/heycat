@@ -1,29 +1,33 @@
-import { useState, useMemo, useCallback } from "react";
+import { useMemo } from "react";
 import { Plus } from "lucide-react";
 import { Card, CardContent, Button, Input, FormField, Combobox, MultiSelect, Toggle } from "../../components/ui";
 import type { ComboboxOption } from "../../components/ui";
-import type { OverrideMode } from "../../types/windowContext";
-import { validateRegexPattern } from "../../lib/validation";
+import { useWindowContextForm } from "../../hooks/useWindowContextForm";
 import { useWindowContextsContext } from "./WindowContextsContext";
 
 /**
  * Form for adding new window contexts.
+ * Uses useWindowContextForm for state and validation.
  */
 export function AddContextForm() {
   const { handleAddContext, runningApps, dictionaryEntries, dictionaryOptions } = useWindowContextsContext();
 
-  const [name, setName] = useState("");
-  const [appName, setAppName] = useState("");
-  const [bundleId, setBundleId] = useState<string | undefined>(undefined);
-  const [titlePattern, setTitlePattern] = useState("");
-  const [commandMode, setCommandMode] = useState<OverrideMode>("merge");
-  const [dictionaryMode, setDictionaryMode] = useState<OverrideMode>("merge");
-  const [selectedDictionaryIds, setSelectedDictionaryIds] = useState<string[]>([]);
-  const [priority, setPriority] = useState(0);
-  const [nameError, setNameError] = useState<string | null>(null);
-  const [appNameError, setAppNameError] = useState<string | null>(null);
-  const [patternError, setPatternError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const form = useWindowContextForm({
+    onSubmit: async (values) => {
+      await handleAddContext({
+        name: values.name.trim(),
+        appName: values.appName.trim(),
+        bundleId: values.bundleId,
+        titlePattern: values.titlePattern.trim() || undefined,
+        commandMode: values.commandMode,
+        dictionaryMode: values.dictionaryMode,
+        dictionaryEntryIds: values.dictionaryEntryIds,
+        priority: values.priority,
+        enabled: values.enabled,
+      });
+      form.reset();
+    },
+  });
 
   // Convert running apps to combobox options
   const appOptions: ComboboxOption[] = useMemo(
@@ -36,109 +40,45 @@ export function AddContextForm() {
     [runningApps]
   );
 
-  const handleAppSelect = useCallback((option: ComboboxOption) => {
-    setAppName(option.value);
-    setBundleId(option.description);
-    setAppNameError(null);
-  }, []);
-
-  const handlePatternValidation = (pattern: string): boolean => {
-    const error = validateRegexPattern(pattern);
-    setPatternError(error);
-    return error === null;
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setNameError(null);
-    setAppNameError(null);
-
-    if (!name.trim()) {
-      setNameError("Name is required");
-      return;
-    }
-
-    if (!appName.trim()) {
-      setAppNameError("App name is required");
-      return;
-    }
-
-    if (!handlePatternValidation(titlePattern)) {
-      return;
-    }
-
-    setIsSubmitting(true);
-    try {
-      await handleAddContext({
-        name: name.trim(),
-        appName: appName.trim(),
-        bundleId,
-        titlePattern: titlePattern.trim() || undefined,
-        commandMode,
-        dictionaryMode,
-        dictionaryEntryIds: selectedDictionaryIds,
-        priority,
-        enabled: true,
-      });
-      setName("");
-      setAppName("");
-      setBundleId(undefined);
-      setTitlePattern("");
-      setCommandMode("merge");
-      setDictionaryMode("merge");
-      setSelectedDictionaryIds([]);
-      setPriority(0);
-      setPatternError(null);
-    } finally {
-      setIsSubmitting(false);
-    }
+  const handleAppSelect = (option: ComboboxOption) => {
+    form.handleAppSelect(option.value, option.description);
   };
 
   return (
     <Card>
       <CardContent className="p-4">
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={form.handleSubmit}>
           <div className="flex gap-3 items-start flex-wrap">
-            <FormField label="Name" error={nameError ?? undefined} className="flex-1 min-w-[150px]">
+            <FormField label="Name" error={form.nameError ?? undefined} className="flex-1 min-w-[150px]">
               <Input
                 type="text"
                 placeholder="e.g., Slack General"
-                value={name}
-                onChange={(e) => {
-                  setName(e.target.value);
-                  setNameError(null);
-                }}
+                value={form.values.name}
+                onChange={(e) => form.setValue("name", e.target.value)}
                 aria-label="Context name"
               />
             </FormField>
-            <FormField label="App Name" error={appNameError ?? undefined} className="flex-1 min-w-[150px]">
+            <FormField label="App Name" error={form.appNameError ?? undefined} className="flex-1 min-w-[150px]">
               <Combobox
-                value={appName}
-                onChange={(value) => {
-                  setAppName(value);
-                  setBundleId(undefined);
-                  setAppNameError(null);
-                }}
+                value={form.values.appName}
+                onChange={(value) => form.setValue("appName", value)}
                 onSelect={handleAppSelect}
                 options={appOptions}
                 placeholder="Select or type app name..."
                 aria-label="App name"
               />
             </FormField>
-            <FormField label="Title Pattern" error={patternError ?? undefined} className="flex-1 min-w-[150px]">
+            <FormField label="Title Pattern" error={form.patternError ?? undefined} className="flex-1 min-w-[150px]">
               <Input
                 type="text"
                 placeholder="e.g., #general.*"
-                value={titlePattern}
-                onChange={(e) => {
-                  setTitlePattern(e.target.value);
-                  handlePatternValidation(e.target.value);
-                }}
+                value={form.values.titlePattern}
+                onChange={(e) => form.setValue("titlePattern", e.target.value)}
                 aria-label="Window title pattern (regex)"
               />
             </FormField>
             <div className="pt-6">
-              <Button type="submit" disabled={isSubmitting}>
+              <Button type="submit" disabled={form.isSubmitting}>
                 <Plus className="h-4 w-4" />
                 Add
               </Button>
@@ -148,23 +88,23 @@ export function AddContextForm() {
             <div className="flex items-center gap-2">
               <label className="text-sm text-text-secondary">Command mode:</label>
               <Toggle
-                checked={commandMode === "override"}
-                onCheckedChange={(checked) => setCommandMode(checked ? "override" : "merge")}
+                checked={form.values.commandMode === "override"}
+                onCheckedChange={(checked) => form.setValue("commandMode", checked ? "override" : "merge")}
                 aria-label="Command mode context only"
               />
               <span className="text-xs text-text-tertiary">
-                {commandMode === "override" ? "Context Only" : "Merge"}
+                {form.values.commandMode === "override" ? "Context Only" : "Merge"}
               </span>
             </div>
             <div className="flex items-center gap-2">
               <label className="text-sm text-text-secondary">Dictionary mode:</label>
               <Toggle
-                checked={dictionaryMode === "override"}
-                onCheckedChange={(checked) => setDictionaryMode(checked ? "override" : "merge")}
+                checked={form.values.dictionaryMode === "override"}
+                onCheckedChange={(checked) => form.setValue("dictionaryMode", checked ? "override" : "merge")}
                 aria-label="Dictionary mode context only"
               />
               <span className="text-xs text-text-tertiary">
-                {dictionaryMode === "override" ? "Context Only" : "Merge"}
+                {form.values.dictionaryMode === "override" ? "Context Only" : "Merge"}
               </span>
             </div>
           </div>
@@ -175,8 +115,8 @@ export function AddContextForm() {
               className="mt-3"
             >
               <MultiSelect
-                selected={selectedDictionaryIds}
-                onChange={setSelectedDictionaryIds}
+                selected={form.values.dictionaryEntryIds}
+                onChange={(ids) => form.setValue("dictionaryEntryIds", ids)}
                 options={dictionaryOptions}
                 placeholder="Select dictionary entries (optional)..."
                 aria-label="Dictionary entries"

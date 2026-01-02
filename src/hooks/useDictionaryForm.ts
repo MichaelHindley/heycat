@@ -127,12 +127,28 @@ export function useDictionaryForm(
     [existingTriggers, excludeId]
   );
 
+  // Track suffix error separately for real-time validation
+  const [suffixErrorState, setSuffixErrorState] = useState<string | null>(null);
+
   // Use the generic useFormState hook
   const form = useFormState<DictionaryFormValues>({
     initialValues: mergedInitialValues,
     validate,
     onSubmit,
   });
+
+  // Override setValue to validate suffix on change
+  const setValue = useCallback(
+    <K extends keyof DictionaryFormValues>(field: K, value: DictionaryFormValues[K]) => {
+      form.setValue(field, value);
+      // Real-time validation for suffix field
+      if (field === "suffix" && typeof value === "string") {
+        const error = validateSuffix(value);
+        setSuffixErrorState(error);
+      }
+    },
+    [form]
+  );
 
   const toggleSettings = useCallback(() => {
     setIsSettingsOpen((prev) => !prev);
@@ -141,6 +157,7 @@ export function useDictionaryForm(
   const reset = useCallback(() => {
     form.reset();
     setIsSettingsOpen(false);
+    setSuffixErrorState(null);
   }, [form]);
 
   const hasSettings =
@@ -149,13 +166,16 @@ export function useDictionaryForm(
     form.values.disableSuffix ||
     form.values.completeMatchOnly;
 
+  // Use real-time suffix error if available, otherwise use form error
+  const suffixError = suffixErrorState ?? form.errors.suffix ?? null;
+
   return {
     values: form.values,
     triggerError: form.errors.trigger ?? null,
-    suffixError: form.errors.suffix ?? null,
+    suffixError,
     isSubmitting: form.isSubmitting,
     isSettingsOpen,
-    setValue: form.setValue,
+    setValue,
     toggleSettings,
     handleSubmit: form.handleSubmit,
     reset,
