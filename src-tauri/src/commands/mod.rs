@@ -28,9 +28,6 @@ pub mod window_context;
 // Re-export TauriEventEmitter from common module for backward compatibility
 pub use common::TauriEventEmitter;
 
-// Re-export get_settings_file for backward compatibility
-pub use common::get_settings_file;
-
 // Re-export state type aliases from app::state for backward compatibility
 pub use crate::app::state::{
     AudioMonitorState, AudioThreadState, HotkeyIntegrationState, HotkeyServiceState,
