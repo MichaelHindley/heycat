@@ -7,6 +7,7 @@ import { useDictionary } from "../hooks/useDictionary";
 import { useWindowContext } from "../hooks/useWindowContext";
 import type { DictionaryEntry } from "../types/dictionary";
 import type { WindowContext } from "../types/windowContext";
+import { MAX_SUFFIX_LENGTH, validateSuffix } from "../lib/validation";
 
 export interface DictionaryProps {
   /** Navigate to another page */
@@ -201,9 +202,10 @@ function AddEntryForm({ onSubmit, existingTriggers, contextOptions }: AddEntryFo
 
   const hasSettings = suffix !== "" || autoEnter || disableSuffix || completeMatchOnly;
 
-  const validateSuffix = (value: string): boolean => {
-    if (value.length > 5) {
-      setSuffixError("Suffix must be 5 characters or less");
+  const handleSuffixValidation = (value: string): boolean => {
+    const error = validateSuffix(value);
+    if (error) {
+      setSuffixError(error);
       return false;
     }
     setSuffixError(null);
@@ -212,7 +214,7 @@ function AddEntryForm({ onSubmit, existingTriggers, contextOptions }: AddEntryFo
 
   const handleSuffixChange = (value: string) => {
     setSuffix(value);
-    validateSuffix(value);
+    handleSuffixValidation(value);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -231,7 +233,7 @@ function AddEntryForm({ onSubmit, existingTriggers, contextOptions }: AddEntryFo
     }
 
     // Validate suffix
-    if (!validateSuffix(suffix)) {
+    if (!handleSuffixValidation(suffix)) {
       return;
     }
 
@@ -711,11 +713,8 @@ export function Dictionary(_props: DictionaryProps) {
         setEditError(null);
       }
       if (field === "suffix" && typeof value === "string") {
-        if (value.length > 5) {
-          setEditSuffixError("Suffix must be 5 characters or less");
-        } else {
-          setEditSuffixError(null);
-        }
+        const error = validateSuffix(value);
+        setEditSuffixError(error);
       }
     },
     []
@@ -742,8 +741,9 @@ export function Dictionary(_props: DictionaryProps) {
     }
 
     // Validate suffix
-    if (editValues.suffix.length > 5) {
-      setEditSuffixError("Suffix must be 5 characters or less");
+    const suffixError = validateSuffix(editValues.suffix);
+    if (suffixError) {
+      setEditSuffixError(suffixError);
       return;
     }
 
