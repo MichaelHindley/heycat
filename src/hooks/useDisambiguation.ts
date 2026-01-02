@@ -86,7 +86,7 @@ export function useDisambiguation(): UseDisambiguationResult {
       await invoke("test_command", { id: commandId });
       // State will be cleared by the command_executed listener
     } catch (error) {
-      console.error("Failed to execute command:", error);
+      console.error("[heycat] Failed to execute command:", error);
       // Clear state on error
       setIsAmbiguous(false);
       setTranscription(null);

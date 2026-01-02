@@ -26,16 +26,16 @@ async function showApp() {
 
     await Promise.race([invoke("show_main_window"), timeoutPromise]);
   } catch (e) {
-    console.error("Failed to show main window:", e);
+    console.error("[heycat] Failed to show main window:", e);
     // Fallback: try to show window directly via Tauri API
     try {
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
       const mainWindow = getCurrentWindow();
       await mainWindow.show();
       await mainWindow.setFocus();
-      console.info("Showed main window via fallback");
+      console.info("[heycat] Showed main window via fallback");
     } catch (fallbackError) {
-      console.error("Fallback also failed:", fallbackError);
+      console.error("[heycat] Fallback also failed:", fallbackError);
     }
   }
 }
@@ -68,7 +68,7 @@ function AppInitializer({ children }: { children: ReactNode }) {
       try {
         await invoke("init_audio_monitor");
       } catch (e) {
-        console.warn("Failed to pre-initialize audio monitor:", e);
+        console.warn("[heycat] Failed to pre-initialize audio monitor:", e);
         // Non-fatal - monitor will start on-demand when settings opened
       }
 

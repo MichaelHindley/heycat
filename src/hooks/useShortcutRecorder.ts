@@ -99,7 +99,7 @@ export function useShortcutRecorder(
     try {
       await invoke("stop_shortcut_recording");
     } catch (error) {
-      console.error("Failed to stop keyboard capture:", error);
+      console.error("[heycat] Failed to stop keyboard capture:", error);
     }
   }, []);
 
@@ -131,7 +131,7 @@ export function useShortcutRecorder(
     try {
       await invoke("open_accessibility_preferences");
     } catch (error) {
-      console.error("Failed to open preferences:", error);
+      console.error("[heycat] Failed to open preferences:", error);
     }
   }, []);
 

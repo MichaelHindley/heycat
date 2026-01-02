@@ -270,7 +270,7 @@ export function GeneralSettings({ className = "" }: GeneralSettingsProps) {
               description: `Toggle Recording is now ${displayShortcut}.`,
             });
           } catch (error) {
-            console.error("Failed to update shortcut:", error);
+            console.error("[heycat] Failed to update shortcut:", error);
             toast({
               type: "error",
               title: "Failed to update shortcut",

@@ -50,7 +50,7 @@ export function ShortcutEditor({
       await invoke("suspend_recording_shortcut");
       setShortcutSuspended(true);
     } catch (error) {
-      console.error("Failed to suspend recording shortcut:", error);
+      console.error("[heycat] Failed to suspend recording shortcut:", error);
     }
   }, [shortcutSuspended]);
 
@@ -61,7 +61,7 @@ export function ShortcutEditor({
       await invoke("resume_recording_shortcut");
       setShortcutSuspended(false);
     } catch (error) {
-      console.error("Failed to resume recording shortcut:", error);
+      console.error("[heycat] Failed to resume recording shortcut:", error);
     }
   }, [shortcutSuspended]);
 

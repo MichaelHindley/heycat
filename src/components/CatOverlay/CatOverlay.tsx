@@ -20,7 +20,7 @@ export function CatOverlay() {
       // play() may return undefined in test environments
       const playPromise = videoRef.current.play();
       if (playPromise) {
-        playPromise.catch(console.error);
+        playPromise.catch((e) => console.error("[heycat] Video play failed:", e));
       }
     }
   }, []);
