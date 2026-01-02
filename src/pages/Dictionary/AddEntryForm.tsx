@@ -1,116 +1,53 @@
-import { useState } from "react";
 import { Plus, Settings } from "lucide-react";
 import { Card, CardContent, Button, Input, FormField, MultiSelect } from "../../components/ui";
-import type { MultiSelectOption } from "../../components/ui";
-import { validateSuffix } from "../../lib/validation";
+import { useDictionaryForm } from "../../hooks/useDictionaryForm";
 import { EntrySettings } from "./EntrySettings";
 import { useDictionaryContext } from "./DictionaryContext";
 
 /**
  * Form for adding new dictionary entries.
- * Uses DictionaryContext for submission and validation.
+ * Uses useDictionaryForm for state and validation.
  */
 export function AddEntryForm() {
   const { handleAddEntry, existingTriggers, contextOptions } = useDictionaryContext();
 
-  const [trigger, setTrigger] = useState("");
-  const [expansion, setExpansion] = useState("");
-  const [suffix, setSuffix] = useState("");
-  const [autoEnter, setAutoEnter] = useState(false);
-  const [disableSuffix, setDisableSuffix] = useState(false);
-  const [completeMatchOnly, setCompleteMatchOnly] = useState(false);
-  const [selectedContextIds, setSelectedContextIds] = useState<string[]>([]);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [triggerError, setTriggerError] = useState<string | null>(null);
-  const [suffixError, setSuffixError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const hasSettings = suffix !== "" || autoEnter || disableSuffix || completeMatchOnly;
-
-  const handleSuffixValidation = (value: string): boolean => {
-    const error = validateSuffix(value);
-    if (error) {
-      setSuffixError(error);
-      return false;
-    }
-    setSuffixError(null);
-    return true;
-  };
-
-  const handleSuffixChange = (value: string) => {
-    setSuffix(value);
-    handleSuffixValidation(value);
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setTriggerError(null);
-
-    // Validate trigger
-    if (!trigger.trim()) {
-      setTriggerError("Trigger is required");
-      return;
-    }
-
-    if (existingTriggers.includes(trigger.toLowerCase())) {
-      setTriggerError("This trigger already exists");
-      return;
-    }
-
-    // Validate suffix
-    if (!handleSuffixValidation(suffix)) {
-      return;
-    }
-
-    setIsSubmitting(true);
-    try {
+  const form = useDictionaryForm({
+    existingTriggers,
+    onSubmit: async (values) => {
       await handleAddEntry(
-        trigger.trim(),
-        expansion.trim(),
-        selectedContextIds,
-        disableSuffix ? undefined : suffix.trim() || undefined,
-        autoEnter || undefined,
-        disableSuffix || undefined,
-        completeMatchOnly || undefined
+        values.trigger.trim(),
+        values.expansion.trim(),
+        values.contextIds,
+        values.disableSuffix ? undefined : values.suffix.trim() || undefined,
+        values.autoEnter || undefined,
+        values.disableSuffix || undefined,
+        values.completeMatchOnly || undefined
       );
-      setTrigger("");
-      setExpansion("");
-      setSuffix("");
-      setSuffixError(null);
-      setAutoEnter(false);
-      setDisableSuffix(false);
-      setCompleteMatchOnly(false);
-      setSelectedContextIds([]);
-      setIsSettingsOpen(false);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+      form.reset();
+    },
+  });
 
   return (
     <Card>
       <CardContent className="p-4">
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={form.handleSubmit}>
           <div className="flex gap-3 items-start">
-            <FormField label="Trigger" error={triggerError ?? undefined} className="flex-1">
+            <FormField label="Trigger" error={form.triggerError ?? undefined} className="flex-1">
               <Input
                 type="text"
                 placeholder="e.g., brb"
-                value={trigger}
-                onChange={(e) => {
-                  setTrigger(e.target.value);
-                  setTriggerError(null);
-                }}
+                value={form.values.trigger}
+                onChange={(e) => form.setValue("trigger", e.target.value)}
                 aria-label="Trigger phrase"
-                aria-invalid={!!triggerError}
+                aria-invalid={!!form.triggerError}
               />
             </FormField>
             <FormField label="Expansion" className="flex-[2]">
               <Input
                 type="text"
                 placeholder="e.g., be right back"
-                value={expansion}
-                onChange={(e) => setExpansion(e.target.value)}
+                value={form.values.expansion}
+                onChange={(e) => form.setValue("expansion", e.target.value)}
                 aria-label="Expansion text"
               />
             </FormField>
@@ -118,34 +55,34 @@ export function AddEntryForm() {
               <Button
                 type="button"
                 variant="ghost"
-                onClick={() => setIsSettingsOpen(!isSettingsOpen)}
+                onClick={form.toggleSettings}
                 aria-label="Toggle settings"
-                aria-expanded={isSettingsOpen}
-                className={hasSettings ? "text-heycat-orange" : ""}
+                aria-expanded={form.isSettingsOpen}
+                className={form.hasSettings ? "text-heycat-orange" : ""}
               >
                 <Settings className="h-4 w-4" />
-                {hasSettings && (
+                {form.hasSettings && (
                   <span className="absolute top-1 right-1 w-2 h-2 bg-heycat-orange rounded-full" />
                 )}
               </Button>
-              <Button type="submit" disabled={isSubmitting || !!suffixError}>
+              <Button type="submit" disabled={form.isSubmitting || !!form.suffixError}>
                 <Plus className="h-4 w-4" />
                 Add
               </Button>
             </div>
           </div>
-          {isSettingsOpen && (
+          {form.isSettingsOpen && (
             <>
               <EntrySettings
-                suffix={suffix}
-                autoEnter={autoEnter}
-                disableSuffix={disableSuffix}
-                completeMatchOnly={completeMatchOnly}
-                onSuffixChange={handleSuffixChange}
-                onAutoEnterChange={setAutoEnter}
-                onDisableSuffixChange={setDisableSuffix}
-                onCompleteMatchOnlyChange={setCompleteMatchOnly}
-                suffixError={suffixError}
+                suffix={form.values.suffix}
+                autoEnter={form.values.autoEnter}
+                disableSuffix={form.values.disableSuffix}
+                completeMatchOnly={form.values.completeMatchOnly}
+                onSuffixChange={(value) => form.setValue("suffix", value)}
+                onAutoEnterChange={(value) => form.setValue("autoEnter", value)}
+                onDisableSuffixChange={(value) => form.setValue("disableSuffix", value)}
+                onCompleteMatchOnlyChange={(value) => form.setValue("completeMatchOnly", value)}
+                suffixError={form.suffixError}
               />
               {contextOptions.length > 0 && (
                 <FormField
@@ -154,8 +91,8 @@ export function AddEntryForm() {
                   className="mt-3"
                 >
                   <MultiSelect
-                    selected={selectedContextIds}
-                    onChange={setSelectedContextIds}
+                    selected={form.values.contextIds}
+                    onChange={(ids) => form.setValue("contextIds", ids)}
                     options={contextOptions}
                     placeholder="Select contexts (optional)..."
                     aria-label="Window contexts"
