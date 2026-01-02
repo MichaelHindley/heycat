@@ -28,6 +28,9 @@ mod wake_handler;
 mod window_context;
 mod worktree;
 
+#[cfg(test)]
+pub mod test_utils;
+
 use tauri::WindowEvent;
 use tauri_plugin_log::{Target, TargetKind};
 
