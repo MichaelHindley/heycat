@@ -201,7 +201,9 @@ unsafe extern "C" fn cg_event_tap_callback_internal(
     user_info: *mut c_void,
 ) -> *mut c_void {
     let callback = user_info as *mut CGEventTapCallBackFn;
-    let event = CGEvent::from_ptr(event_ref as *mut _);
+    // CRITICAL: Wrap in ManuallyDrop immediately to prevent CFRelease.
+    // The event is caller-owned and must not be released by Rust.
+    let event = ManuallyDrop::new(CGEvent::from_ptr(event_ref as *mut _));
     let new_event = (*callback)(_proxy, event_type, &event);
 
     match new_event {
@@ -211,8 +213,7 @@ unsafe extern "C" fn cg_event_tap_callback_internal(
         }
         None => {
             // Block/consume the event - prevent it from reaching other applications
-            // Keep original event alive to avoid premature drop
-            let _ = ManuallyDrop::new(event);
+            // Original event is already ManuallyDrop'd, so no release occurs
             std::ptr::null_mut()
         }
     }
