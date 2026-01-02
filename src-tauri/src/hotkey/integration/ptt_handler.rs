@@ -50,7 +50,10 @@ where
 
                 // Check model availability
                 let model_available =
-                    check_model_exists_for_type(ModelType::ParakeetTDT).unwrap_or(false);
+                    check_model_exists_for_type(ModelType::ParakeetTDT).unwrap_or_else(|e| {
+                        crate::warn!("Failed to check model availability: {}", e);
+                        false
+                    });
 
                 let device_name = self.get_selected_audio_device();
                 match start_recording_impl(
