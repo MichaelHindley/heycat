@@ -1,152 +1,11 @@
 // Tests for hotkey-to-recording integration
 
-use super::integration::{HotkeyIntegration, DEBOUNCE_DURATION_MS};
-use crate::events::{
-    CommandAmbiguousPayload, CommandExecutedPayload, CommandFailedPayload, CommandMatchedPayload,
-    RecordingCancelledPayload, RecordingErrorPayload, RecordingStartedPayload, RecordingStoppedPayload,
-    TranscriptionCompletedPayload, TranscriptionErrorPayload, TranscriptionStartedPayload,
-};
-use crate::model::{ModelManifest, ModelType};
+use super::integration::HotkeyIntegration;
 use crate::recording::{RecordingManager, RecordingState};
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex, Once};
+use crate::test_utils::{ensure_test_model_files, FailingShortcutBackend, MockEmitter, MockShortcutBackend};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-
-/// Global lock for model directory operations to prevent test races
-static MODEL_DIR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-/// Ensure model files exist for tests (called once per test run)
-static INIT_MODEL_FILES: Once = Once::new();
-
-/// Get the path to models directory in the git repo (for tests)
-fn get_test_models_dir(model_type: ModelType) -> PathBuf {
-    let manifest_dir =
-        std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
-    PathBuf::from(manifest_dir)
-        .parent()
-        .expect("Failed to get parent of manifest dir")
-        .join("models")
-        .join(model_type.dir_name())
-}
-
-/// Ensure model files exist in repo - fails if not present
-fn ensure_test_model_files() {
-    INIT_MODEL_FILES.call_once(|| {
-        let _lock = MODEL_DIR_LOCK.lock().unwrap();
-
-        // Verify TDT model exists in repo
-        let tdt_model_dir = get_test_models_dir(ModelType::ParakeetTDT);
-        let tdt_manifest = ModelManifest::tdt();
-        for file in &tdt_manifest.files {
-            let file_path = tdt_model_dir.join(&file.name);
-            assert!(
-                file_path.exists(),
-                "TDT model file missing from repo: {:?}. Run 'git lfs pull'.",
-                file_path
-            );
-        }
-    });
-}
-
-/// Mock event emitter that records all events
-#[derive(Default, Clone)]
-struct MockEmitter {
-    started: Arc<Mutex<Vec<RecordingStartedPayload>>>,
-    stopped: Arc<Mutex<Vec<RecordingStoppedPayload>>>,
-    cancelled: Arc<Mutex<Vec<RecordingCancelledPayload>>>,
-    errors: Arc<Mutex<Vec<RecordingErrorPayload>>>,
-    transcription_started: Arc<Mutex<Vec<TranscriptionStartedPayload>>>,
-    transcription_completed: Arc<Mutex<Vec<TranscriptionCompletedPayload>>>,
-    transcription_errors: Arc<Mutex<Vec<TranscriptionErrorPayload>>>,
-    command_matched: Arc<Mutex<Vec<CommandMatchedPayload>>>,
-    command_executed: Arc<Mutex<Vec<CommandExecutedPayload>>>,
-    command_failed: Arc<Mutex<Vec<CommandFailedPayload>>>,
-    command_ambiguous: Arc<Mutex<Vec<CommandAmbiguousPayload>>>,
-    key_blocking_unavailable: Arc<Mutex<Vec<crate::events::hotkey_events::KeyBlockingUnavailablePayload>>>,
-}
-
-impl MockEmitter {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    fn started_count(&self) -> usize {
-        self.started.lock().unwrap().len()
-    }
-
-    fn stopped_count(&self) -> usize {
-        self.stopped.lock().unwrap().len()
-    }
-
-    fn cancelled_count(&self) -> usize {
-        self.cancelled.lock().unwrap().len()
-    }
-
-    fn last_cancelled(&self) -> Option<RecordingCancelledPayload> {
-        self.cancelled.lock().unwrap().last().cloned()
-    }
-
-    fn key_blocking_unavailable_count(&self) -> usize {
-        self.key_blocking_unavailable.lock().unwrap().len()
-    }
-}
-
-impl crate::events::RecordingEventEmitter for MockEmitter {
-    fn emit_recording_started(&self, payload: RecordingStartedPayload) {
-        self.started.lock().unwrap().push(payload);
-    }
-
-    fn emit_recording_stopped(&self, payload: RecordingStoppedPayload) {
-        self.stopped.lock().unwrap().push(payload);
-    }
-
-    fn emit_recording_cancelled(&self, payload: RecordingCancelledPayload) {
-        self.cancelled.lock().unwrap().push(payload);
-    }
-
-    fn emit_recording_error(&self, payload: RecordingErrorPayload) {
-        self.errors.lock().unwrap().push(payload);
-    }
-}
-
-impl crate::events::TranscriptionEventEmitter for MockEmitter {
-    fn emit_transcription_started(&self, payload: TranscriptionStartedPayload) {
-        self.transcription_started.lock().unwrap().push(payload);
-    }
-
-    fn emit_transcription_completed(&self, payload: TranscriptionCompletedPayload) {
-        self.transcription_completed.lock().unwrap().push(payload);
-    }
-
-    fn emit_transcription_error(&self, payload: TranscriptionErrorPayload) {
-        self.transcription_errors.lock().unwrap().push(payload);
-    }
-}
-
-impl crate::events::CommandEventEmitter for MockEmitter {
-    fn emit_command_matched(&self, payload: CommandMatchedPayload) {
-        self.command_matched.lock().unwrap().push(payload);
-    }
-
-    fn emit_command_executed(&self, payload: CommandExecutedPayload) {
-        self.command_executed.lock().unwrap().push(payload);
-    }
-
-    fn emit_command_failed(&self, payload: CommandFailedPayload) {
-        self.command_failed.lock().unwrap().push(payload);
-    }
-
-    fn emit_command_ambiguous(&self, payload: CommandAmbiguousPayload) {
-        self.command_ambiguous.lock().unwrap().push(payload);
-    }
-}
-
-impl crate::events::HotkeyEventEmitter for MockEmitter {
-    fn emit_key_blocking_unavailable(&self, payload: crate::events::hotkey_events::KeyBlockingUnavailablePayload) {
-        self.key_blocking_unavailable.lock().unwrap().push(payload);
-    }
-}
 
 /// Type alias for HotkeyIntegration with MockEmitter for all parameters
 type TestIntegration = HotkeyIntegration<MockEmitter, MockEmitter, MockEmitter>;
@@ -582,58 +441,6 @@ fn test_silence_detection_respects_enabled_flag() {
 }
 
 // === Escape Key Listener Tests ===
-
-/// Mock shortcut backend that tracks registered/unregistered shortcuts
-#[derive(Default)]
-struct MockShortcutBackend {
-    registered: Arc<Mutex<Vec<String>>>,
-    callbacks: Arc<Mutex<std::collections::HashMap<String, Box<dyn Fn() + Send + Sync>>>>,
-}
-
-impl MockShortcutBackend {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    /// Check if a shortcut is currently registered
-    fn is_registered(&self, shortcut: &str) -> bool {
-        self.registered.lock().unwrap().contains(&shortcut.to_string())
-    }
-
-    /// Simulate pressing a registered shortcut (triggers callback)
-    fn simulate_press(&self, shortcut: &str) {
-        if let Some(callback) = self.callbacks.lock().unwrap().get(shortcut) {
-            callback();
-        }
-    }
-}
-
-impl crate::hotkey::ShortcutBackend for MockShortcutBackend {
-    fn register(&self, shortcut: &str, callback: Box<dyn Fn() + Send + Sync>) -> Result<(), String> {
-        let mut registered = self.registered.lock().unwrap();
-        if registered.contains(&shortcut.to_string()) {
-            return Err("Shortcut already registered".to_string());
-        }
-        registered.push(shortcut.to_string());
-        self.callbacks.lock().unwrap().insert(shortcut.to_string(), callback);
-        Ok(())
-    }
-
-    fn unregister(&self, shortcut: &str) -> Result<(), String> {
-        let mut registered = self.registered.lock().unwrap();
-        if let Some(pos) = registered.iter().position(|s| s == shortcut) {
-            registered.remove(pos);
-            self.callbacks.lock().unwrap().remove(shortcut);
-            Ok(())
-        } else {
-            Err("Shortcut not registered".to_string())
-        }
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-}
 
 #[test]
 fn test_escape_listener_registered_when_recording_starts() {
@@ -1168,39 +975,6 @@ fn test_cancel_recording_can_restart_after_cancel() {
 }
 
 // === Escape Registration Failure Tests ===
-
-/// Mock shortcut backend that always fails registration
-struct FailingShortcutBackend {
-    unregister_attempts: Arc<Mutex<Vec<String>>>,
-}
-
-impl FailingShortcutBackend {
-    fn new() -> Self {
-        Self {
-            unregister_attempts: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
-    /// Get the number of unregister attempts
-    fn unregister_attempt_count(&self) -> usize {
-        self.unregister_attempts.lock().unwrap().len()
-    }
-}
-
-impl crate::hotkey::ShortcutBackend for FailingShortcutBackend {
-    fn register(&self, _shortcut: &str, _callback: Box<dyn Fn() + Send + Sync>) -> Result<(), String> {
-        Err("Registration always fails".to_string())
-    }
-
-    fn unregister(&self, shortcut: &str) -> Result<(), String> {
-        self.unregister_attempts.lock().unwrap().push(shortcut.to_string());
-        Err("Nothing to unregister".to_string())
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-}
 
 #[test]
 fn test_escape_registered_false_when_registration_fails() {
