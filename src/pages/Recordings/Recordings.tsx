@@ -48,7 +48,7 @@ export function Recordings(_props: RecordingsProps) {
   // Display playback errors
   useEffect(() => {
     if (playbackError) {
-      console.error("Audio playback error:", playbackError);
+      console.error("[heycat] Audio playback error:", playbackError);
       toast({
         type: "error",
         title: "Playback Error",

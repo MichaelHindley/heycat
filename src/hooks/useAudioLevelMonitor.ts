@@ -55,7 +55,7 @@ export function useAudioLevelMonitor({
           setIsMonitoring(true);
         }
       } catch (e) {
-        console.error("Failed to start audio monitor:", e);
+        console.error("[heycat] Failed to start audio monitor:", e);
         if (!cancelled) {
           setIsMonitoring(false);
         }
@@ -66,7 +66,7 @@ export function useAudioLevelMonitor({
       try {
         await invoke("stop_audio_monitor");
       } catch (e) {
-        console.error("Failed to stop audio monitor:", e);
+        console.error("[heycat] Failed to stop audio monitor:", e);
       }
       setIsMonitoring(false);
       setLevel(0);

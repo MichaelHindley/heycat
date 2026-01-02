@@ -19,7 +19,7 @@ export async function initLogger(): Promise<void> {
   try {
     detachFn = await attachConsole();
   } catch (err) {
-    console.error("Failed to initialize logger:", err);
+    console.error("[heycat] Failed to initialize logger:", err);
   }
 }
 
