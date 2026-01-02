@@ -94,7 +94,8 @@ pub struct EscapeKeyConfig {
     pub backend: Arc<dyn ShortcutBackend + Send + Sync>,
     /// Callback invoked when double-tap Escape is detected (optional for incremental config)
     pub callback: Option<Arc<dyn Fn() + Send + Sync>>,
-    /// Time window for double-tap detection in milliseconds (default: 300ms)
+    /// Time window for double-tap detection in milliseconds.
+    /// See [`DEFAULT_DOUBLE_TAP_WINDOW_MS`](crate::hotkey::double_tap::DEFAULT_DOUBLE_TAP_WINDOW_MS) for the default value (300ms).
     pub double_tap_window_ms: u64,
 }
 

@@ -7,22 +7,13 @@
 //! ## Usage
 //!
 //! ```ignore
-//! use crate::storage::{RecordingStorage, TranscriptionStorage};
+//! use crate::storage::{store_recording, store_transcription};
 //!
-//! // Store a recording
-//! let recording_id = storage::store_recording(
-//!     &app_handle,
-//!     &metadata,
-//!     window_context,
-//! ).await?;
+//! // Store a recording (synchronous - handles async internally)
+//! store_recording(&app_handle, &metadata, "hotkey");
 //!
-//! // Store a transcription
-//! storage::store_transcription(
-//!     &app_handle,
-//!     &file_path,
-//!     &text,
-//!     duration_ms,
-//! ).await?;
+//! // Store a transcription (synchronous - handles async internally)
+//! store_transcription(&app_handle, &file_path, &text, duration_ms);
 //! ```
 
 mod recording;
