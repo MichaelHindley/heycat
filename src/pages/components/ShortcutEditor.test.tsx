@@ -2,6 +2,10 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { ShortcutEditor } from "./ShortcutEditor";
+import {
+  defaultMockSettings,
+  defaultShortcutEditorProps,
+} from "./ShortcutEditor/testUtils";
 
 // Mock Tauri invoke
 const mockInvoke = vi.fn();
@@ -16,12 +20,8 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: (...args: unknown[]) => mockListen(...args),
 }));
 
-// Mock useSettings hook - can be overridden per test
-const mockSettings = {
-  listening: { enabled: false, autoStartOnLaunch: false },
-  audio: { selectedDevice: null },
-  shortcuts: { distinguishLeftRight: false },
-};
+// Mock useSettings hook - uses shared default settings from testUtils
+const mockSettings = { ...defaultMockSettings };
 
 vi.mock("../../hooks/useSettings", () => ({
   useSettings: () => ({
@@ -35,13 +35,8 @@ vi.mock("../../hooks/useSettings", () => ({
 }));
 
 describe("ShortcutEditor", () => {
-  const defaultProps = {
-    open: true,
-    onOpenChange: vi.fn(),
-    shortcutName: "Toggle Recording",
-    currentShortcut: "⌘⇧R",
-    onSave: vi.fn() as (displayShortcut: string, backendShortcut: string) => void,
-  };
+  // Use shared default props from testUtils
+  const defaultProps = { ...defaultShortcutEditorProps };
 
   beforeEach(() => {
     vi.clearAllMocks();
