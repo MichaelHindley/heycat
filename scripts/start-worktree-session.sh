@@ -115,36 +115,52 @@ SCHEMA='{"type":"object","properties":{"worktreePath":{"type":"string","descript
 
 # Build prompt with issue ID context
 if [ -n "$ISSUE_ID" ]; then
-  BRANCH_CONTEXT="Linear issue: $ISSUE_ID
-Ask me for a short description (2-3 words, kebab-case) to complete the branch name.
-Branch format will be: $ISSUE_ID-<description> (e.g., $ISSUE_ID-fix-audio)"
-else
-  BRANCH_CONTEXT="No issue ID provided.
-Ask me for a Linear issue ID (format: HEY-xxx, e.g., HEY-123).
-Then ask for a short description (2-3 words, kebab-case).
-The branch format will be: HEY-<number>-<description> (e.g., HEY-123-fix-audio)
-IMPORTANT: A Linear issue ID is REQUIRED. Do not proceed without one."
-fi
+  PROMPT="Create a git worktree for Linear issue $ISSUE_ID.
 
-PROMPT="Create a git worktree for feature development.
-
-$BRANCH_CONTEXT
+IMPORTANT: Your FIRST action MUST be to invoke the Skill tool with skill='devloop:agile' and args='list --format json'.
+Do NOT try to discover or locate the agile plugin yourself - use the Skill tool directly.
 
 Steps:
 1. Verify we're in the main repo (not a worktree) - check if .git is a directory
 2. Check for clean working directory with git status --porcelain
-3. If no issue ID provided, ask for one (format: HEY-xxx) - this is REQUIRED
-4. Get a short description from the user (2-3 words, kebab-case)
-5. Construct branch name as: <issue-id>-<description>
-6. Validate that branch name matches HEY-\\d+-\\w+ pattern
+3. IMMEDIATELY invoke Skill(devloop:agile, args='list --format json') to get all issues
+4. Parse the JSON output to find the issue with identifier '$ISSUE_ID'
+5. Extract the issue title and convert to kebab-case (lowercase, spaces to hyphens, remove special chars)
+6. Construct branch name as: $ISSUE_ID-<kebab-case-title>
 7. Fetch origin main
 8. Run: bun scripts/create-worktree.ts <branch-name>
 9. Run: cd <worktree-path> && bun install
 
-IMPORTANT:
-- A Linear issue ID (HEY-xxx) is MANDATORY
-- Do NOT accept branch names that don't start with HEY-<number>
-- Return the full absolute path to the worktree in your response."
+If issue $ISSUE_ID is not found in the skill output, report an error in the JSON response.
+Return the full absolute path to the worktree in your response."
+else
+  PROMPT="Create a git worktree for feature development.
+
+IMPORTANT: To fetch issue information, you MUST use the Skill tool with skill='devloop:agile'.
+Do NOT try to discover or locate the agile plugin yourself - use the Skill tool directly.
+
+No issue ID provided.
+Ask me for a Linear issue ID (format: HEY-xxx, e.g., HEY-123).
+A Linear issue ID is REQUIRED. Do not proceed without one.
+
+Once you have the issue ID:
+1. Invoke Skill(devloop:agile, args='list --format json') to get all issues
+2. Find the issue in the output and extract its title
+3. Convert title to kebab-case for branch name
+4. Proceed with worktree creation
+
+Steps:
+1. Verify we're in the main repo
+2. Check for clean working directory
+3. Get issue ID from user
+4. Invoke the devloop:agile skill to fetch issue title
+5. Create branch name: <issue-id>-<kebab-case-title>
+6. Fetch origin main
+7. Run: bun scripts/create-worktree.ts <branch-name>
+8. Run: cd <worktree-path> && bun install
+
+Return the full absolute path to the worktree."
+fi
 
 echo "Creating worktree via Claude..."
 echo "  Sending request to Claude CLI..."
@@ -152,7 +168,7 @@ echo "  Sending request to Claude CLI..."
 RESULT=$(claude -p "$PROMPT" \
   --output-format json \
   --json-schema "$SCHEMA" \
-  --allowedTools "Bash,Read")
+  --allowedTools "Bash,Read,Skill")
 
 echo "  Response received from Claude"
 
