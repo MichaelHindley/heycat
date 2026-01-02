@@ -30,14 +30,12 @@ pub fn run_async<F, T>(future: F) -> T
 where
     F: std::future::Future<Output = T>,
 {
-    match tokio::runtime::Handle::try_current() {
-        Ok(handle) => tokio::task::block_in_place(|| handle.block_on(future)),
-        Err(_) => {
-            let rt = tokio::runtime::Runtime::new()
-                .expect("Failed to create tokio runtime for async operation");
-            rt.block_on(future)
-        }
-    }
+    // Always create a new runtime to avoid issues with block_in_place panicking
+    // on single-threaded (current_thread) runtimes. This is safer and works in
+    // all contexts (with or without an existing runtime).
+    let rt = tokio::runtime::Runtime::new()
+        .expect("Failed to create tokio runtime for async operation");
+    rt.block_on(future)
 }
 
 #[cfg(test)]

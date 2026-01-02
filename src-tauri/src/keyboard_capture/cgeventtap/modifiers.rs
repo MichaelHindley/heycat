@@ -123,6 +123,7 @@ pub fn determine_modifier_key_state(key_code: u32, flags: u64) -> (String, bool)
             "fn".to_string(),
             (flags & CG_EVENT_FLAG_MASK_SECONDARY_FN) != 0,
         ),
-        _ => (format!("Modifier({})", key_code), true),
+        // Unknown modifier - return pressed=false since we can't determine state
+        _ => (format!("Modifier({})", key_code), false),
     }
 }
