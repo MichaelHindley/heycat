@@ -1,5 +1,6 @@
 import { Play, Pause, Copy, FolderOpen, Trash2, ChevronDown, ChevronUp } from "lucide-react";
 import { Card, CardContent, Button } from "../../components/ui";
+import { formatDuration, formatDate, formatFileSize } from "../../lib/formatting";
 
 export interface RecordingInfo {
   filename: string;
@@ -34,30 +35,6 @@ export interface RecordingItemProps {
   isDeleting?: boolean;
   onConfirmDelete?: () => void;
   onCancelDelete?: () => void;
-}
-
-export function formatDuration(seconds: number): string {
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${mins}:${secs.toString().padStart(2, "0")}`;
-}
-
-export function formatDate(isoString: string): string {
-  const date = new Date(isoString);
-  return date.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-}
-
-export function formatFileSize(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB"];
-  const k = 1024;
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  const value = bytes / Math.pow(k, i);
-  return `${value.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
 export function RecordingItem({
