@@ -78,9 +78,8 @@ pub fn setup(app: &App) -> Result<(), Box<dyn std::error::Error>> {
     ));
     app.manage(recording_detectors.clone());
 
-    // Create event emitter and audio thread
+    // Create audio thread
     crate::debug!("Creating audio thread...");
-    let emitter = Arc::new(commands::TauriEventEmitter::new(app.handle().clone()));
     let audio_thread = Arc::new(audio::AudioThreadHandle::spawn());
     crate::debug!("Audio thread spawned");
     app.manage(audio_thread.clone());
