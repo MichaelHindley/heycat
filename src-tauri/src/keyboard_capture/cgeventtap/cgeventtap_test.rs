@@ -159,6 +159,15 @@ fn test_determine_modifier_key_state_fn() {
 }
 
 #[test]
+fn test_determine_modifier_key_state_unknown() {
+    // Unknown modifier key codes should return pressed=false
+    // since we cannot determine their state from the flags
+    let (name, pressed) = determine_modifier_key_state(999, 0);
+    assert_eq!(name, "Modifier(999)");
+    assert!(!pressed, "Unknown modifiers should return pressed=false");
+}
+
+#[test]
 fn test_cgeventtap_capture_new_not_running() {
     let capture = CGEventTapCapture::new();
     assert!(!capture.is_running());
