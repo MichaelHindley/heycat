@@ -3,12 +3,32 @@
 //! This module handles audio device connection/disconnection notifications from
 //! Core Audio and coordinates restarting the audio engine to ensure fresh
 //! hardware connection after device changes.
+//!
+//! Includes coordination with user-initiated device changes to prevent race
+//! conditions when both the user and automatic handler try to control the
+//! audio engine simultaneously.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::sync::Mutex as TokioMutex;
 
 /// Static storage for the device change handler state.
 /// Uses OnceLock for safe, one-time initialization.
 static DEVICE_HANDLER: OnceLock<DeviceHandlerState> = OnceLock::new();
+
+/// Timestamp of last user-initiated device change (millis since UNIX_EPOCH).
+/// Used to suppress automatic restarts during user device switching.
+static LAST_USER_DEVICE_CHANGE: AtomicU64 = AtomicU64::new(0);
+
+/// Duration to suppress auto-restart after user-initiated device change.
+const SUPPRESSION_WINDOW_MS: u64 = 500;
+
+/// Delay before executing auto-restart to debounce rapid device changes.
+const DEBOUNCE_DELAY_MS: u64 = 300;
+
+/// Debounce state for auto-restart - holds pending restart task handle.
+static RESTART_DEBOUNCE: OnceLock<TokioMutex<Option<tokio::task::JoinHandle<()>>>> = OnceLock::new();
 
 /// State required for handling device change events.
 struct DeviceHandlerState {
@@ -37,12 +57,48 @@ pub fn init_device_change_handler() {
     crate::info!("Device change handler initialized - listening for device changes");
 }
 
+/// Get the debounce mutex, initializing if needed.
+fn get_debounce() -> &'static TokioMutex<Option<tokio::task::JoinHandle<()>>> {
+    RESTART_DEBOUNCE.get_or_init(|| TokioMutex::new(None))
+}
+
+/// Mark that a user-initiated device change is occurring.
+///
+/// Call this BEFORE calling `audio_engine_set_device()` to suppress
+/// automatic restart callbacks that would otherwise race with the user action.
+pub fn mark_user_device_change() {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    LAST_USER_DEVICE_CHANGE.store(now, Ordering::SeqCst);
+    crate::debug!("Marked user-initiated device change at {}", now);
+}
+
+/// Check if we should suppress auto-restart due to recent user action.
+fn should_suppress_auto_restart() -> bool {
+    let last_change = LAST_USER_DEVICE_CHANGE.load(Ordering::SeqCst);
+    if last_change == 0 {
+        return false;
+    }
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+
+    let elapsed = now.saturating_sub(last_change);
+    elapsed < SUPPRESSION_WINDOW_MS
+}
+
 /// Callback invoked when audio devices connect or disconnect.
 ///
-/// This is called from the Swift layer via FFI. It spawns an async task
-/// to restart the audio engine without blocking the callback.
+/// This is called from the Swift layer via FFI. It uses suppression and
+/// debounce to coordinate with user-initiated device changes:
+/// - If a user device change occurred within SUPPRESSION_WINDOW_MS, skip auto-restart
+/// - Debounce rapid device changes (USB flapping) by canceling pending restarts
 extern "C" fn on_device_change() {
-    crate::info!("Audio device change detected - scheduling audio engine restart");
+    crate::info!("Audio device change detected");
 
     // Verify handler is initialized
     if DEVICE_HANDLER.get().is_none() {
@@ -50,10 +106,37 @@ extern "C" fn on_device_change() {
         return;
     }
 
-    // Spawn async task to restart the audio engine
-    // We use tauri's async runtime to avoid blocking the callback
+    // Check if this should be suppressed (user-initiated change in progress)
+    if should_suppress_auto_restart() {
+        crate::info!("Auto-restart suppressed - user-initiated device change in progress");
+        return;
+    }
+
+    // Spawn async task with debounce for rapid device flapping
     tauri::async_runtime::spawn(async move {
-        restart_audio_engine_async().await;
+        let mut guard = get_debounce().lock().await;
+
+        // Cancel any pending restart
+        if let Some(handle) = guard.take() {
+            handle.abort();
+            crate::debug!("Cancelled pending auto-restart (debounce)");
+        }
+
+        // Schedule new restart after debounce delay
+        // Use tokio::spawn directly to get a tokio::task::JoinHandle
+        let handle = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(DEBOUNCE_DELAY_MS)).await;
+
+            // Re-check suppression after debounce (user may have initiated change)
+            if should_suppress_auto_restart() {
+                crate::info!("Auto-restart suppressed after debounce");
+                return;
+            }
+
+            restart_audio_engine_async().await;
+        });
+
+        *guard = Some(handle);
     });
 }
 

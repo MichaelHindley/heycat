@@ -130,6 +130,8 @@ impl AudioCaptureBackend for SwiftBackend {
         } else if device_name.is_some() {
             // Engine already running (expected path), handle device switching if needed
             crate::info!("Engine already running, setting device...");
+            // Mark as user-initiated to suppress automatic restart callbacks
+            crate::device_handler::mark_user_device_change();
             if let AudioEngineResult::Failed(error) = swift::audio_engine_set_device(device_name.as_deref()) {
                 crate::warn!("Failed to set device: {}", error);
                 // Don't fail - continue with current device
