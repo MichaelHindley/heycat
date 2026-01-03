@@ -116,30 +116,42 @@ async fn reload_model_async(
     if audio_was_running {
         crate::info!("Audio engine was running - restarting for fresh hardware connection");
 
-        // Stop the audio engine
-        if let Err(e) = tauri::async_runtime::spawn_blocking(crate::swift::audio_engine_stop).await
-        {
-            crate::warn!("Failed to stop audio engine: {}", e);
-        }
+        // Check if audio CAPTURE is in progress - if so, skip restart to preserve recording
+        // The Swift side preserves capture state during device switches
+        let is_capturing =
+            tauri::async_runtime::spawn_blocking(crate::swift::audio_engine_is_capturing)
+                .await
+                .unwrap_or(false);
 
-        // Wait 200ms for Core Audio cleanup
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-
-        // Start the audio engine with default device
-        let start_result = tauri::async_runtime::spawn_blocking(|| {
-            crate::swift::audio_engine_start(None)
-        })
-        .await;
-
-        match start_result {
-            Ok(crate::swift::AudioEngineResult::Ok) => {
-                crate::info!("Audio engine restarted successfully after system wake");
+        if is_capturing {
+            crate::info!("Audio capture in progress - skipping engine restart to preserve recording");
+            // Continue to model reload without engine restart
+        } else {
+            // Stop the audio engine
+            if let Err(e) =
+                tauri::async_runtime::spawn_blocking(crate::swift::audio_engine_stop).await
+            {
+                crate::warn!("Failed to stop audio engine: {}", e);
             }
-            Ok(crate::swift::AudioEngineResult::Failed(e)) => {
-                crate::error!("Failed to restart audio engine after system wake: {}", e);
-            }
-            Err(e) => {
-                crate::error!("Audio engine restart task panicked: {}", e);
+
+            // Wait 200ms for Core Audio cleanup
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+            // Start the audio engine with default device
+            let start_result =
+                tauri::async_runtime::spawn_blocking(|| crate::swift::audio_engine_start(None))
+                    .await;
+
+            match start_result {
+                Ok(crate::swift::AudioEngineResult::Ok) => {
+                    crate::info!("Audio engine restarted successfully after system wake");
+                }
+                Ok(crate::swift::AudioEngineResult::Failed(e)) => {
+                    crate::error!("Failed to restart audio engine after system wake: {}", e);
+                }
+                Err(e) => {
+                    crate::error!("Audio engine restart task panicked: {}", e);
+                }
             }
         }
     }
