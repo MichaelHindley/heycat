@@ -32,14 +32,13 @@ const DEBOUNCE_DELAY_MS: u64 = 300;
 static RESTART_DEBOUNCE: OnceLock<TokioMutex<Option<tokio::task::JoinHandle<()>>>> = OnceLock::new();
 
 /// State required for handling device change events.
+/// Note: This struct only contains a `bool` which is inherently Send + Sync,
+/// so no manual unsafe impl is needed.
+#[derive(Debug)]
 struct DeviceHandlerState {
     /// Marker to indicate handler is initialized (no actual state needed)
     _initialized: bool,
 }
-
-// Ensure DeviceHandlerState is Send + Sync for static storage
-unsafe impl Send for DeviceHandlerState {}
-unsafe impl Sync for DeviceHandlerState {}
 
 /// Initialize the device change handler.
 ///
