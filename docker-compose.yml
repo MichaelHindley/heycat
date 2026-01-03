@@ -1,0 +1,91 @@
+# Docker Compose configuration for heycat development
+#
+# Usage:
+#   Create container:  docker compose run --rm dev
+#   Or with custom ID: HEYCAT_DEV_ID=my-feature docker compose run --rm dev
+#
+# This provides an isolated development environment for:
+# - TypeScript/Bun development
+# - Rust tests (non-macOS specific)
+# - Linting and formatting
+# - Claude Code / agile workflow
+#
+# macOS-specific builds must be triggered via mac-build script
+
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      args:
+        # Match host user to avoid permission issues with mounted volumes
+        USER_ID: ${USER_ID:-1000}
+        GROUP_ID: ${GROUP_ID:-1000}
+
+    # Container name includes dev ID for multi-container support
+    container_name: heycat-dev-${HEYCAT_DEV_ID:-default}
+
+    # Keep stdin open for interactive shell
+    stdin_open: true
+    tty: true
+
+    # Mount source code and caches
+    volumes:
+      # Project workspace
+      - .:/workspace:cached
+
+      # Bun cache - persist across container restarts
+      - bun-cache:/home/dev/.bun
+
+      # Cargo cache - persist compiled dependencies
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+
+      # SSH agent forwarding (macOS/Linux)
+      # Note: Falls back to /dev/null if SSH_AUTH_SOCK not set - SSH operations
+      # will fail with "Permission denied" if agent not properly forwarded.
+      - ${SSH_AUTH_SOCK:-/dev/null}:/ssh-agent:ro
+
+    environment:
+      # SSH agent socket location in container
+      SSH_AUTH_SOCK: /ssh-agent
+
+      # heycat development environment markers
+      HEYCAT_DOCKER_DEV: "1"
+      HEYCAT_DEV_ID: ${HEYCAT_DEV_ID:-default}
+
+      # Mac host configuration for mac-build script
+      # REQUIRED for /mac-build: Set these in .env or export before running
+      # Not needed for TypeScript/Rust development without macOS builds
+      HEYCAT_MAC_HOST: ${HEYCAT_MAC_HOST:-}
+      HEYCAT_MAC_USER: ${HEYCAT_MAC_USER:-}
+      HEYCAT_MAC_PATH: ${HEYCAT_MAC_PATH:-}
+
+      # Pass through Linear API credentials for agile workflow
+      LINEAR_API_KEY: ${LINEAR_API_KEY:-}
+      LINEAR_TEAM_ID: ${LINEAR_TEAM_ID:-}
+
+      # Pass through Anthropic API key for Claude Code
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+      # Git configuration
+      GIT_AUTHOR_NAME: ${GIT_AUTHOR_NAME:-}
+      GIT_AUTHOR_EMAIL: ${GIT_AUTHOR_EMAIL:-}
+      GIT_COMMITTER_NAME: ${GIT_COMMITTER_NAME:-}
+      GIT_COMMITTER_EMAIL: ${GIT_COMMITTER_EMAIL:-}
+
+    working_dir: /workspace
+
+    # Use bridge network for isolation and portability
+    # Use host.docker.internal to reach the host machine from container
+    networks:
+      - default
+
+# Named volumes for caching
+volumes:
+  bun-cache:
+    name: heycat-bun-cache-${HEYCAT_DEV_ID:-default}
+  cargo-registry:
+    name: heycat-cargo-registry-${HEYCAT_DEV_ID:-default}
+  cargo-git:
+    name: heycat-cargo-git-${HEYCAT_DEV_ID:-default}

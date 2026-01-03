@@ -48,21 +48,29 @@ git fetch origin main
 ### Step 3: Create the worktree
 
 ```bash
-bun scripts/create-worktree.ts <branch-name>
+bun scripts/create-worktree.ts --issue <issue-slug-or-id>
 ```
 
 This script will:
-1. Create a git worktree at `worktrees/heycat-<branch-name>/`
-2. Create a new branch from current HEAD
-3. Generate a unique hotkey and dev port for the worktree
-4. Create a settings file with the unique hotkey
+1. Validate the issue exists in Linear
+2. Get the HEY-### identifier from Linear
+3. Create branch with format: `HEY-###-<issue-title-slug>`
+4. Create a git worktree at `worktrees/<branch-name>/`
+5. Generate a unique hotkey and dev port for the worktree
+6. Create a settings file with the unique hotkey
+
+Example:
+```bash
+bun scripts/create-worktree.ts --issue docker-development-workflow
+# Creates branch: HEY-156-docker-development-workflow
+```
 
 ### Step 4: Navigate to the worktree
 
 After creation, navigate to the worktree:
 
 ```bash
-cd worktrees/heycat-<branch-name>
+cd worktrees/<branch-name>
 ```
 
 ### Step 5: Install dependencies
@@ -75,6 +83,7 @@ bun install
 
 Print the worktree details:
 - Worktree path
+- Branch name (with HEY-### prefix)
 - Assigned hotkey
 - Dev port
 - Next steps for development
@@ -98,21 +107,26 @@ Remind the user of the full workflow:
 
 ## Linear Integration
 
-When the branch name starts with a Linear issue ID (e.g., `HEY-123-fix-audio`):
-- `/submit-pr` will automatically include `Closes HEY-123` in the PR body
+When the branch name starts with a Linear issue ID (e.g., `HEY-156-docker-development-workflow`):
+- `/submit-pr` will automatically include `Closes HEY-156` in the PR body
 - The PR will appear linked in the Linear issue
 - When the PR is merged, the Linear issue will auto-close
+
+This is why all branches MUST be created through a Linear issue - it ensures proper cross-linking.
 
 ## Troubleshooting
 
 **"This command only works from the main repository"**
 - You're in a worktree. Navigate to the main repository first.
 
+**"Issue not found in Linear"**
+- Verify the issue slug or identifier is correct
+- Check that LINEAR_API_KEY is set in your environment
+
 **"Branch already exists"**
-- Choose a different branch name, or use the existing branch with:
-  ```bash
-  git worktree add worktrees/heycat-<branch-name> <branch-name>
-  ```
+- The branch was already created for this issue. Either:
+  - Use the existing worktree
+  - Delete the old branch: `git branch -D <branch-name>`
 
 **"Path already exists"**
 - A worktree directory already exists. Either remove it first or choose a different name.
