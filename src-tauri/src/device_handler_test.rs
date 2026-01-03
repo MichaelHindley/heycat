@@ -5,6 +5,28 @@ use serial_test::serial;
 // These tests verify the module structure and basic behavior.
 // Tests that access shared global state (LAST_USER_DEVICE_CHANGE) must use #[serial].
 
+// =============================================================================
+// Regression tests for HEY-187: Empty WAV files after device switching
+// =============================================================================
+// The auto-restart logic must NOT interfere with active capture sessions.
+// Key safeguards:
+// 1. Suppression window (1000ms) prevents auto-restart during user device changes
+// 2. Capture state check in restart_audio_engine_async() skips restart if recording
+// 3. Swift preserves capture state during device switch (preserveCaptureFile param)
+// =============================================================================
+
+#[test]
+fn test_suppression_window_is_1000ms() {
+    // Explicit test to document the expected value and catch accidental changes.
+    // This value was increased from 500ms to 1000ms to account for slower device
+    // switches and Core Audio propagation delays. Reducing it may cause race
+    // conditions where auto-restart fires during user-initiated device changes.
+    assert_eq!(
+        SUPPRESSION_WINDOW_MS, 1000,
+        "Suppression window should be 1000ms to prevent race conditions during device switching"
+    );
+}
+
 #[test]
 fn test_device_handler_state_is_send_sync() {
     // Compile-time check that DeviceHandlerState satisfies Send + Sync
